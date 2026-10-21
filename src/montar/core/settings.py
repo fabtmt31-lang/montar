@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 from montar.platform import paths
@@ -17,6 +17,7 @@ class Settings:
     theme: str = "light"
     projects_dir: str = ""
     preview_quality: str = "medium"
+    disabled_modules: list[str] = field(default_factory=list)
 
     @property
     def projects_path(self) -> Path:
@@ -28,8 +29,14 @@ class Settings:
             data = json.loads(file.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return cls()
+        if not isinstance(data, dict):
+            return cls()
         known = {f.name for f in fields(cls)}
-        settings = cls(**{k: v for k, v in data.items() if k in known and isinstance(v, str)})
+        values = {k: v for k, v in data.items() if k in known and isinstance(v, str)}
+        disabled = data.get("disabled_modules")
+        if isinstance(disabled, list):
+            values["disabled_modules"] = [m for m in disabled if isinstance(m, str)]
+        settings = cls(**values)
         if settings.theme not in THEMES:
             settings.theme = "light"
         if settings.preview_quality not in PREVIEW_QUALITIES:

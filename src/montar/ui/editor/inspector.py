@@ -49,9 +49,10 @@ def _signed(v: float) -> str:
 
 
 class Inspector(QFrame):
-    def __init__(self, controller: EditorController) -> None:
+    def __init__(self, controller: EditorController, modules=None) -> None:
         super().__init__()
         self.setObjectName("Inspector")
+        self.modules = modules  # EditorModules (outils et réglages des modules)
         self.setFixedWidth(340)
         self.controller = controller
         self.clip_id: str | None = None
@@ -72,6 +73,11 @@ class Inspector(QFrame):
         self.subtitle = label("", "small")
         layout.addWidget(self.title)
         layout.addWidget(self.subtitle)
+        self.missing = label("", "small")
+        self.missing.setWordWrap(True)
+        self.missing.setStyleSheet("color: #B4452F;")
+        self.missing.setVisible(False)
+        layout.addWidget(self.missing)
         layout.addSpacing(14)
         self.pages = QStackedWidget()
         layout.addWidget(self.pages)
@@ -204,6 +210,16 @@ class Inspector(QFrame):
         sl.addWidget(self.speed_row)
         self.duration_label = label("", "small")
         sl.addWidget(self.duration_label)
+        self.speed_tools_title = section(_("EFFETS DE VITESSE"))
+        sl.addWidget(self.speed_tools_title)
+        self.speed_tools = QVBoxLayout()
+        self.speed_tools.setSpacing(6)
+        sl.addLayout(self.speed_tools)
+        self.speed_hint = label(_("Astuce : marquez une partie du clip avec les touches I "
+                                  "(début) et O (fin) dans la timeline pour n'accélérer "
+                                  "qu'elle."), "small")
+        self.speed_hint.setWordWrap(True)
+        sl.addWidget(self.speed_hint)
 
         color, cl = page()
         cl.addWidget(section(_("COULEUR")))
@@ -395,6 +411,7 @@ class Inspector(QFrame):
 
     def show_project(self, project: Project) -> None:
         self.clip_id = None
+        self.missing.setVisible(False)
         w, h = project.canvas_size
         self.title.setText(project.name)
         self.subtitle.setText(_("Projet"))
@@ -410,6 +427,7 @@ class Inspector(QFrame):
 
     def show_media(self, media: MediaItem) -> None:
         self.clip_id = None
+        self.missing.setVisible(False)
         self.title.setText(media.name)
         kind = _(_KIND.get(media.kind, media.kind))
         self.subtitle.setText(kind if media.kind == "image"
@@ -460,13 +478,43 @@ class Inspector(QFrame):
         self.clip_tabs.set_visible_tabs(tabs)
         self._refresh_clip(clip, media)
 
+    def _refresh_tools(self, clip: Clip) -> None:
+        while self.speed_tools.count():
+            w = self.speed_tools.takeAt(0).widget()
+            if w is not None:
+                w.deleteLater()
+        tools = self.modules.tools_for(clip, "speed") if self.modules else []
+        for module_id, tool in tools:
+            b = button(_(tool.name), "secondary", tool.icon)
+            b.clicked.connect(lambda _=False, m=module_id, t=tool, c=clip:
+                              self.modules.run_tool(m, t, c))
+            self.speed_tools.addWidget(b)
+        self.speed_tools_title.setVisible(bool(tools))
+        self.speed_hint.setVisible(bool(tools))
+        locked = self.controller.timeline.timing_locked(clip)
+        self.speed_row.setEnabled(not locked)
+        for b in self._speed_buttons.buttons():
+            b.setEnabled(not locked)
+
+    def _refresh_missing(self, clip: Clip) -> None:
+        missing = self.modules.missing(clip) if self.modules else []
+        self.missing.setVisible(bool(missing))
+        if missing:
+            self.missing.setText(_("Module absent ou désactivé : {m}. Ses réglages sont "
+                                   "conservés mais ignorés au rendu.").format(
+                                       m=", ".join(missing)))
+
     def _refresh_clip(self, clip: Clip, media: MediaItem | None) -> None:
+        self._refresh_tools(clip)
+        self._refresh_missing(clip)
         self._refreshing = True
         for row in self._sliders:
             row.set_value(row.getter(clip))
         self.fit.set_current(clip.transform.fit)
+        self._speed_buttons.setExclusive(False)
         for b in self._speed_buttons.buttons():
             b.setChecked(b.text() == f"×{clip.speed:g}")
+        self._speed_buttons.setExclusive(True)
         self.speed_row.set_value(clip.speed)
         self.duration_label.setText(_("Durée du clip : {d}").format(
             d=frames_to_timecode(clip.duration, self.controller.project.fps)))
@@ -511,6 +559,7 @@ class Inspector(QFrame):
 
     def show_transition(self, transition: Transition) -> None:
         self.clip_id = None
+        self.missing.setVisible(False)
         self._transition_id = transition.id
         name = _(TRANSITIONS.get(transition.kind, (transition.kind, ""))[0])
         self.title.setText(name)

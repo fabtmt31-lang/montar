@@ -74,7 +74,7 @@ class PreferencesPage(QWidget):
     themeChanged = pyqtSignal(str)
     settingsChanged = pyqtSignal()
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, modules=None) -> None:
         super().__init__()
         self.setObjectName("Page")
         self.settings = settings
@@ -126,11 +126,21 @@ class PreferencesPage(QWidget):
         gl.addWidget(_row(_("Qualité de l'aperçu"),
                           _("Réduisez-la sur une machine moins puissante"), self.quality))
         layout.addWidget(general)
+        if modules is not None:
+            from montar.ui.home.extensions import ExtensionsCard
+
+            self.extensions = ExtensionsCard(modules)
+            self.extensions.disabledChanged.connect(self._set_disabled)
+            layout.addWidget(self.extensions)
         layout.addStretch()
 
     def _set_theme(self, key: str) -> None:
         self.settings.theme = key
         self.themeChanged.emit(key)
+        self.settingsChanged.emit()
+
+    def _set_disabled(self, disabled: list) -> None:
+        self.settings.disabled_modules = list(disabled)
         self.settingsChanged.emit()
 
     def _set_quality(self, key: str) -> None:

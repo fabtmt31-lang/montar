@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """montar — logiciel libre de montage vidéo."""
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"

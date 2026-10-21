@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLineEdit,
     QMessageBox,
+    QProgressBar,
     QSplitter,
     QStackedWidget,
     QToolButton,
@@ -29,10 +30,12 @@ from montar.i18n import _
 from montar.media.probe import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, is_supported
 from montar.media.thumbnails import thumbnail_path
 from montar.media.waveform import waveform_path
+from montar.plugins import ModuleManager, default_manager
 from montar.ui.editor.controller import EditorController
 from montar.ui.editor.importer import MediaImporter
 from montar.ui.editor.inspector import Inspector
 from montar.ui.editor.media_panel import MediaPanel
+from montar.ui.editor.modules import EditorModules
 from montar.ui.editor.panels import EffectsPanel, FiltersPanel, TextPanel, TransitionsPanel
 from montar.ui.editor.player import Player
 from montar.ui.editor.preview import PreviewPanel
@@ -73,12 +76,16 @@ class EditorPage(QWidget):
     saved = pyqtSignal(object)  # Path
 
     def __init__(self, project: Project, engine_factory: Callable[[], Engine], cache: Path,
-                 preview_quality: str = "medium") -> None:
+                 preview_quality: str = "medium", modules: ModuleManager | None = None) -> None:
         super().__init__()
         self.setObjectName("Page")
         self.setAcceptDrops(True)
         self.project = project
         self.controller = EditorController(project, self)
+        self.module_manager = modules if modules is not None else default_manager()
+        self.modules = EditorModules(self.module_manager, self.controller, cache, self,
+                                     lambda: self.timeline.view.playhead,
+                                     lambda: self.timeline.view.selection_range)
         self._cache = cache
         # Les analyses se terminent dans le désordre : les médias sont ajoutés dans
         # l'ordre de la demande d'import.
@@ -112,10 +119,13 @@ class EditorPage(QWidget):
         self.player = Player(engine_factory, self)
         self.preview = PreviewPanel(self.player, preview_quality)
         body.addWidget(self.preview, 1)
-        self.inspector = Inspector(self.controller)
+        self.inspector = Inspector(self.controller, self.modules)
         body.addWidget(self.inspector)
+        self.effects_panel.set_modules(self.modules)
 
         self.timeline = TimelinePanel(self.controller, self.thumbnails.get, self.waveforms.get)
+        self.timeline.view.badge_provider = self.modules.badges
+        self.timeline.view.tool_provider = self._tool_actions
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.setChildrenCollapsible(False)
         splitter.setHandleWidth(1)
@@ -160,6 +170,11 @@ class EditorPage(QWidget):
         self._save_timer.setInterval(800)
         self._save_timer.timeout.connect(self.save)
 
+        self.modules.jobs.changed.connect(self._update_jobs)
+        self.modules.jobs.finished.connect(self._on_job_finished)
+        self._modules_listener = self._on_modules_changed
+        self.module_manager.listeners.append(self._modules_listener)
+
         self._install_shortcuts()
         self._load_project_media()
         self._refresh_header()
@@ -202,6 +217,20 @@ class EditorPage(QWidget):
         titles.addWidget(self.title_edit)
         titles.addWidget(self.status_label)
         layout.addLayout(titles)
+        self.jobs_box = QWidget()
+        jl = QHBoxLayout(self.jobs_box)
+        jl.setContentsMargins(12, 0, 0, 0)
+        jl.setSpacing(6)
+        self.jobs_label = label("", "small")
+        self.jobs_bar = QProgressBar()
+        self.jobs_bar.setRange(0, 100)
+        self.jobs_bar.setFixedWidth(110)
+        self.jobs_bar.setTextVisible(False)
+        self.jobs_bar.setFixedHeight(6)
+        jl.addWidget(self.jobs_label)
+        jl.addWidget(self.jobs_bar)
+        self.jobs_box.setVisible(False)
+        layout.addWidget(self.jobs_box)
         layout.addSpacing(12)
         self.undo_button = button("", "ghost", "undo-2")
         self.redo_button = button("", "ghost", "redo-2")
@@ -269,6 +298,9 @@ class EditorPage(QWidget):
             ("Ctrl+=", lambda: tl.view.set_zoom(tl.view.pps * 1.5)),
             ("Ctrl+-", lambda: tl.view.set_zoom(tl.view.pps / 1.5)),
             ("Ctrl+0", tl.view.zoom_to_fit),
+            ("I", tl.view.mark_in),
+            ("O", tl.view.mark_out),
+            ("Escape", tl.view.clear_range),
         ):
             sc = QShortcut(QKeySequence(keys), self)
             sc.setContext(Qt.ShortcutContext.WindowShortcut)
@@ -339,6 +371,9 @@ class EditorPage(QWidget):
     def close_project(self) -> bool:
         """Enregistre si nécessaire et arrête la lecture ; False si l'enregistrement a échoué."""
         ok = self.save() if self._save_timer.isActive() else True
+        if self._modules_listener in self.module_manager.listeners:
+            self.module_manager.listeners.remove(self._modules_listener)
+        self.modules.jobs.cancel_all()
         self.player.shutdown()
         self.importer.wait(5000)
         return ok
@@ -359,7 +394,33 @@ class EditorPage(QWidget):
 
     def _reload_player(self) -> None:
         self._load_timer.stop()
-        self.player.load(timeline_spec(self.project, self._text_image))
+        self.player.load(timeline_spec(self.project, self._text_image, self.modules.hook))
+
+    # --- modules -------------------------------------------------------------------------
+
+    def _tool_actions(self, clip) -> list[tuple[str, Callable[[], None]]]:
+        return [(_(tool.name), lambda mid=mid, t=tool, c=clip: self.modules.run_tool(mid, t, c))
+                for mid, tool in self.modules.tools_for(clip)]
+
+    def _update_jobs(self) -> None:
+        summary = self.modules.jobs.summary()
+        self.jobs_box.setVisible(summary is not None)
+        if summary is not None:
+            title, ratio = summary
+            self.jobs_label.setText(_("{title} : {p} %").format(title=title, p=round(ratio * 100)))
+            self.jobs_bar.setValue(round(ratio * 100))
+
+    def _on_job_finished(self, _key: str, error: str) -> None:
+        if error and error != "annulé":
+            self.modules.error(_("Un calcul en arrière-plan a échoué :\n{e}").format(e=error))
+        self._reload_player()  # le fichier pré-calculé remplace l'aperçu provisoire
+        self.timeline.view.viewport().update()
+
+    def _on_modules_changed(self) -> None:
+        self._reload_player()
+        self.timeline.view.viewport().update()
+        self.effects_panel.rebuild_modules()
+        self._on_clip_selected(self.controller.selected)
 
     def _on_frame(self, _image, frame: int) -> None:
         self.timeline.set_playhead(frame, follow=self.player.playing)

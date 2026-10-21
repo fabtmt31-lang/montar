@@ -8,7 +8,19 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
 
 ## État d'avancement
 
-**Jalon J2 — édition de base** (version 0.3.1) :
+**Jalon J3 — modules et Timelapse** (version 0.4.0) :
+
+- **Timelapse** (module intégré) : marquez une partie d'un clip avec **I** (début) et
+  **O** (fin) dans la timeline, puis onglet **Vitesse → Timelapse…** (ou clic droit sur le
+  clip). Facteur ×2 à ×1000 ou durée cible, échantillonnage (une image sur N) ou fusion
+  d'images, rampes de vitesse, son coupé / supprimé / accéléré, stabilisation de
+  l'exposition. Le segment est pré-calculé en arrière-plan (avancement dans l'en-tête) ;
+  « Retirer le timelapse » rend au clip sa forme d'origine ;
+- **modules** en Python : effets, outils, sources de clip — voir
+  [docs/MODULES.md](docs/MODULES.md) et l'exemple `examples/modules/negatif/` ;
+  **Préférences → Extensions** pour activer, installer (`.montar-module`) ou supprimer.
+
+**Jalon J2 — édition de base** (0.3) :
 
 - inspecteur du clip, onglets **Image** (position, échelle, rotation, opacité,
   ajuster / remplir / étirer, retournement, recadrage, fondus), **Audio** (volume, couper le
@@ -39,12 +51,12 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
 **Jalon J0 — socle** (0.1.0) : accueil, nouveau projet, import de médias, aperçu,
 préférences, thèmes, paquet `.deb`.
 
-Pas encore disponible : effet Timelapse et modules (J3), export (J4).
+Pas encore disponible : export (J4).
 
 ## Installer le paquet
 
 ```sh
-sudo apt install ./montar_0.3.1_all.deb
+sudo apt install ./montar_0.4.0_all.deb
 ```
 
 Le paquet est produit par l'intégration continue (onglet *Actions* de GitHub, artefacts
@@ -80,6 +92,8 @@ Organisation du code :
 |---------|------|
 | `src/montar/core/` | modèle sans Qt : projet, timeline (opérations de montage), historique, formats |
 | `src/montar/engine/` | moteur de rendu : interface abstraite + implémentation MLT |
+| `src/montar/api.py`, `src/montar/plugins/` | API publique et gestionnaire des modules |
+| `src/montar/modules/` | modules intégrés (Timelapse) |
 | `src/montar/media/` | analyse des médias (ffprobe), vignettes, formes d'onde |
 | `src/montar/ui/` | interface PyQt6 : thème, accueil, montage, timeline (`ui/timeline/`), dialogues |
 | `src/montar/assets/` | polices (OFL) et icônes Lucide (ISC) embarquées |

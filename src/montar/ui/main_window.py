@@ -15,6 +15,7 @@ from montar.engine import get_engine
 from montar.i18n import _
 from montar.media.thumbnails import thumbnail_path
 from montar.platform import paths
+from montar.plugins import default_manager
 from montar.ui.dialogs.new_project import NewProjectDialog, NewProjectParams
 from montar.ui.editor.editor_page import EditorPage, media_file_filter
 from montar.ui.home.home_page import HomePage, HomeShell
@@ -36,7 +37,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.stack)
         self.home = HomePage()
         self.projects = HomePage(compact=True)
-        self.preferences = PreferencesPage(settings)
+        self.modules = default_manager(settings.disabled_modules)
+        self.preferences = PreferencesPage(settings, self.modules)
         self.shell = HomeShell(self.home, self.projects, self.preferences)
         self.stack.addWidget(self.shell)
         for page in (self.home, self.projects):
@@ -113,7 +115,8 @@ class MainWindow(QMainWindow):
 
     def _show_editor(self, project: Project) -> EditorPage:
         self._close_editor()
-        editor = EditorPage(project, get_engine, self.cache, self.settings.preview_quality)
+        editor = EditorPage(project, get_engine, self.cache, self.settings.preview_quality,
+                            self.modules)
         editor.backRequested.connect(self.show_home)
         editor.saved.connect(lambda _p: None)
         self.editor = editor

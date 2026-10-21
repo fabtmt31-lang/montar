@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from montar.core.project import Clip, ColorAdjust, Effects, Project, Transform
+from montar.core.project import Clip, ColorAdjust, Effects, MediaItem, Project, Transform
 
 
 class EngineUnavailable(RuntimeError):
@@ -44,6 +44,7 @@ class ClipSpec:
     effects: Effects = field(default_factory=Effects)
     animation_in: str = "none"  # textes : none | fade | slide
     animation_out: str = "none"
+    extra_filters: tuple[tuple[str, dict], ...] = ()  # filtres ajoutés par des modules
 
 
 @dataclass(frozen=True)
@@ -81,16 +82,35 @@ class TimelineSpec:
 TextImage = Callable[[Clip, int, int], str]  # (clip, largeur, hauteur) -> image PNG
 
 
-def _clip_spec(clip: Clip, path: str, kind: str, size: tuple[int, int]) -> ClipSpec:
+@dataclass(frozen=True)
+class ClipOverride:
+    """Modifications apportées par les modules à un clip au moment du rendu."""
+
+    path: str | None = None  # autre fichier source (ex. timelapse pré-calculé)
+    source_in: int | None = None
+    speed: float | None = None
+    extra_filters: tuple[tuple[str, dict], ...] = ()
+
+
+ClipHook = Callable[[Clip, MediaItem], ClipOverride | None]
+
+
+def _clip_spec(clip: Clip, path: str, kind: str, size: tuple[int, int],
+               override: ClipOverride | None = None) -> ClipSpec:
     text = clip.text
+    o = override or ClipOverride()
     return ClipSpec(
-        path, kind, clip.start, clip.duration, clip.source_in, clip.speed, clip.volume,
+        o.path or path, kind, clip.start, clip.duration,
+        clip.source_in if o.source_in is None else o.source_in,
+        clip.speed if o.speed is None else o.speed, clip.volume,
         clip.fade_in, clip.fade_out, size, copy.deepcopy(clip.transform),
         copy.deepcopy(clip.color), clip.preset, clip.preset_amount, copy.deepcopy(clip.effects),
-        text.animation_in if text else "none", text.animation_out if text else "none")
+        text.animation_in if text else "none", text.animation_out if text else "none",
+        tuple(o.extra_filters))
 
 
-def timeline_spec(project: Project, text_image: TextImage | None = None) -> TimelineSpec:
+def timeline_spec(project: Project, text_image: TextImage | None = None,
+                  hook: ClipHook | None = None) -> TimelineSpec:
     """Description de la timeline pour le moteur. Sans `text_image`, les textes sont ignorés."""
     w, h = project.canvas_size
     media = {m.id: m for m in project.media}
@@ -111,7 +131,8 @@ def timeline_spec(project: Project, text_image: TextImage | None = None) -> Time
                 if m is None or not m.exists:
                     continue
                 kind = "audio" if track.kind == "audio" else m.kind
-                spec = _clip_spec(c, m.path, kind, (m.width, m.height))
+                override = hook(c, m) if hook is not None and c.modules else None
+                spec = _clip_spec(c, m.path, kind, (m.width, m.height), override)
             clips.append(spec)
             ids.append(c.id)
         transitions = tuple(

@@ -120,6 +120,7 @@ QLineEdit[variant="title"] {{ background: transparent; border: 1px solid transpa
 QLineEdit[variant="title"]:hover {{ border-color: {border}; }}
 QLineEdit[variant="title"]:focus {{ border-color: {forest}; background: {field}; }}
 QComboBox::drop-down {{ border: none; width: 24px; }}
+QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{ width: 0; border: none; }}
 QComboBox QAbstractItemView {{ background: {surface}; border: 1px solid {border};
                                selection-background-color: {mist}; selection-color: {ink}; }}
 

@@ -1,3 +1,18 @@
+montar (0.4.0) unstable; urgency=medium
+
+  * Jalon J3 : système de modules et effet Timelapse.
+  * API publique montar.api (version 1) : effets vidéo réglables, outils,
+    sources de clip ; chargement isolé (un module défectueux est désactivé
+    sans bloquer montar), installation depuis un fichier .montar-module,
+    Préférences → Extensions. Documentation : docs/MODULES.md.
+  * Module intégré Timelapse : accélère une partie d'un clip (plage marquée
+    avec I et O), facteur ×2 à ×1000 ou durée cible, échantillonnage ou
+    fusion d'images, rampes de vitesse, son coupé, supprimé ou accéléré,
+    stabilisation de l'exposition ; pré-calcul en arrière-plan avec
+    avancement ; « Retirer le timelapse » réunit les morceaux du clip.
+
+ -- Fabien <admin@appsdoc.fr>  Thu, 22 Oct 2026 09:00:00 +0200
+
 montar (0.3.1) unstable; urgency=medium
 
   * Aperçu fluide : le rendu des images libère le verrou de Python, l'interface

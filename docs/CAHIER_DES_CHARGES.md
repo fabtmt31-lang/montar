@@ -327,10 +327,12 @@ montar/
 │   │   ├── home/               # Accueil, Mes projets, Préférences
 │   │   ├── editor/             # en-tête, rail, panneaux, aperçu, inspecteur (timeline au J1)
 │   │   └── dialogs/            # Nouveau projet, (Export)
-│   ├── plugins/                # chargeur de modules et API publique montar.api (J3)
+│   ├── api.py                  # API publique des modules (montar.api)
+│   ├── plugins/                # gestionnaire : découverte, chargement isolé, installation
+│   ├── modules/                # modules intégrés : timelapse
 │   ├── platform/               # chemins XDG/Windows, prénom de l'utilisateur, (accélération)
 │   └── assets/                 # polices OFL, icônes Lucide, logo
-├── modules/                    # modules intégrés : timelapse, filtres, transitions (J3)
+├── examples/modules/           # module d'exemple tiers (« Négatif »)
 ├── data/                       # lanceur, montar.desktop, type MIME, AppStream, page de manuel
 ├── debian/                     # empaquetage Debian (format natif)
 ├── scripts/build-deb.sh        # construction du .deb dans dist/
@@ -361,7 +363,8 @@ montar/
 - Les paramètres déclarés génèrent automatiquement l'interface dans l'inspecteur (curseurs, listes, couleurs, cases).
 - Points d'extension : `VideoEffect`, `AudioEffect`, `Transition`, `Generator`, `ExportFormat`, `Tool`, `Panel`.
 - **Versionnage sémantique** de l'API ; compatibilité garantie à l'intérieur d'une version majeure.
-- Emplacements : modules système `/usr/share/montar/modules` (Windows : dossier d'installation) et utilisateur `~/.local/share/montar/modules` (Windows : `%APPDATA%\montar\modules`).
+- Emplacements : modules intégrés dans le paquet (`/usr/share/montar/montar/modules`) et modules de l'utilisateur `~/.local/share/montar/modules` (Windows : `%APPDATA%\montar\modules`).
+- Réalisation (J3) : les filtres, transitions et titres de base sont restés dans le cœur pour la v1 ; le Timelapse est le module intégré de référence. Documentation de l'API : `docs/MODULES.md`.
 - Chargement isolé : chaque module est importé dans un bloc protégé ; une exception désactive le module sans arrêter l'application.
 
 ### 5.4 Implémentation envisagée du Timelapse (module `modules/timelapse`)
@@ -472,7 +475,7 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
 | **J0 — Socle** ✅ (0.1.0) | Projet Python (`pyproject.toml`), thème QSS issu de la charte, fenêtre principale et navigation, accueil, import, aperçu d'un clip via MLT, CI avec `.deb` de développement | Build de dev |
 | **J1 — Timeline** ✅ (0.2.0) | Widget timeline, pistes, glisser-déposer, rogner, scinder, undo/redo, sauvegarde projet JSON, Nouveau projet | Alpha interne |
 | **J2 — Édition de base** ✅ (0.3.0) | Inspecteur (transformation, ajustements, vitesse, couleur), filtres, texte et titres, transitions, audio | Alpha |
-| **J3 — Timelapse + API modules** | Chargeur de modules, API v1 documentée, module Timelapse, Préférences → Extensions | Bêta |
+| **J3 — Timelapse + API modules** ✅ (0.4.0) | Chargeur de modules, API v1 documentée, module Timelapse, Préférences → Extensions | Bêta |
 | **J4 — Export & packaging Linux** | Dialogue d'export, file d'export, accélération matérielle, préférences complètes, `.deb` validé sur Debian / Ubuntu / Mint | **v1.0 Linux** |
 | **J5 — Portage Windows** | Prototype moteur, exécutable, installeur | **v1.0 Windows** |
 | **J6+** | Fonctions P3, kit de marque, sous-titres automatiques, catalogue de modules, autres distributions | v1.x |

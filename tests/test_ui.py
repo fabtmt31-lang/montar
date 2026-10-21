@@ -347,3 +347,66 @@ def test_preview_follows_drag(window, media_dir):
     editor.controller.undo()  # tout le geste = une seule étape
     assert editor.controller.selected_clip() is None or \
         editor.project.clips[-1].transform.x == 0
+
+
+# --- J3 ----------------------------------------------------------------------------------
+
+
+@needs_ffmpeg
+def test_timelapse_tool_with_marked_range(window, media_dir, monkeypatch):
+
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])  # 50 images
+    clip = editor.project.clips[0]
+    editor.controller.select(clip.id)
+    view = editor.timeline.view
+    view.set_playhead(10)
+    QTest.keyClick(window, Qt.Key.Key_I)
+    view.set_playhead(42)
+    QTest.keyClick(window, Qt.Key.Key_O)
+    assert view.selection_range == (clip.id, 10, 42)
+
+    tools = dict((t.id, (m, t)) for m, t in editor.modules.tools_for(clip, "speed"))
+    assert "timelapse.apply" in tools
+    import importlib
+
+    dialog_module = importlib.import_module("montar_modules.timelapse.dialog")
+    monkeypatch.setattr(dialog_module.TimelapseDialog, "exec",
+                        lambda self: dialog_module.QDialog.DialogCode.Accepted)
+    module_id, tool = tools["timelapse.apply"]
+    editor.modules.run_tool(module_id, tool, clip)
+    segment = editor.controller.selected_clip()
+    assert segment.modules["timelapse"]["source_frames"] == 32
+    assert segment.duration == 2  # ×16 par défaut
+    assert [c.duration for c in sorted(editor.project.clips, key=lambda c: c.start)] == \
+        [10, 2, 8]
+    assert "TL ×16" in editor.modules.badges(segment)
+
+    # le pré-calcul se lance en arrière-plan puis remplace l'aperçu provisoire
+    editor._reload_player()
+    assert editor.modules.jobs.jobs  # tâche en cours, aperçu provisoire par saut d'images
+    assert wait_until(lambda: not editor.modules.jobs.jobs, 30)
+    assert not editor.modules.jobs.failed
+    override = editor.modules.hook(segment, editor.project.media[0])
+    assert override is not None and override.path.endswith(".mp4") and override.speed == 1.0
+
+    # retirer le timelapse réunit les trois morceaux
+    remove = dict((t.id, (m, t)) for m, t in editor.modules.tools_for(segment))
+    editor.modules.run_tool(*remove["timelapse.remove"], segment)
+    assert len(editor.project.clips) == 1 and editor.project.clips[0].duration == 50
+    editor.controller.undo()
+    assert len(editor.project.clips) == 3
+
+
+@needs_ffmpeg
+def test_missing_module_keeps_settings(window, media_dir):
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    clip = editor.project.clips[0]
+    editor.controller.edit_clip("x", clip.id,
+                                lambda c: c.modules.update({"inconnu.effet": {"a": 1}}))
+    editor.controller.select(clip.id)
+    assert editor.inspector.missing.isVisibleTo(editor.inspector)
+    assert "inconnu.effet" in editor.inspector.missing.text()
+    assert editor.save()
+    assert Project.load(editor.project.path).clips[0].modules == {"inconnu.effet": {"a": 1}}

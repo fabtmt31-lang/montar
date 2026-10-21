@@ -329,7 +329,8 @@ class _TimelineGraph:
                 self._attach(producer, "avfilter.vflip", {})
             for name, props in (color_filters(clip.color)
                                 + preset_filters(clip.preset, clip.preset_amount)
-                                + effect_filters(clip.effects)):
+                                + effect_filters(clip.effects)
+                                + list(clip.extra_filters)):
                 self._attach(producer, name, props)
         animated = clip.kind == "text" and "slide" in (clip.animation_in, clip.animation_out)
         if not t.is_identity() or animated:

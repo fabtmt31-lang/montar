@@ -12,7 +12,7 @@ from typing import Any
 
 from montar.core import formats
 
-FORMAT_VERSION = 3  # 2 : clips de la timeline ; 3 : réglages des clips, textes, transitions
+FORMAT_VERSION = 4  # 2 : clips ; 3 : réglages, textes, transitions ; 4 : réglages de modules
 PROJECT_SUFFIX = ".montar"
 
 
@@ -157,6 +157,9 @@ class Clip:
     preset_amount: float = 1.0
     effects: Effects = field(default_factory=Effects)
     text: TextStyle | None = None
+    # Réglages propres aux modules, par identifiant de module (ex. "timelapse").
+    # Un module absent est ignoré au rendu mais ses réglages sont conservés.
+    modules: dict[str, dict[str, Any]] = field(default_factory=dict)
     id: str = field(default_factory=new_id)
 
     @property

@@ -1,0 +1,10 @@
+{
+  "id": "timelapse",
+  "name": "Timelapse",
+  "version": "1.0.0",
+  "api_version": "1.0",
+  "author": "montar",
+  "license": "GPL-3.0-or-later",
+  "description": "Accélère fortement une partie d'un clip vidéo (échantillonnage ou fusion d'images, rampes de vitesse, son coupé ou accéléré).",
+  "permissions": []
+}

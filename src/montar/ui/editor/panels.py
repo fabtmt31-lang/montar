@@ -292,12 +292,69 @@ class EffectsPanel(_Panel):
         reset.clicked.connect(self._reset)
         self.body.addWidget(reset)
         self._reset_button = reset
+        # effets apportés par les modules (contrôles générés à partir de leurs paramètres)
+        self._modules_box = QVBoxLayout()
+        self._modules_box.setSpacing(6)
+        self.body.addLayout(self._modules_box)
+        self._module_controls: list[tuple[str, object, object]] = []  # (effet, param, widget)
+        self.modules = None
         self.body.addStretch()
         controller.selectionChanged.connect(lambda _id: self.refresh())
         controller.changed.connect(self.refresh)
         self.refresh()
 
     _visual_clip = FiltersPanel._visual_clip
+
+    def set_modules(self, modules) -> None:
+        self.modules = modules
+        self.rebuild_modules()
+
+    def rebuild_modules(self) -> None:
+        while self._modules_box.count():
+            item = self._modules_box.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        self._module_controls = []
+        effects = self.modules.manager.effects() if self.modules else []
+        for _module_id, effect in effects:
+            self._modules_box.addWidget(section(_(effect.name).upper()))
+            for param in effect.params:
+                widget = self._param_widget(effect, param)
+                self._modules_box.addWidget(widget)
+                self._module_controls.append((effect, param, widget))
+        self.refresh()
+
+    def _param_widget(self, effect, param):
+        from PyQt6.QtWidgets import QCheckBox, QComboBox
+
+        def store(value, merge=True):
+            clip = self._visual_clip()
+            if clip is None:
+                return
+
+            def change(c):
+                values = dict(c.modules.get(effect.id) or effect.defaults())
+                values[param.key] = value
+                c.modules[effect.id] = values
+
+            self.controller.edit_clip(_(effect.name), clip.id, change,
+                                      merge=(clip.id, effect.id, param.key) if merge else None)
+
+        if param.kind == "bool":
+            w = QCheckBox(_(param.label))
+            w.toggled.connect(lambda on: store(bool(on), merge=False))
+        elif param.kind == "choice":
+            w = QComboBox()
+            for value, text in param.choices:
+                w.addItem(_(text), value)
+            w.currentIndexChanged.connect(lambda _i: store(w.currentData(), merge=False))
+        else:
+            unit = f" {param.unit}" if param.unit else ""
+            decimals = 0 if param.kind == "int" else 2
+            w = SliderRow(_(param.label), param.minimum, param.maximum,
+                          lambda v, d=decimals, u=unit: f"{v:.{d}f}{u}")
+            w.moved.connect(lambda v: store(round(v) if param.kind == "int" else round(v, 4)))
+        return w
 
     def refresh(self) -> None:
         clip = self._visual_clip()
@@ -306,6 +363,20 @@ class EffectsPanel(_Panel):
             row.setEnabled(clip is not None)
             if clip is not None:
                 row.set_value(getattr(clip.effects, key) * 100)
+        for effect, param, widget in self._module_controls:
+            widget.setEnabled(clip is not None)
+            if clip is None:
+                continue
+            values = {**effect.defaults(), **(clip.modules.get(effect.id) or {})}
+            value = values.get(param.key, param.default)
+            widget.blockSignals(True)
+            if param.kind == "bool":
+                widget.setChecked(bool(value))
+            elif param.kind == "choice":
+                widget.setCurrentIndex(max(0, widget.findData(value)))
+            else:
+                widget.set_value(float(value))
+            widget.blockSignals(False)
         self._reset_button.setEnabled(clip is not None)
 
     def _set(self, key: str, title: str, value: float) -> None:
@@ -318,5 +389,12 @@ class EffectsPanel(_Panel):
     def _reset(self) -> None:
         clip = self._visual_clip()
         if clip is not None:
-            self.controller.edit_clip(_("Retirer les effets"), clip.id,
-                                      lambda c: setattr(c, "effects", Effects()))
+            effect_ids = {e.id for _m, e in self.modules.manager.effects()} if self.modules \
+                else set()
+
+            def change(c):
+                c.effects = Effects()
+                for key in effect_ids:
+                    c.modules.pop(key, None)
+
+            self.controller.edit_clip(_("Retirer les effets"), clip.id, change)

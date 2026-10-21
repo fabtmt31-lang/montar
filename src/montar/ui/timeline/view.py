@@ -82,6 +82,12 @@ class TimelineView(QAbstractScrollArea):
         self._drag: _Drag | None = None
         self._drop: tuple[str | None, int, int, str] | None = None  # piste, début, durée, type
         self._junction: tuple[Clip, Clip] | None = None  # jonction visée par une transition
+        # Plage marquée avec I / O sur un clip : (clip, début, fin) en images de timeline
+        self.selection_range: tuple[str, int, int] | None = None
+        # Fournis par la page de montage (modules) : badges d'un clip, actions d'outils
+        self.badge_provider: Callable[[Clip], list[str]] = lambda clip: []
+        self.tool_provider: Callable[[Clip], list[tuple[str, Callable[[], None]]]] = \
+            lambda clip: []
         self._hover_header: tuple[str, str] | None = None
         self.setAcceptDrops(True)
         self.viewport().setMouseTracking(True)
@@ -248,6 +254,7 @@ class TimelineView(QAbstractScrollArea):
                 self._paint_clip(painter, clip, rect, clip.id == self.controller.selected)
         for transition in self.controller.project.transitions:
             self._paint_transition(painter, transition)
+        self._paint_range(painter)
         if dragged:
             d = self._drag
             clip = self._find_clip(dragged)
@@ -344,8 +351,8 @@ class TimelineView(QAbstractScrollArea):
                 painter.drawRoundedRect(QRectF(x, cy - 9, 3, 18), 1.5, 1.5)
 
     def _badges(self, clip: Clip, media: MediaItem | None) -> list[str]:
-        badges = []
-        if clip.speed != 1.0:
+        badges = list(self.badge_provider(clip))
+        if clip.speed != 1.0 and not badges:
             badges.append(f"×{clip.speed:g}")
         if media is not None and media.has_audio and clip.volume == 0:
             badges.append("mute")
@@ -376,6 +383,60 @@ class TimelineView(QAbstractScrollArea):
             painter.setPen(QColor("#FFFFFF"))
             painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, badge)
         return rect.left() - 4
+
+    # --- plage I / O -------------------------------------------------------------------
+
+    def _range_clip(self) -> Clip | None:
+        """Clip visé par les touches I / O : le clip sélectionné, s'il est sous la tête."""
+        clip = self.controller.selected_clip()
+        if clip is not None and clip.start <= self.playhead <= clip.end:
+            return clip
+        return None
+
+    def mark_in(self) -> None:
+        clip = self._range_clip()
+        if clip is None:
+            return
+        current = self.selection_range
+        end = current[2] if current and current[0] == clip.id else clip.end
+        start = min(self.playhead, end - 1)
+        self.selection_range = (clip.id, max(clip.start, start), end)
+        self.viewport().update()
+
+    def mark_out(self) -> None:
+        clip = self._range_clip()
+        if clip is None:
+            return
+        current = self.selection_range
+        start = current[1] if current and current[0] == clip.id else clip.start
+        end = max(self.playhead, start + 1)
+        self.selection_range = (clip.id, start, min(clip.end, end))
+        self.viewport().update()
+
+    def clear_range(self) -> None:
+        self.selection_range = None
+        self.viewport().update()
+
+    def _paint_range(self, painter: QPainter) -> None:
+        if self.selection_range is None:
+            return
+        clip_id, start, end = self.selection_range
+        clip = self._find_clip(clip_id)
+        if clip is None or not (clip.start <= start < end <= clip.end):
+            self.selection_range = None
+            return
+        rect = self.clip_rect(clip, start, end - start)
+        if rect is None:
+            return
+        p = theme().palette
+        fill = QColor(p.forest)
+        fill.setAlphaF(0.28)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(fill)
+        painter.drawRect(rect)
+        painter.setBrush(QColor(p.forest))
+        for x in (rect.left(), rect.right() - 3):
+            painter.drawRect(QRectF(x, rect.top() - 3, 3, rect.height() + 6))
 
     def _paint_fades(self, painter: QPainter, clip: Clip, rect: QRectF) -> None:
         """Rampes de fondu en haut du clip."""
@@ -803,6 +864,11 @@ class TimelineView(QAbstractScrollArea):
                     and timeline.track(hit[0].track_id).kind == "video" and hit[0].volume > 0):
                 menu.addAction(_("Détacher l'audio"), lambda: self.controller.edit(
                     _("Détacher l'audio"), lambda t: t.detach_audio(clip_id)))
+            tools = self.tool_provider(hit[0])
+            if tools:
+                menu.addSeparator()
+                for text, action in tools:
+                    menu.addAction(text, action)
             menu.addSeparator()
             menu.addAction(_("Supprimer"), lambda: self.controller.edit(
                 _("Supprimer"), lambda t: t.delete(clip_id)))

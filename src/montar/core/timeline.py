@@ -88,6 +88,11 @@ class Timeline:
             return media.kind == "audio" or (media.kind == "video" and media.has_audio)
         return False
 
+    @staticmethod
+    def timing_locked(clip: Clip) -> bool:
+        """Un module (ex. timelapse) peut figer la durée et le point d'entrée d'un clip."""
+        return any(isinstance(v, dict) and v.get("locks_timing") for v in clip.modules.values())
+
     def accepts_clip(self, track: Track, clip: Clip) -> bool:
         """Un clip déjà placé ne change que pour une piste du même type."""
         return track.kind == self.track(clip.track_id).kind
@@ -236,6 +241,8 @@ class Timeline:
     def trim_bounds(self, clip_id: str, edge: str) -> tuple[int, int]:
         """Positions possibles du bord `edge` ("start" ou "end") du clip."""
         clip = self.clip(clip_id)
+        if self.timing_locked(clip):
+            return (clip.start, clip.start) if edge == "start" else (clip.end, clip.end)
         if edge == "start" and self.transition_before(clip_id) is not None:
             return clip.start, clip.start  # bord occupé par une transition
         if edge == "end" and self.transition_after(clip_id) is not None:
@@ -273,6 +280,8 @@ class Timeline:
     def split(self, clip_id: str, frame: int) -> Clip | None:
         """Coupe le clip à `frame` ; renvoie la seconde partie (None si hors du clip)."""
         clip = self.clip(clip_id)
+        if self.timing_locked(clip):
+            return None
         before = self.transition_before(clip_id)
         after = self.transition_after(clip_id)
         low = clip.start + (before.duration if before else 0)
@@ -319,6 +328,8 @@ class Timeline:
         clip = self.clip(clip_id)
         if self.media_of(clip) is None or self.media_of(clip).kind == "image":
             raise TimelineError("la vitesse ne s'applique qu'aux vidéos et aux sons")
+        if self.timing_locked(clip):
+            raise TimelineError("retirez d'abord l'effet qui fixe la vitesse de ce clip")
         speed = max(MIN_SPEED, min(MAX_SPEED, round(speed, 3)))
         if speed == clip.speed:
             return clip
@@ -432,6 +443,41 @@ class Timeline:
                     and right.track_id == t.track_id and left.end - right.start == t.duration):
                 kept.append(t)
         self.project.transitions = kept
+
+    def shift_after(self, track_id: str, frame: int, delta: int,
+                    ignore: str | None = None) -> None:
+        """Décale de `delta` les clips de la piste commençant à `frame` ou après."""
+        self._shift_from(track_id, frame, delta, ignore)
+
+    def merge_contiguous(self, clip_id: str) -> Clip:
+        """Réunit le clip avec ses voisins s'ils sont la suite exacte du même média
+        (mêmes réglages, vitesse normale) : l'inverse d'une coupe."""
+        clip = self.clip(clip_id)
+
+        def same(a: Clip, b: Clip) -> bool:
+            keep = ("id", "start", "duration", "source_in", "fade_in", "fade_out")
+            fields_a = {k: v for k, v in a.__dict__.items() if k not in keep}
+            fields_b = {k: v for k, v in b.__dict__.items() if k not in keep}
+            return (fields_a == fields_b and a.speed == 1.0 and not a.is_text
+                    and not a.modules and a.end == b.start
+                    and a.source_in + a.duration == b.source_in
+                    and self.transition_after(a.id) is None)
+
+        for side in ("left", "right"):
+            other = self.neighbour(clip.id, side)
+            if other is None:
+                continue
+            left, right = (other, clip) if side == "left" else (clip, other)
+            if not same(left, right):
+                continue
+            after = self.transition_after(right.id)
+            left.duration += right.duration
+            left.fade_out = right.fade_out
+            if after is not None:
+                after.left_id = left.id
+            self.project.clips.remove(right)
+            clip = left
+        return clip
 
     def _drop_transitions(self, clip_id: str) -> None:
         self.project.transitions = [t for t in self.project.transitions
