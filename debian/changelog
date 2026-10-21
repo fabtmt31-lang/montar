@@ -1,3 +1,16 @@
+montar (0.4.3) unstable; urgency=medium
+
+  * Correction de la vraie cause du placement erroné dans l'aperçu : Qt
+    adopte la convention numérique du système, et MLT lisait alors les
+    nombres de ses filtres avec la virgule décimale (en français, « 345.6 »
+    devenait « 345 ») ; l'élément déplacé ou redimensionné se retrouvait
+    réduit en haut à gauche. Le moteur impose désormais le point décimal.
+    Les fondus et volumes animés étaient touchés de la même façon.
+  * Retrait du rendu de secours en pleine taille de la 0.4.2, inutile.
+  * --diagnostic affiche aussi la convention numérique du système.
+
+ -- Fabien <admin@appsdoc.fr>  Fri, 23 Oct 2026 14:00:00 +0200
+
 montar (0.4.2) unstable; urgency=medium
 
   * Aperçu : sur certains systèmes, MLT plaçait mal un élément déplacé ou

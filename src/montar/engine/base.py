@@ -159,12 +159,6 @@ class Source(ABC):
     def render(self, frame: int, width: int, height: int) -> bytes:
         """Image `frame` en RGBA 8 bits, de taille width × height (toile entière)."""
 
-    @property
-    def scales_correctly(self) -> bool:
-        """False si le rendu en taille réduite place mal les éléments : l'aperçu est alors
-        rendu à la taille de la toile puis réduit."""
-        return True
-
     def update(self, spec: TimelineSpec) -> bool:
         """Applique une timeline de même structure sans reconstruction ; False sinon."""
         return False

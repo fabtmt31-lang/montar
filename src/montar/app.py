@@ -57,6 +57,14 @@ def diagnostic() -> int:
         print(f"Qt {QT_VERSION_STR}, PyQt {PYQT_VERSION_STR}")
     except ImportError as exc:
         print(f"PyQt6 absent : {exc}")
+    import locale
+
+    try:
+        locale.setlocale(locale.LC_ALL, "")  # comme Qt au démarrage
+    except locale.Error:
+        pass
+    print(f"Convention numérique du système : « {locale.localeconv()['decimal_point']} » "
+          f"({locale.setlocale(locale.LC_NUMERIC)})")
     try:
         from montar.engine import get_engine
         from montar.engine.mlt_engine import preview_scaling_check
@@ -64,8 +72,8 @@ def diagnostic() -> int:
         engine = get_engine()
         print(f"MLT {engine.version()}")
         check = preview_scaling_check()
-        state = "correct" if check["ok"] else "INCORRECT (aperçu rendu en pleine taille)"
-        print(f"Placement en taille réduite : {state}")
+        print(f"Convention numérique du moteur : « {locale.localeconv()['decimal_point']} »")
+        print(f"Placement dans l'aperçu : {'correct' if check['ok'] else 'INCORRECT'}")
         print(f"  attendu {check.get('expected')}")
         for size, box in check.get("sizes", {}).items():
             print(f"  {size} : {box}")
@@ -96,6 +104,11 @@ def main(argv: list[str] | None = None) -> int:
     from montar.ui.theme.manager import app_icon, load_fonts
 
     app = QApplication([sys.argv[0], *qt_args])
+    # QApplication adopte la convention numérique du système (virgule en français), que
+    # MLT utiliserait pour lire ses nombres : le moteur exige le point décimal.
+    from montar.engine.mlt_engine import use_c_numeric
+
+    use_c_numeric()
     app.setApplicationName("montar")
     app.setApplicationDisplayName("montar")
     app.setApplicationVersion(__version__)

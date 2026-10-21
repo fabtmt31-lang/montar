@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.util
+import locale
 import logging
 import math
 import os
@@ -86,10 +87,22 @@ def _deny_qt5_modules() -> None:
         current + [m for m in _DENIED_MODULES if m not in current])
 
 
+def use_c_numeric() -> None:
+    """MLT lit les nombres de ses propriétés (rectangle du filtre affine, valeurs animées…)
+    selon la convention numérique du processus. Qt adopte celle du système au démarrage :
+    en français, « 345.6 » serait lu « 345 » et l'élément transformé se retrouverait réduit
+    en haut à gauche. Le moteur impose donc le point décimal."""
+    try:
+        locale.setlocale(locale.LC_NUMERIC, "C")
+    except locale.Error:  # pragma: no cover - « C » existe toujours
+        pass
+
+
 def _ensure_factory() -> None:
     global _factory_ready
     if mlt is None:
         raise EngineUnavailable("bindings Python de MLT introuvables (paquet python3-mlt)")
+    use_c_numeric()
     with _init_lock:
         if not _factory_ready:
             _deny_qt5_modules()
@@ -391,10 +404,6 @@ class MltSource(Source):
     def length(self) -> int:
         return self._graph.length
 
-    @property
-    def scales_correctly(self) -> bool:
-        return preview_scaling_ok()
-
     def render(self, frame: int, width: int, height: int) -> bytes:
         expected = width * height * 4
         if self.length == 0:
@@ -444,18 +453,13 @@ _CHECK_SIZES = ((1920, 1080), (640, 360), (960, 540))
 
 
 def preview_scaling_check() -> dict:
-    """Vérifie une fois par session que MLT place correctement un élément transformé
-    quand l'aperçu est rendu plus petit que la toile (ce n'est pas le cas sur certains
-    systèmes). Renvoie les rectangles attendus et obtenus pour chaque taille."""
+    """Diagnostic : rend un élément déplacé et réduit à plusieurs tailles d'aperçu et
+    compare sa position à celle attendue. Renvoie les rectangles attendus et obtenus."""
     global _scaling_result
     with _scaling_lock:
         if _scaling_result is not None:
             return _scaling_result
-        forced = os.environ.get("MONTAR_PREVIEW_FULLRES")
-        result: dict = {"ok": forced != "1", "forced": forced in ("0", "1"), "sizes": {}}
-        if forced in ("0", "1"):
-            _scaling_result = result
-            return result
+        result: dict = {"ok": True, "sizes": {}}
         from montar.core.project import Transform
         from montar.platform.paths import cache_dir
 
@@ -488,18 +492,10 @@ def preview_scaling_check() -> dict:
                 if got is None or max(abs(a - b) for a, b in
                                       zip(got, expected, strict=True)) > tolerance:
                     result["ok"] = False
-        except Exception as exc:  # le test ne doit jamais empêcher l'aperçu
-            log.warning("vérification de l'aperçu impossible : %s", exc)
-            result["error"] = str(exc)
-        if not result["ok"]:
-            log.warning("aperçu rendu à la taille de la toile (placement MLT incorrect en "
-                        "taille réduite) : %s", result)
+        except Exception as exc:
+            result["ok"], result["error"] = False, str(exc)
         _scaling_result = result
         return result
-
-
-def preview_scaling_ok() -> bool:
-    return preview_scaling_check()["ok"]
 
 
 def _magenta_box(data: bytes, w: int, h: int, k: float) -> list[int] | None:

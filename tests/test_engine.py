@@ -279,3 +279,30 @@ def test_preview_scaling_self_check(engine):
 
     check = preview_scaling_check()
     assert check["ok"], check
+
+
+def test_comma_locale_does_not_break_placement(media_dir):
+    """Qt adopte la convention du système (virgule décimale en français) : MLT lirait mal
+    le rectangle du filtre affine. Le moteur doit rétablir le point décimal."""
+    import locale
+
+    from montar.engine import get_engine
+
+    try:
+        locale.setlocale(locale.LC_NUMERIC, "fr_FR.UTF-8")
+    except locale.Error:
+        pytest.skip("locale fr_FR.UTF-8 absente")
+    try:
+        engine = get_engine()
+        assert locale.localeconv()["decimal_point"] == "."
+        blue = str(media_dir / "blue.mp4")
+        t = Transform(scale=0.5, x=0.123, y=-0.077)
+        src = engine.build(spec(video(ClipSpec(blue, "video", 0, 10, media_size=(64, 36),
+                                               transform=t)), w=1280, h=720))
+        p = placement(1280, 720, 64, 36, t)
+        data = src.render(0, 640, 360)
+        inside = pixel(data, 640, int(p.cx / 2), int(p.cy / 2))[:3]
+        outside = pixel(data, 640, int((p.left - 10) / 2), int(p.cy / 2))[:3]
+        assert near(inside, BLUE) and outside == BLACK
+    finally:
+        locale.setlocale(locale.LC_NUMERIC, "C")
