@@ -19,6 +19,7 @@ from montar.engine.base import (
     ClipSpec,
     Engine,
     EngineUnavailable,
+    ExportJob,
     Source,
     SourceError,
     TimelineSpec,
@@ -551,6 +552,109 @@ class MltAudioOutput(AudioOutput):
         self._graph = None
 
 
+class MltExport(ExportJob):
+    """Export par le consommateur MLT « avformat » (FFmpeg), dans un fil dédié."""
+
+    POLL = 0.2
+
+    def __init__(self, spec: TimelineSpec, settings) -> None:
+        self.spec, self.settings = spec, settings
+        self.total = max(1, spec.length)
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._consumer = None
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, name="montar-export", daemon=True)
+        self._thread.start()
+
+    def cancel(self) -> None:
+        self._stop.set()
+
+    def wait(self, timeout: float | None = None) -> bool:
+        if self._thread is not None:
+            self._thread.join(timeout)
+        return self.finished
+
+    def _run(self) -> None:
+        from montar.engine import export as ex
+
+        settings = self.settings
+        target = settings.path
+        intermediate = None
+        try:
+            if settings.format == "gif":
+                intermediate = f"{target}.part.mkv"
+            encoder = None
+            if settings.hardware and not settings.audio_only and settings.format != "gif":
+                encoder = ex.hardware_encoder(settings.codec)
+            output = intermediate or f"{target}.part{os.path.splitext(target)[1]}"
+            ok = self._encode(output, ex.consumer_properties(settings, encoder))
+            if not ok and encoder is not None and not self._stop.is_set():
+                log.warning("export avec %s impossible, repli sur l'encodeur logiciel",
+                            encoder)
+                encoder = None
+                self.done = 0
+                ok = self._encode(output, ex.consumer_properties(settings, None))
+            if self._stop.is_set():
+                self.cancelled, self.error = True, "annulé"
+                return
+            if not ok:
+                self.error = "l'encodage a échoué (voir le journal)"
+                return
+            if intermediate is not None:
+                import subprocess
+
+                done = subprocess.run(ex.gif_command(intermediate, f"{target}.part.gif",
+                                                     settings.fps, settings.width),
+                                      capture_output=True, text=True)
+                if done.returncode != 0:
+                    self.error = (done.stderr.strip().splitlines() or ["GIF impossible"])[-1]
+                    return
+                output = f"{target}.part.gif"
+            os.replace(output, target)
+        except Exception as exc:  # jamais d'exception hors du fil
+            log.exception("export")
+            self.error = str(exc)
+        finally:
+            for leftover in (f"{target}.part.mkv", f"{target}.part.gif",
+                             f"{target}.part{os.path.splitext(target)[1]}"):
+                if os.path.exists(leftover):
+                    os.remove(leftover)
+            self.finished = True
+
+    def _encode(self, output: str, props: dict) -> bool:
+        use_c_numeric()
+        graph = _TimelineGraph(self.spec)
+        consumer = mlt.Consumer(graph.profile, "avformat", output)
+        if consumer is None or not consumer.is_valid():
+            raise SourceError("consommateur avformat indisponible")
+        for key, value in props.items():
+            consumer.set(key, value)
+        self.used_encoder = str(props.get("vcodec") or props.get("acodec", ""))
+        consumer.set("real_time", -max(1, min(4, (os.cpu_count() or 2) // 2)))
+        consumer.set("terminate_on_pause", 1)
+        graph.tractor.set("out", self.total - 1)
+        consumer.connect(graph.tractor)
+        graph.tractor.seek(0)
+        graph.tractor.set_speed(1)
+        self._consumer = consumer
+        if consumer.start() != 0:
+            return False
+        while not consumer.is_stopped():
+            if self._stop.is_set():
+                consumer.stop()
+                break
+            self.done = min(self.total, max(self.done, graph.tractor.frame()))
+            self._stop.wait(self.POLL)
+        consumer.stop()
+        self._consumer = None
+        if self._stop.is_set():
+            return False
+        self.done = self.total
+        return os.path.exists(output) and os.path.getsize(output) > 0
+
+
 class MltEngine(Engine):
     name = "MLT"
 
@@ -562,6 +666,9 @@ class MltEngine(Engine):
 
     def build(self, spec: TimelineSpec) -> Source:
         return MltSource(spec)
+
+    def export(self, spec: TimelineSpec, settings) -> ExportJob:
+        return MltExport(spec, settings)
 
     def audio_output(self, spec: TimelineSpec) -> AudioOutput | None:
         if spec.length == 0:

@@ -73,6 +73,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, _("Préférences"), str(exc))
         if self.editor is not None:
             self.editor.set_preview_quality(self.settings.preview_quality)
+            self.editor.apply_preferences(self.settings)
 
     # --- projets ---------------------------------------------------------------
 
@@ -139,6 +140,7 @@ class MainWindow(QMainWindow):
         self._close_editor()
         editor = EditorPage(project, get_engine, self.cache, self.settings.preview_quality,
                             self.modules)
+        editor.apply_preferences(self.settings, opening=True)
         editor.backRequested.connect(self.show_home)
         editor.saved.connect(lambda _p: None)
         self.editor = editor

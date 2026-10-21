@@ -191,3 +191,31 @@ def hline() -> QFrame:
     line.setObjectName("Separator")
     line.setFixedHeight(1)
     return line
+
+
+class Switch(QAbstractButton):
+    """Interrupteur (maquette 06)."""
+
+    def __init__(self, checked: bool = False, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setCheckable(True)
+        self.setChecked(checked)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedSize(46, 26)
+        theme().changed.connect(self.update)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        p = theme().palette
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        on = self.isChecked()
+        track = QColor(p.forest if on else p.mist)
+        if not self.isEnabled():
+            track.setAlphaF(0.5)
+        painter.setBrush(track)
+        painter.drawRoundedRect(self.rect(), 13, 13)
+        painter.setBrush(QColor("#FFFFFF"))
+        x = self.width() - 23 if on else 3
+        painter.drawEllipse(x, 3, 20, 20)
+        painter.end()

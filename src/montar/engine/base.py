@@ -110,9 +110,11 @@ def _clip_spec(clip: Clip, path: str, kind: str, size: tuple[int, int],
 
 
 def timeline_spec(project: Project, text_image: TextImage | None = None,
-                  hook: ClipHook | None = None) -> TimelineSpec:
-    """Description de la timeline pour le moteur. Sans `text_image`, les textes sont ignorés."""
-    w, h = project.canvas_size
+                  hook: ClipHook | None = None,
+                  size: tuple[int, int] | None = None) -> TimelineSpec:
+    """Description de la timeline pour le moteur. Sans `text_image`, les textes sont ignorés.
+    `size` remplace la taille de la toile (export à une autre résolution)."""
+    w, h = size or project.canvas_size
     media = {m.id: m for m in project.media}
     by_kind = {k: [t for t in project.tracks if t.kind == k] for k in ("video", "text", "audio")}
     tracks = []
@@ -184,6 +186,34 @@ class AudioOutput(ABC):
         pass
 
 
+class ExportJob(ABC):
+    """Export d'une timeline vers un fichier, en tâche de fond. Les attributs sont lus
+    depuis l'interface pendant que le moteur travaille."""
+
+    total: int = 0  # images à produire
+    done: int = 0  # images déjà produites
+    finished: bool = False
+    error: str = ""  # vide si l'export a réussi (ou est en cours)
+    cancelled: bool = False
+    used_encoder: str = ""  # encodeur vidéo réellement utilisé
+
+    @abstractmethod
+    def start(self) -> None: ...
+
+    @abstractmethod
+    def cancel(self) -> None: ...
+
+    def wait(self, timeout: float | None = None) -> bool:
+        """Attend la fin (utile aux tests) ; renvoie `finished`."""
+        return self.finished
+
+    @property
+    def progress(self) -> float:
+        if self.finished and not self.error:
+            return 1.0
+        return min(1.0, self.done / max(1, self.total))
+
+
 class Engine(ABC):
     name: str = ""
 
@@ -193,6 +223,11 @@ class Engine(ABC):
     @abstractmethod
     def build(self, spec: TimelineSpec) -> Source:
         """Construit la timeline ; à utiliser depuis un seul fil d'exécution."""
+
+    def export(self, spec: TimelineSpec, settings) -> ExportJob:
+        """Prépare l'export (`settings` : `engine.export.ExportSettings`), à lancer par
+        `start()` ; la timeline doit être à la taille et à la fréquence de sortie."""
+        raise NotImplementedError
 
     def audio_output(self, spec: TimelineSpec) -> AudioOutput | None:
         """Sortie son, ou None si aucune n'est disponible."""

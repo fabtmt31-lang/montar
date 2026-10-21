@@ -18,6 +18,9 @@ class Settings:
     projects_dir: str = ""
     preview_quality: str = "medium"
     disabled_modules: list[str] = field(default_factory=list)
+    hardware_export: bool = False  # accélération matérielle proposée à l'export
+    video_waveforms: bool = True  # forme d'onde sous les vignettes des clips vidéo
+    snap: bool = True  # magnétisme de la timeline à l'ouverture d'un projet
 
     @property
     def projects_path(self) -> Path:
@@ -31,8 +34,10 @@ class Settings:
             return cls()
         if not isinstance(data, dict):
             return cls()
-        known = {f.name for f in fields(cls)}
-        values = {k: v for k, v in data.items() if k in known and isinstance(v, str)}
+        defaults = cls()
+        values = {f.name: data[f.name] for f in fields(cls) if f.name in data
+                  and type(data[f.name]) is type(getattr(defaults, f.name))
+                  and not isinstance(data[f.name], list)}
         disabled = data.get("disabled_modules")
         if isinstance(disabled, list):
             values["disabled_modules"] = [m for m in disabled if isinstance(m, str)]

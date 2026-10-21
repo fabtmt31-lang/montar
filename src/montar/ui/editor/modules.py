@@ -189,6 +189,19 @@ class EditorModules:
             return None
         return ClipOverride(path, source_in, speed, tuple(filters))
 
+    def pending_sources(self) -> list[Clip]:
+        """Clips dont la source de remplacement (ex. timelapse) n'est pas encore calculée."""
+        pending = []
+        for clip in self.project.clips:
+            media = self.project.find_media(clip.media_id) if clip.media_id else None
+            if media is None or not clip.modules:
+                continue
+            if any(module_id in clip.modules for module_id, _s in self.manager.sources()):
+                override = self.hook(clip, media)
+                if override is None or override.path is None:
+                    pending.append(clip)
+        return pending
+
     def badges(self, clip: Clip) -> list[str]:
         result = []
         for module_id, source in self.manager.sources():

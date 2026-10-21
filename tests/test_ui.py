@@ -555,22 +555,6 @@ def test_timeline_range_isolate_new_track_and_reorder(window, media_dir):
 
 
 @needs_ffmpeg
-def test_header_modes_open_panels(window, media_dir):
-    editor = imported_editor(window, media_dir, ["clip.mp4"])
-    editor.add_to_timeline(editor.project.media[0])
-    editor.controller.select(editor.project.clips[0].id)
-    editor.modes.button("color").click()
-    assert editor.side.currentWidget() is editor.filters_panel
-    assert editor.inspector.clip_tabs.current() == "color"
-    editor.modes.button("audio").click()
-    assert editor.inspector.clip_tabs.current() == "audio"
-    assert editor.media_panel.isVisible() or editor.side.currentWidget() is editor.media_panel
-    editor.modes.button("edit").click()
-    assert editor.inspector.clip_tabs.current() == "image"
-    assert not editor.modes.button("subtitles").isEnabled()
-
-
-@needs_ffmpeg
 def test_detached_clip_hides_waveform(window, media_dir, monkeypatch):
     editor = imported_editor(window, media_dir, ["clip.mp4"])
     editor.add_to_timeline(editor.project.media[0])
@@ -656,3 +640,114 @@ def test_old_project_moves_into_folder_and_gathers_media(window, isolated_home, 
     assert copy.exists() and (media_dir / "clip.mp4").exists()  # l'original est intact
     assert editor.save()
     assert Project.load(editor.project.path).media[0].path == str(copy)
+
+
+# --- J4 : export ------------------------------------------------------------------------
+
+
+@needs_ffmpeg
+def test_acceptance_scenario_export(window, media_dir, monkeypatch):
+    """Cahier des charges §10 : projet 16:9 → 3 vidéos + 1 musique → couper, ordonner,
+    2 transitions, un titre → Timelapse ×20 sur une portion → export MP4 1080p → relecture."""
+    import importlib
+    import json
+    import shutil
+    import subprocess
+
+    from montar.ui.dialogs.export import ExportDialog
+
+    editor = window.create_project(NewProjectParams("Recette", "16:9", "1080p", 25))
+    editor.import_files([str(media_dir / n) for n in ("clip.mp4", "red.mp4", "blue.mp4",
+                                                     "son.wav")])
+    assert wait_until(lambda: editor.pending_imports == 0 and len(editor.project.media) == 4)
+    by_name = {m.name: m for m in editor.project.media}
+    for name in ("clip.mp4", "red.mp4", "blue.mp4", "son.wav"):
+        editor.add_to_timeline(by_name[name])
+    ctl = editor.controller
+    clips = lambda: sorted((c for c in editor.project.clips  # noqa: E731
+                            if ctl.timeline.track(c.track_id).kind == "video"),
+                           key=lambda c: c.start)
+    first, red, blue = clips()
+    ctl.edit("couper", lambda t: t.split_at(25, first.id))
+    ctl.edit("ordonner", lambda t: t.move_clip(blue.id, blue.track_id, 400))  # bleu à la fin
+    ctl.edit("combler", lambda t: t.move_clip(blue.id, blue.track_id, red.end))
+    a, b, c, d = clips()
+    ctl.edit("t1", lambda t: t.add_transition(a.id, b.id, "dissolve"))
+    ctl.edit("t2", lambda t: t.add_transition(c.id, d.id, "dip_black"))
+    editor.add_text("title")
+    core = importlib.import_module("montar_modules.timelapse.core")
+    red_clip = next(x for x in clips() if x.media_id == by_name["red.mp4"].id)
+    ctl.edit("tl", lambda t: core.apply(t, red_clip.id, red_clip.start + 5,
+                                        red_clip.start + 45, core.Settings(factor=20)))
+    editor._reload_player()
+    assert wait_until(lambda: not editor.modules.jobs.jobs, 60)
+    assert not editor.modules.pending_sources()
+
+    monkeypatch.setattr(ExportDialog, "exec", lambda self: ExportDialog.DialogCode.Accepted)
+    editor._notify_export = False
+    results = []
+    editor.exportFinished.connect(results.append)
+    editor.open_export()
+    assert editor._export_job is not None and not editor.export_button.isEnabled()
+    assert wait_until(lambda: results, 180)
+    assert results == [""]
+    target = editor.project.path.parent / "exports" / "Recette.mp4"
+    out = subprocess.run([shutil.which("ffprobe"), "-v", "error", "-show_entries",
+                          "stream=codec_type,codec_name,width,height:format=duration",
+                          "-of", "json", str(target)], capture_output=True, text=True,
+                         check=True).stdout
+    data = json.loads(out)
+    streams = {s["codec_type"]: s for s in data["streams"]}
+    assert (streams["video"]["codec_name"], streams["video"]["width"],
+            streams["video"]["height"]) == ("h264", 1920, 1080)
+    assert streams["audio"]["codec_name"] == "aac"
+    length = editor.controller.timeline.length()
+    assert float(data["format"]["duration"]) == pytest.approx(length / 25, abs=0.15)
+    # relecture par un lecteur tiers : ffmpeg décode tout le fichier sans erreur
+    subprocess.run([shutil.which("ffmpeg"), "-v", "error", "-xerror", "-i", str(target),
+                    "-f", "null", "-"], check=True, capture_output=True)
+    assert editor.export_button.isEnabled()
+
+
+@needs_ffmpeg
+def test_export_dialog_settings(window, media_dir):
+    from montar.ui.dialogs.export import ExportDialog
+
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    dialog = ExportDialog(editor.project, 50, None, editor.project.path.parent / "exports")
+    s = dialog.settings()
+    assert (s.format, s.codec, s.width, s.height, s.fps, s.quality) == \
+        ("mp4", "h264", 1280, 720, 25, "balanced")
+    assert s.path.endswith("Montage.mp4") and not dialog.recommended.isHidden()
+    dialog.video_formats.buttons["gif"].click()
+    s = dialog.settings()
+    assert s.format == "gif" and (s.width, s.height) == (854, 480) and s.path.endswith(".gif")
+    assert not dialog.resolutions.buttons["1080p"].isEnabled()
+    dialog.tabs.button("audio").click()
+    s = dialog.settings()
+    assert s.audio_only and s.format == "mp3" and s.path.endswith("Montage.mp3")
+    assert dialog.summary_output.text() == "MP3" and dialog.summary_size.text().startswith("≈")
+    dialog.quality.setValue(2)
+    assert dialog.settings().quality == "max" and dialog.recommended.isHidden()
+
+
+@needs_ffmpeg
+def test_preferences_switches_apply_to_editor(window, media_dir, monkeypatch):
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    view = editor.timeline.view
+    painted = []
+    monkeypatch.setattr(view, "_paint_waveform", lambda _p, c, *a: painted.append(c.id))
+    prefs = window.preferences
+    prefs.switches["video_waveforms"].click()  # désactivé
+    assert window.settings.video_waveforms is False and view.video_waveforms is False
+    view.viewport().repaint()
+    assert painted == []
+    prefs.switches["hardware_export"].click()
+    assert editor._hardware is True
+    prefs.switches["snap"].click()
+    assert window.settings.snap is False
+    assert editor.timeline.magnet.isChecked()  # projet ouvert : inchangé
+    saved = Settings.load(window._settings_file)
+    assert (saved.video_waveforms, saved.hardware_export, saved.snap) == (False, True, False)

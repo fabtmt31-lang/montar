@@ -197,6 +197,8 @@ L'effet Timelapse doit permettre d'**accélérer fortement une partie seulement 
 | F-EXP-08 | Le fichier est écrit localement ; **aucun téléversement automatique**. L'onglet « Lien de partage » et le bouton « Partager » de la maquette sont **hors v1** : en v1, « Partager » ouvre le dossier contenant le fichier exporté (ou le menu de partage du bureau) ; un vrai partage en ligne ne pourra être qu'un module optionnel (P3). | P1 | 02, 05 |
 | F-EXP-09 | Export d'une plage seulement de la timeline ; export d'une image fixe au curseur. | P2 | — |
 
+> **Réalisé en 0.5.0** : MP4 et MOV (H.264 / H.265 + AAC), WebM (VP9 + Opus), GIF animé (palette optimisée, 480p au plus, 15 i/s au plus : au-delà, le fichier pèse vite des centaines de Mo), audio seul MP3 / WAV / AAC ; 480p à 4K au format de la toile ; i/s du projet ou 24 / 25 / 30 / 60 ; qualité Légère / Équilibrée (recommandée) / Maximale ; accélération matérielle NVENC ou VA-API essayée sur une image, avec repli logiciel automatique ; export dans le dossier `exports/` du projet par défaut, en tâche de fond (progression, temps restant, annulation), puis « Lire » ou « Ouvrir le dossier ». L'onglet « Lien de partage » de la maquette n'est pas proposé (F-EXP-08). F-EXP-09 reste à faire.
+
 ### 3.11 Modules (extensibilité)
 | ID | Exigence | Prio |
 |----|----------|------|
@@ -320,13 +322,13 @@ montar/
 │   ├── __main__.py             # point d'entrée : python -m montar
 │   ├── app.py                  # QApplication, arguments, journalisation
 │   ├── core/                   # modèle sans Qt : Project, MediaItem, Track, formats, préférences
-│   ├── engine/                 # interface Engine + implémentation MLT (lecture, rendu)
+│   ├── engine/                 # interface Engine + implémentation MLT (lecture, rendu, export)
 │   ├── media/                  # analyse ffprobe, vignettes, (proxys, formes d'onde)
 │   ├── ui/
 │   │   ├── theme/              # jetons de la charte, feuille de style clair/sombre, icônes, polices
 │   │   ├── home/               # Accueil, Mes projets, Préférences
 │   │   ├── editor/             # en-tête, rail, panneaux, aperçu, inspecteur (timeline au J1)
-│   │   └── dialogs/            # Nouveau projet, (Export)
+│   │   └── dialogs/            # Nouveau projet, Export
 │   ├── api.py                  # API publique des modules (montar.api)
 │   ├── plugins/                # gestionnaire : découverte, chargement isolé, installation
 │   ├── modules/                # modules intégrés : timelapse
@@ -477,7 +479,7 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
 | **J1 — Timeline** ✅ (0.2.0) | Widget timeline, pistes, glisser-déposer, rogner, scinder, undo/redo, sauvegarde projet JSON, Nouveau projet | Alpha interne |
 | **J2 — Édition de base** ✅ (0.3.0) | Inspecteur (transformation, ajustements, vitesse, couleur), filtres, texte et titres, transitions, audio | Alpha |
 | **J3 — Timelapse + API modules** ✅ (0.4.0) | Chargeur de modules, API v1 documentée, module Timelapse, Préférences → Extensions | Bêta |
-| **J4 — Export & packaging Linux** | Dialogue d'export, file d'export, accélération matérielle, préférences complètes, `.deb` validé sur Debian / Ubuntu / Mint | **v1.0 Linux** |
+| **J4 — Export & packaging Linux** ✅ (0.5.0) | Dialogue d'export, file d'export, accélération matérielle, préférences complètes, `.deb` validé sur Debian / Ubuntu / Mint | **v1.0 Linux** |
 | **J5 — Portage Windows** | Prototype moteur, exécutable, installeur | **v1.0 Windows** |
 | **J6+** | Fonctions P3, kit de marque, sous-titres automatiques, catalogue de modules, autres distributions | v1.x |
 

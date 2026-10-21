@@ -252,6 +252,10 @@ class PreviewCanvas(QWidget):
         self.canvas_size = (width, height)
         self.update()
 
+    @property
+    def image(self) -> QImage | None:
+        return self._image
+
     def set_image(self, image: QImage | None) -> None:
         self._image = image
         self._message = ""

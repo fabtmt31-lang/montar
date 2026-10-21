@@ -88,6 +88,7 @@ class TimelineView(QAbstractScrollArea):
         # Plage marquée avec I / O sur un clip : (clip, début, fin) en images de timeline
         self.selection_range: tuple[str, int, int] | None = None
         self.range_tool = False  # glisser sur un clip sélectionne une plage (comme Maj)
+        self.video_waveforms = True  # forme d'onde sous les vignettes des clips vidéo
         # Fournis par la page de montage (modules) : badges d'un clip, actions d'outils
         self.badge_provider: Callable[[Clip], list[str]] = lambda clip: []
         self.tool_provider: Callable[[Clip], list[tuple[str, Callable[[], None]]]] = \
@@ -336,7 +337,8 @@ class TimelineView(QAbstractScrollArea):
         if media is not None and media.kind in ("video", "image") and not on_audio_track:
             text_x = self._paint_thumbnails(painter, media, rect)
         if media is not None and media.has_audio and media.kind in ("audio", "video") \
-                and clip.volume > 0:  # son détaché ou coupé : plus de forme d'onde
+                and clip.volume > 0 \
+                and (on_audio_track or media.kind == "audio" or self.video_waveforms):
             self._paint_waveform(painter, clip, media, rect, on_audio_track)
         f = QFont(FONT_UI)
         f.setPixelSize(12)

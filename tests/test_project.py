@@ -154,3 +154,14 @@ def test_project_folder_and_copied_media(tmp_path):
     loaded = Project.load(moved / "Mon film.montar")
     assert loaded.media[0].path == str(moved / "medias" / "plage.mp4")
     assert loaded.media[0].original_path == "/ailleurs/plage.mp4"
+
+
+def test_settings_flags_round_trip(tmp_path):
+    file = tmp_path / "settings.json"
+    s = Settings(hardware_export=True, video_waveforms=False, snap=False)
+    s.save(file)
+    loaded = Settings.load(file)
+    assert (loaded.hardware_export, loaded.video_waveforms, loaded.snap) == (True, False, False)
+    file.write_text('{"snap": "oui", "video_waveforms": 1, "theme": "dark"}', encoding="utf-8")
+    loaded = Settings.load(file)  # types inattendus : valeurs par défaut
+    assert (loaded.snap, loaded.video_waveforms, loaded.theme) == (True, True, "dark")

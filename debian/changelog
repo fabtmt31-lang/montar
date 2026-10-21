@@ -1,3 +1,20 @@
+montar (0.5.0) unstable; urgency=medium
+
+  * Jalon J4 : export.
+  * Dialogue « Exporter la vidéo » (Ctrl+E) : MP4 et MOV (H.264, H.265),
+    WebM (VP9), GIF animé, audio seul (MP3, WAV, AAC) ; résolution 480p à
+    4K, images par seconde, qualité, codec, taille estimée.
+  * Accélération matérielle (NVENC, VA-API) vérifiée avant usage, avec repli
+    automatique sur l'encodeur logiciel.
+  * Export en tâche de fond dans le dossier exports/ du projet : avancement
+    et temps restant dans l'en-tête, annulation, puis « Lire » ou « Ouvrir
+    le dossier ».
+  * Préférences : accélération matérielle, ondes audio sur les clips vidéo,
+    magnétisme par défaut, langue (français).
+  * Retrait des boutons Montage / Couleur / Audio / Sous-titres de l'en-tête.
+
+ -- Fabien <admin@appsdoc.fr>  Sun, 25 Oct 2026 10:00:00 +0200
+
 montar (0.4.4) unstable; urgency=medium
 
   * Projets : chaque projet a son dossier (~/Vidéos/Montar/<nom>/, avec le

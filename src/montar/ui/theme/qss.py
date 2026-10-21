@@ -160,6 +160,14 @@ QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 #PreviewArea {{ background: {field}; }}
 #PreviewFrame {{ background: {preview_bg}; border-radius: {r_card}px; }}
 #DialogCard {{ background: {surface}; border-radius: {r_window}px; }}
+#ExportDialog {{ background: {surface}; }}
+#ExportSide {{ background: {background}; border-right: 1px solid {border}; }}
+#ExportDuration {{ background: rgba(23, 38, 30, 0.85); color: #FFFFFF; border-radius: 6px;
+                   padding: 2px 7px; font-size: 12px; }}
+QPushButton[variant="choice"] {{ border-radius: 10px; padding: 6px 16px; font-weight: 500;
+                                 min-height: 28px; }}
+QPushButton[variant="choice"]:checked {{ background: {forest}; border-color: {forest};
+                                         color: {on_forest}; }}
 #DialogFooter {{ border-top: 1px solid {border}; }}
 #InfoBox {{ background: {mist}; border-radius: 12px; }}
 #LogoMark {{ background: {forest}; border-radius: 10px; }}

@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from pathlib import Path
 
-from PyQt6.QtCore import QRectF, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QKeySequence, QShortcut
+from PyQt6.QtCore import QRectF, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QButtonGroup,
+    QDialog,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -23,8 +25,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from montar.core.project import MediaItem, Project, ProjectError
+from montar.core.project import EXPORT_DIR, MediaItem, Project, ProjectError
 from montar.engine.base import Engine, timeline_spec
+from montar.engine.export import ExportSettings, human_size, retime
 from montar.engine.geometry import offset_for_center, placement
 from montar.i18n import _
 from montar.media.probe import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, is_supported
@@ -32,6 +35,7 @@ from montar.media.store import is_inside
 from montar.media.thumbnails import thumbnail_path
 from montar.media.waveform import waveform_path
 from montar.plugins import ModuleManager, default_manager
+from montar.ui.dialogs.export import ExportDialog
 from montar.ui.editor.controller import EditorController
 from montar.ui.editor.importer import MediaImporter
 from montar.ui.editor.inspector import Inspector
@@ -43,7 +47,7 @@ from montar.ui.editor.preview import PreviewPanel
 from montar.ui.text_render import image_path as text_image_path
 from montar.ui.text_render import preset_style, text_bounds
 from montar.ui.timeline.panel import TimelinePanel
-from montar.ui.widgets import LogoMark, Segmented, button, label, set_icon
+from montar.ui.widgets import LogoMark, button, label, set_icon
 
 log = logging.getLogger(__name__)
 
@@ -77,6 +81,7 @@ def media_file_filter() -> str:
 class EditorPage(QWidget):
     backRequested = pyqtSignal()
     saved = pyqtSignal(object)  # Path
+    exportFinished = pyqtSignal(str)  # erreur (vide si réussite)
 
     def __init__(self, project: Project, engine_factory: Callable[[], Engine], cache: Path,
                  preview_quality: str = "medium", modules: ModuleManager | None = None) -> None:
@@ -119,6 +124,7 @@ class EditorPage(QWidget):
             self._side_index[key] = self.side.addWidget(panel)
         body.addWidget(self._build_rail())
         body.addWidget(self.side)
+        self._engine_factory = engine_factory
         self.player = Player(engine_factory, self)
         self.preview = PreviewPanel(self.player, preview_quality)
         body.addWidget(self.preview, 1)
@@ -170,6 +176,15 @@ class EditorPage(QWidget):
         self._load_timer.setSingleShot(True)
         self._load_timer.setInterval(30)
         self._load_timer.timeout.connect(self._reload_player)
+
+        self._export_job = None
+        self._export_settings: ExportSettings | None = None
+        self._export_started = 0.0
+        self._notify_export = True  # message de fin (désactivé par les tests)
+        self._hardware = False  # accélération matérielle proposée par défaut
+        self._export_timer = QTimer(self)
+        self._export_timer.setInterval(250)
+        self._export_timer.timeout.connect(self._poll_export)
 
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
@@ -235,7 +250,7 @@ class EditorPage(QWidget):
         self.jobs_bar.setTextVisible(False)
         self.jobs_bar.setFixedHeight(6)
         self.jobs_cancel = button("", "ghost", "x", tooltip=_("Annuler le calcul"))
-        self.jobs_cancel.clicked.connect(self.modules.jobs.cancel)
+        self.jobs_cancel.clicked.connect(self._cancel_jobs)
         jl.addWidget(self.jobs_label)
         jl.addWidget(self.jobs_bar)
         jl.addWidget(self.jobs_cancel)
@@ -262,23 +277,11 @@ class EditorPage(QWidget):
         layout.addWidget(self.redo_button)
         layout.addStretch(1)
 
-        # Modes de travail : chacun ouvre les panneaux et l'onglet de l'inspecteur utiles.
-        self.modes = modes = Segmented([("edit", _("Montage")), ("color", _("Couleur")),
-                                        ("audio", _("Audio")), ("subtitles", _("Sous-titres"))])
-        for key, tip in (("edit", "Médias et réglages d'image"),
-                         ("color", "Filtres et réglages de couleur du clip sélectionné"),
-                         ("audio", "Sons du projet et réglages audio du clip sélectionné"),
-                         ("subtitles", SOON)):
-            modes.button(key).setToolTip(_(tip))
-        modes.button("subtitles").setEnabled(False)
-        modes.changed.connect(self.set_mode)
-        layout.addWidget(modes)
-        layout.addStretch(1)
-
-        export = button(_("Exporter"), "primary", "download", tooltip=_(SOON))
-        export.setEnabled(False)
-        export.setMinimumHeight(40)
-        layout.addWidget(export)
+        self.export_button = button(_("Exporter"), "primary", "download",
+                                    tooltip=_("Exporter la vidéo (Ctrl+E)"))
+        self.export_button.setMinimumHeight(40)
+        self.export_button.clicked.connect(self.open_export)
+        layout.addWidget(self.export_button)
         return header
 
     def _build_rail(self) -> QWidget:
@@ -318,6 +321,7 @@ class EditorPage(QWidget):
             ("Backspace", lambda: tl.delete(ripple=False)),
             ("Shift+Delete", lambda: tl.delete(ripple=True)),
             ("Ctrl+D", tl.duplicate),
+            ("Ctrl+E", self.open_export),
             (QKeySequence.StandardKey.Undo, self.controller.undo),
             (QKeySequence.StandardKey.Redo, self.controller.redo),
             ("Ctrl+Y", self.controller.redo),
@@ -443,16 +447,13 @@ class EditorPage(QWidget):
         if self._modules_listener in self.module_manager.listeners:
             self.module_manager.listeners.remove(self._modules_listener)
         self.modules.jobs.cancel_all()
+        if self._export_job is not None:
+            self._export_job.cancel()
+            self._export_job.wait(10)
+            self._export_job = None
         self.player.shutdown()
         self.importer.wait(5000)
         return ok
-
-    def set_mode(self, mode: str) -> None:
-        side, tab = {"edit": ("media", "image"), "color": ("filters", "color"),
-                     "audio": ("audio", "audio")}.get(mode, ("media", "image"))
-        self.modes.set_current(mode)
-        self.show_side(side)
-        self.inspector.set_preferred_tab(tab)
 
     def show_side(self, key: str) -> None:
         """Affiche un panneau du rail ; « Audio » montre les sons du projet."""
@@ -481,15 +482,24 @@ class EditorPage(QWidget):
     def _update_jobs(self) -> None:
         summary = self.modules.jobs.summary()
         copying = getattr(self, "_copies", None)
-        if copying:
+        job = getattr(self, "_export_job", None)
+        if job is not None:
+            summary = (_("Export"), job.progress)
+            copying = None
+        elif copying:
             ratio = sum(copying.values()) / len(copying)
             summary = (_("Copie des médias ({n})").format(n=len(copying)) if len(copying) > 1
                        else _("Copie des médias"), ratio)
         self.jobs_cancel.setVisible(not copying)
+        self.jobs_cancel.setToolTip(_("Annuler l'export") if job is not None
+                                    else _("Annuler le calcul"))
         self.jobs_box.setVisible(summary is not None)
         if summary is not None:
             title, ratio = summary
-            self.jobs_label.setText(_("{title} : {p} %").format(title=title, p=round(ratio * 100)))
+            text = _("{title} : {p} %").format(title=title, p=round(ratio * 100))
+            if job is not None:
+                text += self._remaining_text(job)
+            self.jobs_label.setText(text)
             self.jobs_bar.setValue(round(ratio * 100))
         failure = self.modules.jobs.failure_summary() if summary is None else None
         self.failed_box.setVisible(failure is not None)
@@ -497,6 +507,99 @@ class EditorPage(QWidget):
             title, cancelled = failure
             text = _("{title} annulé") if cancelled else _("{title} : échec")
             self.failed_label.setText(text.format(title=title))
+
+    def _cancel_jobs(self) -> None:
+        if self._export_job is not None:
+            self._export_job.cancel()
+        else:
+            self.modules.jobs.cancel()
+
+    # --- export --------------------------------------------------------------------------
+
+    def open_export(self) -> None:
+        if self._export_job is not None:
+            QMessageBox.information(self, _("Exporter la vidéo"),
+                                    _("Un export est déjà en cours."))
+            return
+        length = self.controller.timeline.length()
+        if length == 0:
+            QMessageBox.information(self, _("Exporter la vidéo"),
+                                    _("La timeline est vide : ajoutez des médias avant "
+                                      "d'exporter."))
+            return
+        pending = self.modules.pending_sources()
+        if pending or self.modules.jobs.jobs or self._copies:
+            QMessageBox.information(
+                self, _("Exporter la vidéo"),
+                _("Des calculs sont en cours (copie des médias ou timelapse). L'export sera "
+                  "possible dès qu'ils seront terminés."))
+            self._reload_player()  # relance les calculs manquants
+            return
+        folder = self.project.path.parent / EXPORT_DIR if self.project.path else Path.home()
+        dialog = ExportDialog(self.project, length, self.preview.canvas.image, folder,
+                              self._hardware, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.start_export(dialog.settings())
+
+    def start_export(self, settings: ExportSettings) -> None:
+        size = None if settings.audio_only else (settings.width, settings.height)
+        spec = timeline_spec(self.project, self._text_image, self.modules.hook, size)
+        spec = retime(spec, settings.fps)
+        Path(settings.path).parent.mkdir(parents=True, exist_ok=True)
+        self._export_job = self._engine_factory().export(spec, settings)
+        self._export_settings = settings
+        self._export_started = time.monotonic()
+        self._export_job.start()
+        self._export_timer.start()
+        self.export_button.setEnabled(False)
+        self._update_jobs()
+
+    def _remaining_text(self, job) -> str:
+        elapsed = time.monotonic() - self._export_started
+        ratio = job.progress
+        if ratio < 0.03 or elapsed < 2:
+            return ""
+        left = elapsed / ratio * (1 - ratio)
+        if left < 60:
+            return " · " + _("moins d'une minute")
+        return " · " + _("{n} min restantes").format(n=round(left / 60))
+
+    def _poll_export(self) -> None:
+        job = self._export_job
+        if job is None:
+            self._export_timer.stop()
+            return
+        self._update_jobs()
+        if not job.finished:
+            return
+        self._export_timer.stop()
+        self._export_job = None
+        self.export_button.setEnabled(True)
+        self._update_jobs()
+        self.exportFinished.emit(job.error)
+        if job.cancelled:
+            return
+        target = Path(self._export_settings.path)
+        if job.error:
+            QMessageBox.warning(self, _("Export impossible"),
+                                _("L'export de {name} a échoué : {error}").format(
+                                    name=target.name, error=job.error))
+            return
+        if not self._notify_export:
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle(_("Export terminé"))
+        box.setText(_("{name} est prêt ({size}).").format(
+            name=target.name, size=human_size(target.stat().st_size).lstrip("≈ ")))
+        play = box.addButton(_("Lire"), QMessageBox.ButtonRole.ActionRole)
+        folder = box.addButton(_("Ouvrir le dossier"), QMessageBox.ButtonRole.ActionRole)
+        box.addButton(_("Fermer"), QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is play:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
+        elif box.clickedButton() is folder:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(target.parent)))
 
     def _retry_jobs(self) -> None:
         self.modules.jobs.retry()
@@ -723,6 +826,16 @@ class EditorPage(QWidget):
 
     def set_preview_quality(self, quality: str) -> None:
         self.preview.set_quality(quality)
+
+    def apply_preferences(self, settings, opening: bool = False) -> None:
+        """Préférences de l'utilisateur ; le magnétisme n'est réglé qu'à l'ouverture (il se
+        change ensuite dans la barre de la timeline)."""
+        self._hardware = settings.hardware_export
+        view = self.timeline.view
+        view.video_waveforms = settings.video_waveforms
+        view.viewport().update()
+        if opening:
+            self.timeline.magnet.setChecked(settings.snap)
 
     # --- glisser-déposer de fichiers -----------------------------------------------
 

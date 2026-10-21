@@ -5,6 +5,7 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup,
+    QComboBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -16,7 +17,7 @@ from PyQt6.QtWidgets import (
 
 from montar.core.settings import Settings
 from montar.i18n import _
-from montar.ui.widgets import Segmented, button, label
+from montar.ui.widgets import Segmented, Switch, button, label
 
 _THEME_PREVIEW = {
     "light": ("#F4F8F5", "#FFFFFF", "#D8E4DC"),
@@ -125,6 +126,25 @@ class PreferencesPage(QWidget):
         self.quality.changed.connect(self._set_quality)
         gl.addWidget(_row(_("Qualité de l'aperçu"),
                           _("Réduisez-la sur une machine moins puissante"), self.quality))
+        language = QComboBox()
+        language.addItem(_("Français"))
+        language.setEnabled(False)
+        language.setToolTip(_("Seule langue disponible pour le moment"))
+        gl.addWidget(_row(_("Langue de l'interface"), _("Menus, info-bulles et raccourcis"),
+                          language))
+        self.switches: dict[str, Switch] = {}
+        for key, title, subtitle in (
+            ("hardware_export", _("Accélération matérielle"),
+             _("Encodage de l'export par la carte graphique, si elle le permet")),
+            ("video_waveforms", _("Ondes audio sur les clips vidéo"),
+             _("Affiche la forme d'onde sous les vignettes")),
+            ("snap", _("Magnétisme par défaut"),
+             _("Les clips s'aimantent à la tête de lecture et aux bords")),
+        ):
+            switch = Switch(getattr(settings, key))
+            switch.toggled.connect(lambda on, k=key: self._set_flag(k, on))
+            self.switches[key] = switch
+            gl.addWidget(_row(title, subtitle, switch))
         layout.addWidget(general)
         if modules is not None:
             from montar.ui.home.extensions import ExtensionsCard
@@ -141,6 +161,10 @@ class PreferencesPage(QWidget):
 
     def _set_disabled(self, disabled: list) -> None:
         self.settings.disabled_modules = list(disabled)
+        self.settingsChanged.emit()
+
+    def _set_flag(self, key: str, on: bool) -> None:
+        setattr(self.settings, key, on)
         self.settingsChanged.emit()
 
     def _set_quality(self, key: str) -> None:

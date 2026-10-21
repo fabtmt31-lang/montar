@@ -8,7 +8,20 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
 
 ## État d'avancement
 
-**Jalon J3 — modules et Timelapse** (version 0.4.4) :
+**Jalon J4 — export** (version 0.5.0) :
+
+- bouton **Exporter** (Ctrl+E) : MP4 / MOV (H.264, H.265), WebM (VP9), GIF animé, ou
+  **audio seul** (MP3, WAV, AAC) ; résolution 480p à 4K, images par seconde, qualité
+  Légère / Équilibrée / Maximale, taille estimée ; accélération matérielle (NVENC, VA-API)
+  avec repli logiciel automatique ;
+- le fichier est écrit par défaut dans le dossier `exports/` du projet ; l'export se fait en
+  tâche de fond (avancement et temps restant dans l'en-tête, bouton d'annulation), puis
+  **Lire** ou **Ouvrir le dossier** ;
+- préférences : accélération matérielle, ondes audio sur les clips vidéo, magnétisme par
+  défaut ;
+- les boutons Montage / Couleur / Audio / Sous-titres de l'en-tête sont retirés.
+
+**Jalon J3 — modules et Timelapse** (0.4) :
 
 - **Timelapse** (module intégré) : sélectionnez une partie d'un clip (**Maj + glisser**
   sur le clip, outil « plage » de la barre de la timeline, ou touches **I** / **O**), puis onglet **Vitesse → Timelapse…** (ou clic droit sur le
@@ -71,7 +84,7 @@ Pas encore disponible : export (J4).
 ## Installer le paquet
 
 ```sh
-sudo apt install ./montar_0.4.4_all.deb
+sudo apt install ./montar_0.5.0_all.deb
 ```
 
 Le paquet est produit par l'intégration continue (onglet *Actions* de GitHub, artefacts
@@ -106,7 +119,7 @@ Organisation du code :
 | Dossier | Rôle |
 |---------|------|
 | `src/montar/core/` | modèle sans Qt : projet, timeline (opérations de montage), historique, formats |
-| `src/montar/engine/` | moteur de rendu : interface abstraite + implémentation MLT |
+| `src/montar/engine/` | moteur de rendu : interface abstraite + implémentation MLT, réglages d'export |
 | `src/montar/api.py`, `src/montar/plugins/` | API publique et gestionnaire des modules |
 | `src/montar/modules/` | modules intégrés (Timelapse) |
 | `src/montar/media/` | analyse des médias (ffprobe), vignettes, formes d'onde |

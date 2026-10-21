@@ -15,6 +15,7 @@ from montar.core import formats
 FORMAT_VERSION = 4  # 2 : clips ; 3 : réglages, textes, transitions ; 4 : réglages de modules
 PROJECT_SUFFIX = ".montar"
 MEDIA_DIR = "medias"
+EXPORT_DIR = "exports"
 
 
 class ProjectError(Exception):
