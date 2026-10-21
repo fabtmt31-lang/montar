@@ -8,6 +8,7 @@ from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal
 
 from montar.media.probe import ProbeError, probe
 from montar.media.thumbnails import make_thumbnail
+from montar.media.waveform import load_or_compute
 
 
 class _Signals(QObject):
@@ -39,11 +40,22 @@ class _ThumbTask(QRunnable):
         self._signals.done.emit(self._item.path, self._item, str(thumb) if thumb else None, "")
 
 
+class _WaveformTask(QRunnable):
+    def __init__(self, path: str, cache: Path, signals: _Signals) -> None:
+        super().__init__()
+        self._path, self._cache, self._signals = path, cache, signals
+
+    def run(self) -> None:
+        peaks = load_or_compute(self._cache, self._path)
+        self._signals.done.emit(self._path, None, peaks, "")
+
+
 class MediaImporter(QObject):
     """Émet `finished` pour chaque fichier : (chemin, MediaItem ou None, vignette, erreur)."""
 
     finished = pyqtSignal(str, object, object, str)
     thumbnailReady = pyqtSignal(str, object)  # chemin du média, vignette
+    waveformReady = pyqtSignal(str, object)  # chemin du média, crêtes (bytes) ou None
 
     def __init__(self, cache: Path, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -54,6 +66,8 @@ class MediaImporter(QObject):
         self._signals.done.connect(self.finished)
         self._thumb_signals = _Signals()
         self._thumb_signals.done.connect(lambda p, _i, t, _e: self.thumbnailReady.emit(p, t))
+        self._wave_signals = _Signals()
+        self._wave_signals.done.connect(lambda p, _i, w, _e: self.waveformReady.emit(p, w))
 
     def import_files(self, paths: list[str]) -> None:
         for p in paths:
@@ -61,6 +75,9 @@ class MediaImporter(QObject):
 
     def ensure_thumbnail(self, item) -> None:
         self._pool.start(_ThumbTask(item, self._cache, self._thumb_signals))
+
+    def ensure_waveform(self, path: str) -> None:
+        self._pool.start(_WaveformTask(path, self._cache, self._wave_signals))
 
     def wait(self, msecs: int = -1) -> bool:
         return self._pool.waitForDone(msecs)

@@ -2,9 +2,10 @@
 """Panneau « Médias du projet » (maquette 02)."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtCore import QMimeData, Qt, pyqtSignal
+from PyQt6.QtGui import QDrag, QPixmap
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QButtonGroup,
     QFrame,
     QHBoxLayout,
@@ -27,15 +28,36 @@ from montar.ui.thumbgrid import (
 )
 from montar.ui.widgets import button, label
 
+MEDIA_MIME = "application/x-montar-media"  # identifiant du média glissé vers la timeline
+
 _FILTERS = (("all", "Tout"), ("video", "Vidéos"), ("image", "Images"), ("audio", "Sons"))
 _PLACEHOLDER = {"video": "mint", "image": "voiceover", "audio": "pistachio"}
 _ICON = {"video": "film", "image": "image", "audio": "music"}
+
+
+class _MediaGrid(ThumbGrid):
+    """Grille dont les vignettes se glissent vers la timeline."""
+
+    def startDrag(self, actions) -> None:  # noqa: N802 - API Qt
+        item = self.currentItem()
+        if item is None:
+            return
+        media = item.data(ROLE_PAYLOAD)
+        mime = QMimeData()
+        mime.setData(MEDIA_MIME, media.id.encode())
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        pm = item.data(Qt.ItemDataRole.DecorationRole)
+        if isinstance(pm, QPixmap) and not pm.isNull():
+            drag.setPixmap(pm.scaledToWidth(96, Qt.TransformationMode.SmoothTransformation))
+        drag.exec(Qt.DropAction.CopyAction)
 
 
 class MediaPanel(QFrame):
     importRequested = pyqtSignal()
     mediaSelected = pyqtSignal(object)  # MediaItem ou None
     removeRequested = pyqtSignal(object)  # MediaItem
+    addToTimelineRequested = pyqtSignal(object)  # MediaItem
 
     def __init__(self) -> None:
         super().__init__()
@@ -72,15 +94,21 @@ class MediaPanel(QFrame):
         chips.addStretch()
         layout.addLayout(chips)
 
-        self.grid = ThumbGrid(min_width=110, aspect=16 / 11, title_px=13, radius=10,
-                              with_subtitle=False)
+        self.grid = _MediaGrid(min_width=110, aspect=16 / 11, title_px=13, radius=10,
+                               with_subtitle=False)
+        self.grid.setDragEnabled(True)
+        self.grid.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+        self.grid.setToolTip("")
+        self.grid.itemDoubleClicked.connect(
+            lambda item: self.addToTimelineRequested.emit(item.data(ROLE_PAYLOAD)))
         self.grid.currentItemChanged.connect(self._current_changed)
         self.grid.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.grid.customContextMenuRequested.connect(self._context_menu)
         layout.addWidget(self.grid, 1)
 
         self.empty_hint = label(_("Glissez des vidéos, images ou sons ici, ou utilisez "
-                                  "« Importer des fichiers »."), "small")
+                                  "« Importer des fichiers ». Glissez ensuite un média vers "
+                                  "la timeline, ou double-cliquez dessus."), "small")
         self.empty_hint.setWordWrap(True)
         self.empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.empty_hint)
@@ -148,6 +176,8 @@ class MediaPanel(QFrame):
         if item is None:
             return
         menu = QMenu(self)
+        menu.addAction(_("Ajouter à la timeline"),
+                       lambda: self.addToTimelineRequested.emit(item.data(ROLE_PAYLOAD)))
         menu.addAction(_("Retirer du projet"),
                        lambda: self.removeRequested.emit(item.data(ROLE_PAYLOAD)))
         menu.exec(self.grid.viewport().mapToGlobal(pos))

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QRectF, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QImage, QKeySequence, QPainter, QPainterPath, QShortcut
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QMenu, QSlider, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QMenu, QVBoxLayout, QWidget
 
 from montar.core.settings import PREVIEW_QUALITIES
 from montar.core.timecode import frames_to_timecode
@@ -14,6 +14,7 @@ from montar.ui.theme import theme
 from montar.ui.widgets import button, label, set_icon
 
 QUALITY_LABELS = {"low": "Basse", "medium": "Moyenne", "full": "Pleine"}
+EMPTY_MESSAGE = "Glissez des médias dans la timeline pour les voir ici"
 
 
 class PreviewCanvas(QWidget):
@@ -100,14 +101,9 @@ class PreviewPanel(QFrame):
         fl = QVBoxLayout(frame)
         fl.setContentsMargins(16, 16, 16, 16)
         self.canvas = PreviewCanvas()
-        self.canvas.set_message(_("Sélectionnez un média pour l'afficher ici"))
+        self.canvas.set_message(_(EMPTY_MESSAGE))
         fl.addWidget(self.canvas)
         layout.addWidget(frame, 1)
-
-        self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.setEnabled(False)
-        self.slider.valueChanged.connect(self._slider_moved)
-        layout.addWidget(self.slider)
 
         transport = QHBoxLayout()
         self.timecode = label("00:00:00:00", "mono")
@@ -133,7 +129,6 @@ class PreviewPanel(QFrame):
         self._set_controls_enabled(False)
 
         self._fps = 25.0
-        self._updating_slider = False
         self._resize_timer = QTimer(self)
         self._resize_timer.setSingleShot(True)
         self._resize_timer.setInterval(120)
@@ -141,7 +136,7 @@ class PreviewPanel(QFrame):
         self.canvas.resized.connect(lambda _s: self._resize_timer.start())
 
         player.frameReady.connect(self._on_frame)
-        player.opened.connect(self._on_opened)
+        player.loaded.connect(self._on_loaded)
         player.failed.connect(self._on_failed)
         player.playingChanged.connect(self._on_playing)
         self.set_quality(quality)
@@ -171,13 +166,6 @@ class PreviewPanel(QFrame):
             self.player.pause()
             self.player.seek(max(0, min(self.player.length - 1, self.player.position + delta)))
 
-    def clear(self, message: str) -> None:
-        self.player.close()
-        self.canvas.set_message(message)
-        self._set_controls_enabled(False)
-        self.timecode.setText(frames_to_timecode(0, self._fps))
-        self.duration.setText("/  " + frames_to_timecode(0, self._fps))
-
     def _push_render_size(self) -> None:
         # Qualité = fraction de la résolution de la toile, sans dépasser la taille affichée.
         rect = self.canvas.frame_rect()
@@ -188,29 +176,22 @@ class PreviewPanel(QFrame):
         self.player.set_render_size(int(cw * scale), int(ch * scale))
 
     def _set_controls_enabled(self, enabled: bool) -> None:
-        for w in (self.slider, self.to_start, self.play_button, self.to_end):
+        for w in (self.to_start, self.play_button, self.to_end):
             w.setEnabled(enabled)
 
-    def _slider_moved(self, value: int) -> None:
-        if not self._updating_slider:
-            self.player.seek(value)
-
-    def _on_opened(self, length: int, fps: float) -> None:
+    def _on_loaded(self, length: int, fps: float) -> None:
         self._fps = fps
-        self._updating_slider = True
-        self.slider.setRange(0, max(0, length - 1))
-        self.slider.setValue(0)
-        self._updating_slider = False
         self.duration.setText("/  " + frames_to_timecode(length, fps))
-        self._set_controls_enabled(True)
+        self._set_controls_enabled(length > 0)
+        if length == 0:
+            self.canvas.set_message(_(EMPTY_MESSAGE))
         self._push_render_size()
 
     def _on_frame(self, image: QImage, frame: int) -> None:
+        if self.player.length == 0:
+            return
         self.canvas.set_image(image)
         self.timecode.setText(frames_to_timecode(frame, self._fps))
-        self._updating_slider = True
-        self.slider.setValue(frame)
-        self._updating_slider = False
 
     def _on_failed(self, message: str) -> None:
         self.canvas.set_message(_("Aperçu impossible : {error}").format(error=message))

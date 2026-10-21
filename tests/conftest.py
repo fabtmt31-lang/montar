@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("SDL_AUDIODRIVER", "dummy")  # son joué sur un périphérique fictif
 
 needs_ffmpeg = pytest.mark.skipif(
     shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
@@ -45,4 +46,7 @@ def media_dir(tmp_path_factory) -> Path:
     _ffmpeg("-f", "lavfi", "-i", "testsrc2=size=320x240", "-frames:v", "1", "-update", "1",
             str(d / "photo.png"))
     _ffmpeg("-f", "lavfi", "-i", "sine=frequency=220:duration=3", str(d / "son.wav"))
+    for color in ("red", "blue"):
+        _ffmpeg("-f", "lavfi", "-i", f"color=c={color}:size=64x36:rate=25:duration=2",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", str(d / f"{color}.mp4"))
     return d

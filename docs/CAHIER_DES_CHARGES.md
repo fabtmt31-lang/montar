@@ -469,8 +469,8 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
 
 | Jalon | Contenu | Livrable |
 |-------|---------|----------|
-| **J0 — Socle** | Projet Python (`pyproject.toml`), thème QSS issu de la charte, fenêtre principale et navigation, accueil, import, aperçu d'un clip via MLT, CI avec `.deb` de développement | Build de dev |
-| **J1 — Timeline** | Widget timeline, pistes, glisser-déposer, rogner, scinder, undo/redo, sauvegarde projet JSON, Nouveau projet | Alpha interne |
+| **J0 — Socle** ✅ (0.1.0) | Projet Python (`pyproject.toml`), thème QSS issu de la charte, fenêtre principale et navigation, accueil, import, aperçu d'un clip via MLT, CI avec `.deb` de développement | Build de dev |
+| **J1 — Timeline** ✅ (0.2.0) | Widget timeline, pistes, glisser-déposer, rogner, scinder, undo/redo, sauvegarde projet JSON, Nouveau projet | Alpha interne |
 | **J2 — Édition de base** | Inspecteur (transformation, ajustements, vitesse, couleur), filtres, texte et titres, transitions, audio | Alpha |
 | **J3 — Timelapse + API modules** | Chargeur de modules, API v1 documentée, module Timelapse, Préférences → Extensions | Bêta |
 | **J4 — Export & packaging Linux** | Dialogue d'export, file d'export, accélération matérielle, préférences complètes, `.deb` validé sur Debian / Ubuntu / Mint | **v1.0 Linux** |

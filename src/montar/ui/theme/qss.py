@@ -53,6 +53,9 @@ QPushButton[variant="dashed"] {{ background: {field}; border: 1.5px dashed {sage
 QPushButton[variant="ghost"], QToolButton[variant="ghost"] {{
     background: transparent; border: none; padding: 6px; }}
 QPushButton[variant="ghost"]:hover, QToolButton[variant="ghost"]:hover {{ background: {mist}; }}
+QPushButton[variant="toggle"] {{ background: transparent; border: none; padding: 6px; }}
+QPushButton[variant="toggle"]:hover {{ background: {mist}; }}
+QPushButton[variant="toggle"]:checked {{ background: {mist}; }}
 QPushButton[variant="link"] {{ background: transparent; border: none; padding: 2px;
                                color: {forest}; text-decoration: underline; }}
 QPushButton[variant="round"] {{ background: {forest}; border: none; border-radius: 23px;
@@ -141,6 +144,8 @@ QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 #EditorHeader {{ background: {surface}; border-bottom: 1px solid {border}; }}
 #Rail {{ background: {sidebar}; border-right: 1px solid {border}; }}
 #SidePanel {{ background: {surface}; border-right: 1px solid {border}; }}
+#TimelinePanel {{ background: {surface}; border-top: 1px solid {border}; }}
+#TimelineBar {{ background: {surface}; border-bottom: 1px solid {border}; }}
 #Inspector {{ background: {surface}; border-left: 1px solid {border}; }}
 #PreviewArea {{ background: {field}; }}
 #PreviewFrame {{ background: {preview_bg}; border-radius: {r_card}px; }}

@@ -8,25 +8,28 @@ Cible : Debian, Ubuntu et Linux Mint (paquet `.deb`) dans un premier temps, puis
 
 ## État d'avancement
 
-**Jalon J0 — socle** (version 0.1.0) :
+**Jalon J1 — timeline** (version 0.2.0) :
 
-- écran d'accueil : création rapide (16:9, 9:16, 1:1), projets récents en grille ou en liste, recherche ;
-- dialogue « Nouveau projet » : format, résolution, images par seconde ;
-- projet enregistré automatiquement dans un fichier `.montar` (JSON, écriture atomique,
-  chemins des médias relatifs au projet quand c'est possible) ;
-- import de vidéos, images et sons (bouton ou glisser-déposer), analyse et vignettes en tâche de fond ;
-- aperçu dans la toile du projet via le moteur MLT : lecture, curseur, image par image (← →),
-  début / fin, qualité d'aperçu ;
-- préférences : thème clair / sombre / système, dossier des projets, qualité de l'aperçu ;
-- paquet `.deb` pour Debian 12+, Ubuntu 22.04+ et Linux Mint 21+.
+- timeline multipiste : pistes vidéo superposées (V1, V2…, la plus haute passe devant),
+  pistes audio (A1, A2…) mixées avec le son des vidéos ; ajout de pistes ;
+- ajout d'un média par glisser-déposer depuis « Médias du projet » ou double-clic ;
+- déplacer un clip (y compris vers une autre piste), rogner ses bords, couper (S),
+  supprimer (Suppr), supprimer en refermant l'espace (Maj+Suppr), dupliquer (Ctrl+D) ;
+- aimantation aux bords des clips et à la tête de lecture, zoom (Ctrl + molette) ;
+- annuler / rétablir (Ctrl+Z, Ctrl+Maj+Z) ;
+- couper le son d'une piste, masquer une piste vidéo ;
+- lecture de la timeline **avec le son** ; formes d'onde et vignettes sur les clips.
 
-Pas encore disponible : timeline, lecture du son, édition, export (voir le planning du cahier
-des charges, §9).
+**Jalon J0 — socle** (0.1.0) : accueil, nouveau projet, import de médias, aperçu,
+préférences, thèmes, paquet `.deb`.
+
+Pas encore disponible : volume par clip, texte et titres, transitions, filtres, export
+(jalons J2 à J4 du cahier des charges, §9).
 
 ## Installer le paquet
 
 ```sh
-sudo apt install ./montar_0.1.0_all.deb
+sudo apt install ./montar_0.2.0_all.deb
 ```
 
 Le paquet est produit par l'intégration continue (onglet *Actions* de GitHub, artefacts
@@ -37,7 +40,8 @@ Le paquet est produit par l'intégration continue (onglet *Actions* de GitHub, a
 Dépendances (paquets système) :
 
 ```sh
-sudo apt install python3 python3-pyqt6 python3-pyqt6.qtsvg python3-mlt ffmpeg python3-pytest
+sudo apt install python3 python3-pyqt6 python3-pyqt6.qtsvg python3-mlt libmlt-data \
+  python3-numpy ffmpeg python3-pytest
 # pour construire le paquet :
 sudo apt install build-essential debhelper dh-python lintian
 ```
@@ -59,10 +63,10 @@ Organisation du code :
 
 | Dossier | Rôle |
 |---------|------|
-| `src/montar/core/` | modèle (projet, formats, timecodes, préférences), sans dépendance à Qt |
+| `src/montar/core/` | modèle sans Qt : projet, timeline (opérations de montage), historique, formats |
 | `src/montar/engine/` | moteur de rendu : interface abstraite + implémentation MLT |
-| `src/montar/media/` | analyse des médias (ffprobe) et vignettes |
-| `src/montar/ui/` | interface PyQt6 : thème issu de la charte, accueil, montage, dialogues |
+| `src/montar/media/` | analyse des médias (ffprobe), vignettes, formes d'onde |
+| `src/montar/ui/` | interface PyQt6 : thème, accueil, montage, timeline (`ui/timeline/`), dialogues |
 | `src/montar/assets/` | polices (OFL) et icônes Lucide (ISC) embarquées |
 | `data/` | lanceur, entrée de menu, type MIME, métadonnées AppStream, page de manuel |
 | `debian/` | empaquetage Debian |

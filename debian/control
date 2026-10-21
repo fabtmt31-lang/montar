@@ -18,6 +18,7 @@ Depends: ${misc:Depends},
          libmlt-data,
          libmlt7,
          python3-mlt,
+         python3-numpy,
          python3-pyqt6,
          python3-pyqt6.qtsvg
 Recommends: frei0r-plugins, xdg-user-dirs

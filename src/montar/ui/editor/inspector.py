@@ -5,8 +5,8 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFrame, QGridLayout, QLabel, QVBoxLayout, QWidget
 
-from montar.core.project import MediaItem, Project
-from montar.core.timecode import seconds_to_short
+from montar.core.project import Clip, MediaItem, Project
+from montar.core.timecode import frames_to_timecode, seconds_to_short
 from montar.i18n import _
 from montar.ui.widgets import label
 
@@ -86,4 +86,20 @@ class Inspector(QFrame):
         rows.append((_("Fichier"), media.path))
         if not media.exists:
             rows.append((_("État"), _("introuvable")))
+        self._set_rows(rows)
+
+    def show_clip(self, clip: Clip, media: MediaItem, track_label: str, fps: int) -> None:
+        self.title.setText(media.name)
+        kind = _(_KIND.get(media.kind, media.kind))
+        self.subtitle.setText(f"{kind} · {_('piste')} {track_label}")
+        self.section.setText(_("CLIP"))
+        tc = lambda f: frames_to_timecode(f, fps)  # noqa: E731
+        rows = [
+            (_("Début"), tc(clip.start)),
+            (_("Fin"), tc(clip.end)),
+            (_("Durée"), tc(clip.duration)),
+        ]
+        if media.kind != "image":
+            rows.append((_("Point d'entrée"), tc(clip.source_in)))
+        rows.append((_("Fichier"), media.path))
         self._set_rows(rows)

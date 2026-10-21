@@ -1,3 +1,16 @@
+montar (0.2.0) unstable; urgency=medium
+
+  * Jalon J1 : timeline multipiste (pistes vidéo superposées, pistes audio
+    mixées), ajout de clips par glisser-déposer ou double-clic, déplacement
+    entre pistes, rognage, coupe, suppression avec ou sans fermeture de
+    l'espace, duplication, aimantation, zoom, annuler / rétablir.
+  * Lecture de la timeline avec le son ; pistes muettes ou masquées.
+  * Formes d'onde des sons et vignettes sur les clips.
+  * Corrige le gel de l'interface à l'ouverture d'une image (modules MLT
+    liés à Qt 5 exclus).
+
+ -- Fabien <fab.tmt31@gmail.com>  Wed, 21 Oct 2026 16:00:00 +0200
+
 montar (0.1.0) unstable; urgency=medium
 
   * Première version (jalon J0) : accueil, création de projet, import de

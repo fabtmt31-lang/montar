@@ -12,7 +12,7 @@ from typing import Any
 
 from montar.core import formats
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2  # 2 : ajout des clips de la timeline
 PROJECT_SUFFIX = ".montar"
 
 
@@ -43,12 +43,36 @@ class MediaItem:
     def exists(self) -> bool:
         return Path(self.path).exists()
 
+    def length_frames(self, fps: int) -> int | None:
+        """Nombre d'images disponibles à la fréquence du projet ; None pour une image fixe."""
+        if self.kind == "image":
+            return None
+        return max(1, round(self.duration * fps))
+
 
 @dataclass
 class Track:
-    kind: str  # video | audio | text
+    kind: str  # video | audio
     name: str
+    muted: bool = False
+    hidden: bool = False  # pistes vidéo : image masquée
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+
+
+@dataclass
+class Clip:
+    """Portion d'un média placée sur une piste. Toutes les valeurs sont en images du projet."""
+
+    media_id: str
+    track_id: str
+    start: int  # position sur la timeline
+    duration: int
+    source_in: int = 0  # première image utilisée dans le média
+    id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+
+    @property
+    def end(self) -> int:
+        return self.start + self.duration
 
 
 @dataclass
@@ -58,7 +82,8 @@ class Project:
     resolution: str = formats.DEFAULT_RESOLUTION
     fps: int = formats.DEFAULT_FPS
     media: list[MediaItem] = field(default_factory=list)
-    tracks: list[Track] = field(default_factory=list)
+    tracks: list[Track] = field(default_factory=list)  # de haut en bas, comme affiché
+    clips: list[Clip] = field(default_factory=list)
     path: Path | None = None  # emplacement du fichier .montar, non sérialisé
 
     def __post_init__(self) -> None:
@@ -96,6 +121,7 @@ class Project:
             "fps": self.fps,
             "media": media,
             "tracks": [asdict(t) for t in self.tracks],
+            "clips": [asdict(c) for c in self.clips],
         }
 
     @classmethod
@@ -116,6 +142,10 @@ class Project:
             Track(**{k: v for k, v in t.items() if k in Track.__dataclass_fields__})
             for t in data.get("tracks", [])
         ]
+        clips = [
+            Clip(**{k: v for k, v in c.items() if k in Clip.__dataclass_fields__})
+            for c in data.get("clips", [])
+        ]
         try:
             return cls(
                 name=data["name"],
@@ -124,6 +154,7 @@ class Project:
                 fps=int(data.get("fps", formats.DEFAULT_FPS)),
                 media=media,
                 tracks=tracks,
+                clips=clips,
                 path=path,
             )
         except (KeyError, ValueError, TypeError) as exc:
