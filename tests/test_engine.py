@@ -116,3 +116,128 @@ def test_qt5_is_never_loaded(engine, media_dir):
     engine.build(s).render(0, 64, 36)
     with open(f"/proc/{os.getpid()}/maps") as maps:
         assert not any("libQt5Core" in line for line in maps)
+
+
+# --- J2 ----------------------------------------------------------------------------------
+
+from montar.core.project import ColorAdjust, Transform  # noqa: E402
+from montar.engine.base import TransitionSpec  # noqa: E402
+from montar.engine.geometry import affine_rect, placement  # noqa: E402
+
+
+def rgb(src, frame, x=32, y=18):
+    return pixel(src.render(frame, 64, 36), 64, x, y)[:3]
+
+
+def near(color, expected, tol=40):
+    return all(abs(a - b) <= tol for a, b in zip(color, expected, strict=True))
+
+
+RED, BLUE, BLACK, WHITE = (255, 0, 0), (0, 0, 255), (0, 0, 0), (255, 255, 255)
+
+
+def test_geometry():
+    t = Transform()
+    assert affine_rect(1920, 1080, 1280, 720, t) == ((0, 0, 1920, 1080), False)
+    t = Transform(scale=0.5, x=0.25)
+    p = placement(1920, 1080, 1920, 1080, t)
+    assert (p.cx, p.cy, p.width, p.height) == (1440, 540, 960, 540)
+    # vidéo verticale « remplir » : couvre toute la largeur
+    p = placement(1920, 1080, 1080, 1920, Transform(fit="fill"))
+    assert p.width == pytest.approx(1920)
+    rect, distort = affine_rect(1920, 1080, 1080, 1920, Transform(fit="stretch"))
+    assert distort
+    # rognage de la moitié gauche : la moitié droite reste à sa place
+    p = placement(1920, 1080, 1920, 1080, Transform(crop_left=0.45))
+    assert (p.left, p.width) == pytest.approx((0.45 * 1920, 0.55 * 1920))
+
+
+def test_speed(engine, media_dir):
+    s = spec(video(ClipSpec(str(media_dir / "redblue.mp4"), "video", 0, 25, 0, speed=2.0)))
+    src = engine.build(s)
+    assert near(rgb(src, 5), RED) and near(rgb(src, 18), BLUE)
+
+
+def test_scale_flip_crop(engine, media_dir):
+    blue = str(media_dir / "blue.mp4")
+    small = engine.build(spec(video(ClipSpec(blue, "video", 0, 10, media_size=(64, 36),
+                                             transform=Transform(scale=0.5)))))
+    assert near(rgb(small, 0), BLUE) and rgb(small, 0, 2, 2) == BLACK
+    half = str(media_dir / "half.mp4")
+    flipped = engine.build(spec(video(ClipSpec(half, "video", 0, 10, media_size=(64, 36),
+                                               transform=Transform(flip_h=True)))))
+    assert near(rgb(flipped, 0, 8, 18), WHITE) and near(rgb(flipped, 0, 56, 18), RED)
+    cropped = engine.build(spec(video(ClipSpec(half, "video", 0, 10, media_size=(64, 36),
+                                               transform=Transform(crop_left=0.45)))))
+    assert rgb(cropped, 0, 8, 18) == BLACK and near(rgb(cropped, 0, 56, 18), WHITE)
+
+
+def test_color_and_preset(engine, media_dir):
+    red = str(media_dir / "red.mp4")
+    grey = engine.build(spec(video(ClipSpec(red, "video", 0, 10,
+                                            color=ColorAdjust(saturation=-1)))))
+    r, g, b = rgb(grey, 0)
+    assert abs(r - g) < 15 and abs(g - b) < 15
+    bw = engine.build(spec(video(ClipSpec(red, "video", 0, 10, preset="bw"))))
+    r, g, b = rgb(bw, 0)
+    assert abs(r - g) < 15
+    half = engine.build(spec(video(ClipSpec(red, "video", 0, 10, preset="bw",
+                                            preset_amount=0.5))))
+    r, g, _ = rgb(half, 0)
+    assert r - g > 40  # à moitié désaturé
+
+
+def test_fades(engine, media_dir):
+    s = spec(video(ClipSpec(str(media_dir / "red.mp4"), "video", 0, 40, fade_in=10,
+                            fade_out=10)))
+    src = engine.build(s)
+    assert rgb(src, 0) == BLACK and near(rgb(src, 20), RED) and rgb(src, 39) == BLACK
+    assert 20 < rgb(src, 5)[0] < 230  # à mi-fondu
+
+
+@pytest.mark.parametrize(("kind", "middle"), [
+    ("dissolve", (128, 0, 128)), ("dip_black", BLACK), ("dip_white", WHITE),
+])
+def test_transitions(engine, media_dir, kind, middle):
+    red, blue = str(media_dir / "red.mp4"), str(media_dir / "blue.mp4")
+    track = TrackSpec("video", False, False,
+                      (ClipSpec(red, "video", 0, 40), ClipSpec(blue, "video", 20, 40)),
+                      transitions=(TransitionSpec(0, kind, 20),))
+    src = engine.build(spec(track))
+    assert src.length == 60
+    assert near(rgb(src, 10), RED) and near(rgb(src, 50), BLUE)
+    assert near(rgb(src, 30), middle, 60)
+
+
+def test_slide_and_wipe(engine, media_dir):
+    red, blue = str(media_dir / "red.mp4"), str(media_dir / "blue.mp4")
+    for kind, left, right in (("slide_left", RED, BLUE), ("wipe_right", BLUE, RED)):
+        track = TrackSpec("video", False, False,
+                          (ClipSpec(red, "video", 0, 40), ClipSpec(blue, "video", 20, 40)),
+                          transitions=(TransitionSpec(0, kind, 20),))
+        src = engine.build(spec(track))
+        assert near(rgb(src, 30, 4, 18), left), kind
+        assert near(rgb(src, 30, 60, 18), right), kind
+
+
+def test_text_overlay(engine, media_dir):
+    lower = video(ClipSpec(str(media_dir / "blue.mp4"), "video", 0, 30))
+    text = video(ClipSpec(str(media_dir / "text.png"), "text", 5, 20, media_size=(64, 36)))
+    src = engine.build(spec(lower, text))
+    assert near(rgb(src, 10), (255, 255, 0))  # texte jaune au centre
+    assert near(rgb(src, 10, 4, 4), BLUE)  # transparent ailleurs
+    assert near(rgb(src, 2), BLUE)  # avant le texte
+
+
+def test_volume_and_audio_build(engine, media_dir):
+    s = spec(TrackSpec("audio", False, False,
+                       (ClipSpec(str(media_dir / "son.wav"), "audio", 0, 40, volume=0.5,
+                                 fade_in=10),
+                        ClipSpec(str(media_dir / "son.wav"), "audio", 30, 40, speed=1.5)),
+                       volume=0.8, transitions=(TransitionSpec(0, "dissolve", 10),)))
+    assert engine.build(s).length == 70
+    out = engine.audio_output(s)
+    if out is not None:
+        out.start(0)
+        out.stop()
+        out.close()

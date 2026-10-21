@@ -46,6 +46,18 @@ def media_dir(tmp_path_factory) -> Path:
     _ffmpeg("-f", "lavfi", "-i", "testsrc2=size=320x240", "-frames:v", "1", "-update", "1",
             str(d / "photo.png"))
     _ffmpeg("-f", "lavfi", "-i", "sine=frequency=220:duration=3", str(d / "son.wav"))
+    _ffmpeg("-f", "lavfi", "-i", "color=c=red:size=64x36:rate=25:duration=1",
+            "-f", "lavfi", "-i", "color=c=blue:size=64x36:rate=25:duration=1",
+            "-filter_complex", "[0][1]concat=n=2:v=1:a=0", "-c:v", "libx264",
+            "-pix_fmt", "yuv420p", str(d / "redblue.mp4"))
+    _ffmpeg("-f", "lavfi", "-i",
+            "color=c=white:size=64x36:rate=25:duration=1,"
+            "drawbox=x=0:y=0:w=32:h=36:color=red:t=fill",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", str(d / "half.mp4"))
+    _ffmpeg("-f", "lavfi", "-i", "color=c=black@0.0:size=64x36,format=rgba",
+            "-f", "lavfi", "-i", "color=c=yellow:size=16x12,format=rgba",
+            "-filter_complex", "[0][1]overlay=24:12:format=auto,format=rgba",
+            "-frames:v", "1", "-update", "1", str(d / "text.png"))
     for color in ("red", "blue"):
         _ffmpeg("-f", "lavfi", "-i", f"color=c={color}:size=64x36:rate=25:duration=2",
                 "-c:v", "libx264", "-pix_fmt", "yuv420p", str(d / f"{color}.mp4"))

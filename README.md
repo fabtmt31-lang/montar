@@ -1,12 +1,27 @@
 # montar
 
 Logiciel libre de montage vidéo de bureau, simple et 100 % local, extensible par modules Python.
-Cible : Debian, Ubuntu et Linux Mint (paquet `.deb`) dans un premier temps, puis Windows.
+Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un premier temps, puis Windows.
 
 - Cahier des charges : [docs/CAHIER_DES_CHARGES.md](docs/CAHIER_DES_CHARGES.md)
 - Maquettes d'interface : [docs/maquettes/](docs/maquettes/)
 
 ## État d'avancement
+
+**Jalon J2 — édition de base** (version 0.3.0) :
+
+- inspecteur du clip, onglets **Image** (position, échelle, rotation, opacité,
+  ajuster / remplir / étirer, retournement, recadrage, fondus), **Audio** (volume, couper le
+  son, détacher l'audio), **Vitesse** (×0,1 à ×16), **Couleur** (luminosité, contraste,
+  saturation, température, exposition) ;
+- panneau **Filtres** : noir et blanc, noir intense, sépia, vintage, chaud, froid, éclatant,
+  délavé, avec intensité ; panneau **Effets** : flou, netteté, vignettage ;
+- panneau **Transitions** : fondu enchaîné, fondu au noir, fondu au blanc, balayages,
+  glissements, zoom ; durée réglable dans l'inspecteur ;
+- panneau **Texte** : 4 styles de titres et 4 bandeaux (maquette 03), police, taille, graisse,
+  alignement, couleur, interlettrage, contour, ombre, bandeau, animations d'entrée et de
+  sortie ; le texte se déplace et se redimensionne directement dans l'aperçu ;
+- volume par piste (clic droit sur l'en-tête de la piste).
 
 **Jalon J1 — timeline** (version 0.2.0) :
 
@@ -23,13 +38,12 @@ Cible : Debian, Ubuntu et Linux Mint (paquet `.deb`) dans un premier temps, puis
 **Jalon J0 — socle** (0.1.0) : accueil, nouveau projet, import de médias, aperçu,
 préférences, thèmes, paquet `.deb`.
 
-Pas encore disponible : volume par clip, texte et titres, transitions, filtres, export
-(jalons J2 à J4 du cahier des charges, §9).
+Pas encore disponible : effet Timelapse et modules (J3), export (J4).
 
 ## Installer le paquet
 
 ```sh
-sudo apt install ./montar_0.2.0_all.deb
+sudo apt install ./montar_0.3.0_all.deb
 ```
 
 Le paquet est produit par l'intégration continue (onglet *Actions* de GitHub, artefacts
@@ -41,7 +55,7 @@ Dépendances (paquets système) :
 
 ```sh
 sudo apt install python3 python3-pyqt6 python3-pyqt6.qtsvg python3-mlt libmlt-data \
-  python3-numpy ffmpeg python3-pytest
+  python3-numpy frei0r-plugins ffmpeg python3-pytest
 # pour construire le paquet :
 sudo apt install build-essential debhelper dh-python lintian
 ```
@@ -75,5 +89,5 @@ Organisation du code :
 ## Licence
 
 montar est distribué sous licence GNU GPL v3 ou ultérieure — voir [LICENSE](LICENSE).
-Les polices Manrope et JetBrains Mono sont sous licence SIL OFL 1.1, les icônes Lucide sous
+Les polices Manrope, JetBrains Mono, Fraunces et Caveat sont sous licence SIL OFL 1.1, les icônes Lucide sous
 licence ISC (voir `debian/copyright`).

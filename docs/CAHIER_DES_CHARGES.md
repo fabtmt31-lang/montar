@@ -232,13 +232,13 @@ Les préférences s'organisent en rubriques : **Général**, **Lecture & aperçu
 ### 4.1 Plateformes
 | Phase | Plateforme | Livrable |
 |-------|------------|----------|
-| 1 | Linux x86_64 : **Debian 12** (bookworm) et 13 (trixie), **Ubuntu 22.04 LTS** et **24.04 LTS**, **Linux Mint 21.x** et **22.x** (bases Ubuntu 22.04 / 24.04), ainsi que LMDE 6 (base Debian 12) | Paquet **`.deb`** (`amd64`) |
+| 1 | Linux x86_64 : **Debian 12** (bookworm) et 13 (trixie), **Ubuntu 24.04 LTS** et suivantes, **Linux Mint 22.x** (base Ubuntu 24.04), ainsi que LMDE 6 (base Debian 12) | Paquet **`.deb`** (`all`) |
 | 2 | Windows 10 (22H2) / 11 x64 | Installeur `.exe` + version portable `.zip` |
-| Ultérieur | Autres distributions (Flatpak, `.rpm`), Linux arm64, macOS | — |
+| Ultérieur | **Flatpak** (toutes distributions, y compris Ubuntu 22.04 / Mint 21), `.rpm`, Linux arm64, macOS | — |
 
-Socle commun minimal imposé par ces distributions : **Python 3.10**, Qt 6.2, MLT 7.4, FFmpeg 4.4 (Ubuntu 22.04 / Mint 21). Le code ne doit utiliser aucune fonctionnalité plus récente sans repli.
+Socle commun minimal imposé par ces distributions : **Python 3.11**, Qt 6.4, MLT 7.12, FFmpeg 5.1 (Debian 12 / LMDE 6). Le code ne doit utiliser aucune fonctionnalité plus récente sans repli (le code reste compatible Python 3.10).
 
-> **Constat (J0)** : Ubuntu 22.04, donc Linux Mint 21, ne fournit **pas** PyQt6 en paquet (il n'y arrive qu'à partir d'Ubuntu 22.10). Le paquet `.deb` actuel, qui s'appuie sur les paquets système, est donc validé sur **Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ / LMDE 6**. Le support d'Ubuntu 22.04 / Mint 21 est un point ouvert (§8).
+> **Décision (D7)** : Ubuntu 22.04, donc Linux Mint 21, ne fournit **pas** PyQt6 en paquet (il n'y arrive qu'à partir d'Ubuntu 22.10). Ces versions (fin de support : avril 2027) ne sont pas ciblées par le `.deb`, qui s'appuie sur les paquets système. Elles pourront être couvertes plus tard par un Flatpak.
 
 Le code doit être **multiplateforme dès le départ** : pas d'appel système spécifique à Linux hors du module `platform/`.
 
@@ -278,7 +278,7 @@ Le code Python pilote l'application ; tout traitement image par image est délé
 - Code conforme PEP 8, vérifié par `ruff` ; annotations de types vérifiées par `mypy`.
 - Tests `pytest` du modèle (timeline, projet, calcul des durées, Timelapse) ; couverture ≥ 70 % sur `core/`.
 - Tests de rendu automatisés (comparaison d'images sur mires de test).
-- Intégration continue : tests et génération automatique du `.deb` à chaque commit, installation testée dans des conteneurs Debian 12, Ubuntu 22.04 et 24.04.
+- Intégration continue : tests et génération automatique du `.deb` à chaque commit, installation testée dans des conteneurs Debian 12 et Ubuntu 24.04.
 - Journalisation (module `logging`) dans un fichier local rotatif.
 
 ### 4.8 Accessibilité
@@ -300,7 +300,7 @@ Le code Python pilote l'application ; tout traitement image par image est délé
 | Couche | Technologie | Justification |
 |--------|-------------|---------------|
 | Langage | **Python ≥ 3.10** | Choix du projet ; développement rapide ; modules faciles à écrire pour les contributeurs. |
-| Interface | **PyQt6 — Qt Widgets** + feuille de style QSS générée depuis les jetons de la charte | Paquets officiels présents dans Debian 12, Ubuntu 22.04/24.04 et Mint (`python3-pyqt6`), licence GPLv3 compatible ; Qt Widgets disponible partout, contrairement aux bindings QML non packagés sur toutes les versions ciblées. La timeline est un widget dessiné sur mesure (`QGraphicsView` ou `QWidget` + `QPainter`). |
+| Interface | **PyQt6 — Qt Widgets** + feuille de style QSS générée depuis les jetons de la charte | Paquets officiels présents dans Debian 12, Ubuntu 24.04 et Mint 22 (`python3-pyqt6`), licence GPLv3 compatible ; Qt Widgets disponible partout, contrairement aux bindings QML non packagés sur toutes les versions ciblées. La timeline est un widget dessiné sur mesure (`QGraphicsView` ou `QWidget` + `QPainter`). |
 | Moteur de montage | **MLT 7** via ses bindings Python (`python3-mlt`) | Moteur éprouvé (Kdenlive, Shotcut) : timeline multipiste, transitions, filtres, changement de vitesse (`timewarp`), rendu multi-thread natif. Évite d'écrire un moteur temps réel en Python. |
 | Décodage / encodage | **FFmpeg** (via MLT ; `ffprobe` pour l'analyse des médias) | Couverture formats/codecs, accélération matérielle. |
 | Effets supplémentaires | frei0r, filtres FFmpeg (`framestep`, `tmix`, `deflicker`), filtres GLSL de MLT | Base d'effets riche sans traitement pixel en Python. |
@@ -437,7 +437,7 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
   - icônes `/usr/share/icons/hicolor/*/apps/montar.*` ;
   - type MIME `application/x-montar-project` (`*.montar`) : double-clic sur un projet ;
   - métadonnées AppStream (`/usr/share/metainfo/`) pour l'affichage dans les logithèques (Logithèque Mint, GNOME Logiciels).
-- `lintian` sans erreur ; test d'installation / lancement / désinstallation automatisé dans des conteneurs Debian 12, Ubuntu 22.04 et Ubuntu 24.04 (Mint 21/22 et LMDE 6 partagent ces bases).
+- `lintian` sans erreur ; test d'installation / lancement / désinstallation automatisé dans des conteneurs Debian 12 et Ubuntu 24.04 (Mint 22 et LMDE 6 partagent ces bases).
 - Distribution : fichier `.deb` attaché aux versions GitHub ; dépôt APT signé ou PPA envisageable ensuite.
 
 ### 7.2 Windows (phase 2)
@@ -456,10 +456,10 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
 | D4 | Bibliothèque de ressources | **Aucune fournie pour le moment** ; possible plus tard via un module. |
 | D5 | Distributions Linux | **Debian, Ubuntu, Linux Mint** pour le moment (paquet `.deb`). |
 | D6 | Interface | Basée sur les maquettes `docs/maquettes/Montar.html` et leur charte « verts pastel ». |
+| D7 | Anciennes versions | Ubuntu 22.04 et Linux Mint 21 (sans PyQt6 packagé) ne sont pas ciblées par le `.deb` ; un Flatpak pourra les couvrir après J4. |
 
 ### Points restant ouverts
 1. Moteur sous Windows (bindings MLT ou moteur alternatif) : à trancher par prototype en début de phase 2.
-1. Ubuntu 22.04 / Linux Mint 21 (sans PyQt6 packagé) : abandonner ces versions, ou fournir pour elles un paquet embarquant PyQt6 (plus lourd, ~100 Mo, hors règles Debian).
 2. Contenu exact des modèles de démonstration (s'il y en a) et du thème sombre.
 3. Mode de diffusion du `.deb` au-delà des versions GitHub (dépôt APT, PPA).
 
@@ -471,7 +471,7 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
 |-------|---------|----------|
 | **J0 — Socle** ✅ (0.1.0) | Projet Python (`pyproject.toml`), thème QSS issu de la charte, fenêtre principale et navigation, accueil, import, aperçu d'un clip via MLT, CI avec `.deb` de développement | Build de dev |
 | **J1 — Timeline** ✅ (0.2.0) | Widget timeline, pistes, glisser-déposer, rogner, scinder, undo/redo, sauvegarde projet JSON, Nouveau projet | Alpha interne |
-| **J2 — Édition de base** | Inspecteur (transformation, ajustements, vitesse, couleur), filtres, texte et titres, transitions, audio | Alpha |
+| **J2 — Édition de base** ✅ (0.3.0) | Inspecteur (transformation, ajustements, vitesse, couleur), filtres, texte et titres, transitions, audio | Alpha |
 | **J3 — Timelapse + API modules** | Chargeur de modules, API v1 documentée, module Timelapse, Préférences → Extensions | Bêta |
 | **J4 — Export & packaging Linux** | Dialogue d'export, file d'export, accélération matérielle, préférences complètes, `.deb` validé sur Debian / Ubuntu / Mint | **v1.0 Linux** |
 | **J5 — Portage Windows** | Prototype moteur, exécutable, installeur | **v1.0 Windows** |
@@ -483,7 +483,7 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
 - Toutes les exigences **P1** implémentées et testées.
 - Interface conforme aux maquettes 01 à 07 (hors écarts tranchés au §3), en thème clair et sombre.
 - Scénario de bout en bout réussi **sans connexion réseau** : *créer un projet 16:9 → importer 3 vidéos + 1 musique → couper, ordonner, ajouter 2 transitions et un titre → appliquer un Timelapse ×20 sur une portion → exporter en MP4 1080p → relire le fichier dans un lecteur tiers.*
-- Le paquet `.deb` s'installe, se lance et se désinstalle proprement sur Debian 12, Ubuntu 22.04, Ubuntu 24.04, Linux Mint 21 et 22 ; `lintian` sans erreur.
+- Le paquet `.deb` s'installe, se lance et se désinstalle proprement sur Debian 12, Ubuntu 24.04, Linux Mint 22 et LMDE 6 ; `lintian` sans erreur.
 - Un module d'exemple tiers en Python (effet « négatif ») s'installe depuis un fichier local et fonctionne sans réinstaller l'application.
 - Aucun plantage sur la suite de tests de robustesse (fichiers corrompus, médias manquants, module défaillant).
 

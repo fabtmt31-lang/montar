@@ -238,12 +238,14 @@ class TimelineView(QAbstractScrollArea):
             r = self._row_rect(row)
             painter.fillRect(QRect(HEADER_W, r.bottom(), w, 1), QColor(p.border))
         dragged = self._drag.clip_id if self._drag and self._drag.mode != "playhead" else None
-        for clip in self.controller.project.clips:
+        for clip in sorted(self.controller.project.clips, key=lambda c: c.start):
             if clip.id == dragged:
                 continue
             rect = self.clip_rect(clip)
             if rect is not None and rect.right() >= HEADER_W and rect.left() <= w:
                 self._paint_clip(painter, clip, rect, clip.id == self.controller.selected)
+        for transition in self.controller.project.transitions:
+            self._paint_transition(painter, transition)
         if dragged:
             d = self._drag
             clip = self._find_clip(dragged)
@@ -271,6 +273,8 @@ class TimelineView(QAbstractScrollArea):
 
     def _clip_color(self, clip: Clip, media: MediaItem | None) -> str:
         p = theme().palette
+        if clip.is_text:
+            return p.water
         track = next((t for t in self.controller.project.tracks if t.id == clip.track_id), None)
         if track is not None and track.kind == "audio":
             first = self.controller.timeline.first_track("audio")
@@ -288,26 +292,40 @@ class TimelineView(QAbstractScrollArea):
             painter.setOpacity(0.85)
         painter.fillPath(path, QColor(self._clip_color(clip, media)))
         painter.setClipPath(path, Qt.ClipOperation.IntersectClip)
+        on_audio_track = self.controller.timeline.track(clip.track_id).kind == "audio"
         text_x = rect.left() + 10
-        if media is not None and media.kind in ("video", "image"):
+        if media is not None and media.kind in ("video", "image") and not on_audio_track:
             text_x = self._paint_thumbnails(painter, media, rect)
         if media is not None and media.has_audio and media.kind in ("audio", "video"):
-            self._paint_waveform(painter, clip, media, rect)
-        if media is not None:
-            f = QFont(FONT_UI)
-            f.setPixelSize(12)
-            f.setWeight(QFont.Weight.DemiBold)
-            painter.setFont(f)
-            painter.setPen(QColor(p.ink if not p.dark else p.ink))
-            fm = QFontMetrics(f)
-            available = int(rect.right() - text_x - 8)
-            if available > 20:
-                name = fm.elidedText(media.name, Qt.TextElideMode.ElideRight, available)
-                ty = rect.top() + (14 if media.kind == "audio" else rect.height() / 2 + 4)
-                painter.drawText(int(text_x), int(ty), name)
-            if not media.exists:
-                icon = icon_pixmap("triangle-alert", "#B4452F", 16)
-                painter.drawPixmap(int(rect.right()) - 22, int(rect.top()) + 4, icon)
+            self._paint_waveform(painter, clip, media, rect, on_audio_track)
+        f = QFont(FONT_UI)
+        f.setPixelSize(12)
+        f.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(f)
+        painter.setPen(QColor(p.ink))
+        fm = QFontMetrics(f)
+        badges = self._badges(clip, media)
+        available = int(rect.right() - text_x - 8 - 30 * len(badges))
+        if clip.is_text:
+            name = clip.text.content.replace("\n", " ") or _("Texte")
+            painter.drawPixmap(int(text_x), int(rect.center().y() - 8),
+                               icon_pixmap("type", p.forest, 16))
+            text_x += 22
+            available -= 22
+        else:
+            name = media.name if media is not None else ""
+        if available > 20:
+            name = fm.elidedText(name, Qt.TextElideMode.ElideRight, available)
+            top_label = on_audio_track or (media is not None and media.kind == "audio")
+            ty = rect.top() + (14 if top_label else rect.height() / 2 + 4)
+            painter.drawText(int(text_x), int(ty), name)
+        x = rect.right() - 6
+        for badge in badges:
+            x = self._paint_badge(painter, badge, x, rect.top() + 5)
+        self._paint_fades(painter, clip, rect)
+        if media is not None and not media.exists:
+            icon = icon_pixmap("triangle-alert", "#B4452F", 16)
+            painter.drawPixmap(int(rect.left()) + 6, int(rect.top()) + 4, icon)
         painter.restore()
         pen = QPen(QColor(p.forest if selected else p.sage))
         pen.setWidthF(2.0 if selected else 1.0)
@@ -320,6 +338,91 @@ class TimelineView(QAbstractScrollArea):
             cy = rect.center().y()
             for x in (rect.left() + 3, rect.right() - 6):
                 painter.drawRoundedRect(QRectF(x, cy - 9, 3, 18), 1.5, 1.5)
+
+    def _badges(self, clip: Clip, media: MediaItem | None) -> list[str]:
+        badges = []
+        if clip.speed != 1.0:
+            badges.append(f"×{clip.speed:g}")
+        if media is not None and media.has_audio and clip.volume == 0:
+            badges.append("mute")
+        if clip.preset or not clip.color.is_identity() or not clip.effects.is_identity():
+            badges.append("fx")
+        return badges
+
+    def _paint_badge(self, painter: QPainter, badge: str, right: float, top: float) -> float:
+        f = QFont(FONT_MONO)
+        f.setPixelSize(10)
+        f.setWeight(QFont.Weight.Bold)
+        painter.setFont(f)
+        if badge in ("mute", "fx"):
+            width = 20.0
+        else:
+            width = QFontMetrics(f).horizontalAdvance(badge) + 10.0
+        rect = QRectF(right - width, top, width, 16)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#17261E"))
+        painter.drawRoundedRect(rect, 4, 4)
+        if badge == "mute":
+            painter.drawPixmap(int(rect.left()) + 3, int(rect.top()) + 1,
+                               icon_pixmap("volume-x", "#FFFFFF", 14))
+        elif badge == "fx":
+            painter.drawPixmap(int(rect.left()) + 3, int(rect.top()) + 1,
+                               icon_pixmap("sparkles", "#FFFFFF", 14))
+        else:
+            painter.setPen(QColor("#FFFFFF"))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, badge)
+        return rect.left() - 4
+
+    def _paint_fades(self, painter: QPainter, clip: Clip, rect: QRectF) -> None:
+        """Rampes de fondu en haut du clip."""
+        color = QColor("#17261E")
+        color.setAlphaF(0.35)
+        painter.setPen(QPen(color, 1.5))
+        for frames, left in ((clip.fade_in, True), (clip.fade_out, False)):
+            if frames <= 0:
+                continue
+            width = min(rect.width() / 2, frames * self.ppf)
+            if left:
+                painter.drawLine(int(rect.left()), int(rect.bottom()) - 2,
+                                 int(rect.left() + width), int(rect.top()) + 2)
+            else:
+                painter.drawLine(int(rect.right() - width), int(rect.top()) + 2,
+                                 int(rect.right()), int(rect.bottom()) - 2)
+
+    def transition_rect(self, transition) -> QRectF | None:
+        right = self._find_clip(transition.right_id)
+        if right is None:
+            return None
+        row = next((r for r in self.rows() if r.track.id == transition.track_id), None)
+        if row is None:
+            return None
+        r = self._row_rect(row)
+        x0 = self.frame_to_x(right.start)
+        width = max(24.0, transition.duration * self.ppf)
+        cx = x0 + transition.duration * self.ppf / 2
+        return QRectF(cx - width / 2, r.center().y() - 12, width, 24)
+
+    def _paint_transition(self, painter: QPainter, transition) -> None:
+        from montar.ui.labels import TRANSITIONS
+
+        rect = self.transition_rect(transition)
+        if rect is None:
+            return
+        p = theme().palette
+        selected = self.controller.selected_transition == transition.id
+        painter.setPen(QPen(QColor(p.forest), 2 if selected else 1))
+        painter.setBrush(QColor(p.surface))
+        painter.drawRoundedRect(rect, 8, 8)
+        icon = TRANSITIONS.get(transition.kind, ("", "blend"))[1]
+        painter.drawPixmap(int(rect.center().x()) - 8, int(rect.center().y()) - 8,
+                           icon_pixmap(icon, p.forest, 16))
+
+    def transition_at(self, pos: QPoint):
+        for t in self.controller.project.transitions:
+            rect = self.transition_rect(t)
+            if rect is not None and rect.contains(pos.x(), pos.y()):
+                return t
+        return None
 
     def _thumbnail(self, media: MediaItem, height: int) -> QPixmap | None:
         key = (media.path, height)
@@ -349,7 +452,7 @@ class TimelineView(QAbstractScrollArea):
         return min(x, rect.right()) + 10
 
     def _paint_waveform(self, painter: QPainter, clip: Clip, media: MediaItem,
-                        rect: QRectF) -> None:
+                        rect: QRectF, full: bool = False) -> None:
         peaks = self._peaks_for(media.path)
         if not peaks:
             return
@@ -357,7 +460,7 @@ class TimelineView(QAbstractScrollArea):
         color = QColor(p.forest)
         color.setAlphaF(0.55)
         painter.setPen(QPen(color, 1))
-        if media.kind == "audio":
+        if media.kind == "audio" or full:
             mid, amp = rect.center().y() + 5, rect.height() / 2 - 8
         else:  # bande sous les vignettes
             mid, amp = rect.bottom() - 8, 6
@@ -366,10 +469,10 @@ class TimelineView(QAbstractScrollArea):
         peak_scale = max(1, max(peaks))
         x = visible_left
         while x < visible_right:
-            frame = clip.source_in + (x - rect.left()) / self.ppf
+            frame = clip.source_in + (x - rect.left()) / self.ppf * clip.speed
             index = int(frame / self.fps * PEAKS_PER_SECOND)
             if 0 <= index < len(peaks):
-                span = max(1, int(PEAKS_PER_SECOND / self.pps * 2))
+                span = max(1, int(PEAKS_PER_SECOND / self.pps * 2 * clip.speed))
                 value = max(peaks[index:index + span]) / peak_scale
                 dy = max(0.5, value * amp)
                 painter.drawLine(int(x), int(mid - dy), int(x), int(mid + dy))
@@ -434,9 +537,10 @@ class TimelineView(QAbstractScrollArea):
     def _header_buttons(self, row: _Row) -> list[tuple[str, QRect]]:
         r = self._row_rect(row)
         cy = r.top() + r.height() // 2
-        buttons = []
         x = HEADER_W - 34
-        buttons.append(("mute", QRect(x, cy - 13, 26, 26)))
+        if row.track.kind == "text":
+            return [("hide", QRect(x, cy - 13, 26, 26))]
+        buttons = [("mute", QRect(x, cy - 13, 26, 26))]
         if row.track.kind == "video":
             buttons.append(("hide", QRect(x - 28, cy - 13, 26, 26)))
         return buttons
@@ -499,7 +603,9 @@ class TimelineView(QAbstractScrollArea):
 
     def hit_test(self, pos: QPoint) -> tuple[Clip, str] | None:
         """Clip sous le pointeur et zone saisie : "start", "end" ou "body"."""
-        for clip in reversed(self.controller.project.clips):
+        # dans une zone de transition, le clip de droite (dessiné par-dessus) a priorité
+        ordered = sorted(self.controller.project.clips, key=lambda c: c.start)
+        for clip in reversed(ordered):
             rect = self.clip_rect(clip)
             if rect is None or not rect.contains(pos.x(), pos.y()):
                 continue
@@ -535,6 +641,11 @@ class TimelineView(QAbstractScrollArea):
         if pos.y() < RULER_H:
             self._drag = _Drag("playhead")
             self._seek_to(pos.x())
+            return
+        transition = self.transition_at(pos)
+        if transition is not None:
+            self.controller.select_transition(transition.id)
+            self.viewport().update()
             return
         hit = self.hit_test(pos)
         if hit is None:
@@ -576,7 +687,7 @@ class TimelineView(QAbstractScrollArea):
             start = self._snap(frame - d.offset, clip.id, (clip.duration,))
             row = self.row_at(pos.y())
             track_id = clip.track_id
-            if row is not None and timeline.accepts(row.track, timeline.media_of(clip)):
+            if row is not None and timeline.accepts_clip(row.track, clip):
                 track_id = row.track.id
             d.track_id = track_id
             d.start = timeline.free_start(track_id, start, clip.duration, ignore=clip.id)
@@ -660,6 +771,9 @@ class TimelineView(QAbstractScrollArea):
             if row is None:
                 return
             track_id = row.track.id
+            if row.track.kind != "text":
+                menu.addAction(self._volume_action(menu, row.track))
+                menu.addSeparator()
             menu.addAction(_("Supprimer la piste"), lambda: self.controller.edit(
                 _("Supprimer la piste"), lambda t: t.remove_track(track_id)))
         else:
@@ -672,12 +786,43 @@ class TimelineView(QAbstractScrollArea):
                 _("Couper"), lambda t: t.split_at(self.playhead, clip_id)))
             menu.addAction(_("Dupliquer"), lambda: self.controller.edit(
                 _("Dupliquer"), lambda t: t.duplicate(clip_id)))
+            timeline = self.controller.timeline
+            right = timeline.neighbour(clip_id, "right")
+            if right is not None and timeline.transition_after(clip_id) is None:
+                right_id = right.id
+                menu.addAction(_("Ajouter un fondu enchaîné avec le clip suivant"),
+                               lambda: self.controller.edit(
+                                   _("Ajouter une transition"),
+                                   lambda t: t.add_transition(clip_id, right_id, "dissolve")))
+            media = self.controller.project.find_media(hit[0].media_id)
+            if (media is not None and media.kind == "video" and media.has_audio
+                    and timeline.track(hit[0].track_id).kind == "video" and hit[0].volume > 0):
+                menu.addAction(_("Détacher l'audio"), lambda: self.controller.edit(
+                    _("Détacher l'audio"), lambda t: t.detach_audio(clip_id)))
             menu.addSeparator()
             menu.addAction(_("Supprimer"), lambda: self.controller.edit(
                 _("Supprimer"), lambda t: t.delete(clip_id)))
             menu.addAction(_("Supprimer et refermer l'espace"), lambda: self.controller.edit(
                 _("Supprimer et refermer l'espace"), lambda t: t.delete(clip_id, ripple=True)))
         menu.exec(event.globalPos())
+
+    def _volume_action(self, menu: QMenu, track: Track):
+        """Curseur « Volume de la piste » intégré au menu contextuel de l'en-tête."""
+        from PyQt6.QtWidgets import QWidgetAction
+
+        from montar.ui.editor.controls import SliderRow
+
+        action = QWidgetAction(menu)
+        row = SliderRow(_("Volume de la piste"), 0, 200, lambda v: f"{v:.0f} %")
+        row.setContentsMargins(12, 4, 12, 4)
+        row.setMinimumWidth(220)
+        row.set_value(track.volume * 100)
+        track_id = track.id
+        row.moved.connect(lambda v: self.controller.edit(
+            _("Volume de la piste"), lambda t: setattr(t.track(track_id), "volume", v / 100),
+            merge=(track_id, "volume")))
+        action.setDefaultWidget(row)
+        return action
 
     # --- dépôt de médias ---------------------------------------------------------------
 

@@ -2,6 +2,8 @@
 """Historique annuler / rétablir, par instantanés de l'état du projet."""
 from __future__ import annotations
 
+import time
+
 from montar.core.project import Project
 from montar.core.timeline import restore, snapshot
 
@@ -13,9 +15,22 @@ class History:
         self._undo: list[tuple[str, tuple]] = []
         self._redo: list[tuple[str, tuple]] = []
         self._limit = limit
+        self._merge: tuple[object, float] | None = None  # (clé, instant) du dernier ajout
 
-    def record(self, label: str, state: tuple) -> None:
-        """Mémorise l'état d'avant une modification."""
+    MERGE_SECONDS = 1.5
+
+    def record(self, label: str, state: tuple, merge: object = None) -> None:
+        """Mémorise l'état d'avant une modification.
+
+        Des modifications successives portant la même clé `merge` (déplacement d'un
+        curseur, par exemple) ne forment qu'une seule étape d'annulation."""
+        now = time.monotonic()
+        if (merge is not None and self._merge is not None and self._merge[0] == merge
+                and now - self._merge[1] < self.MERGE_SECONDS and self._undo
+                and not self._redo):
+            self._merge = (merge, now)
+            return
+        self._merge = (merge, now) if merge is not None else None
         self._undo.append((label, state))
         del self._undo[:-self._limit]
         self._redo.clear()
@@ -43,6 +58,7 @@ class History:
         if not self._undo:
             return None
         label, state = self._undo.pop()
+        self._merge = None
         self._redo.append((label, snapshot(project)))
         restore(project, state)
         return label

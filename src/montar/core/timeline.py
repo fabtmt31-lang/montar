@@ -2,19 +2,35 @@
 """Opérations de montage sur la timeline d'un projet (sans Qt).
 
 Règles :
-- une piste vidéo accepte les vidéos et les images, une piste audio les sons ;
-- deux clips d'une même piste ne se chevauchent jamais : un clip déposé ou déplacé sur
-  une zone occupée est placé dans l'espace libre le plus proche ;
-- un clip vidéo ou audio ne peut pas dépasser la longueur de son média.
+- une piste vidéo accepte les vidéos et les images ; une piste audio les sons et la bande
+  son des vidéos ; une piste texte les clips de texte ;
+- deux clips d'une même piste ne se chevauchent jamais, sauf ceux reliés par une
+  transition : le clip de droite recouvre alors les dernières images du clip de gauche ;
+- un clip vidéo ou audio ne peut pas dépasser la longueur de son média (à sa vitesse).
 """
 from __future__ import annotations
 
 import copy
 
-from montar.core.project import Clip, MediaItem, Project, Track
+from montar.core.project import (
+    Clip,
+    MediaItem,
+    Project,
+    TextStyle,
+    Track,
+    Transition,
+    new_id,
+)
 
 IMAGE_DEFAULT_SECONDS = 5
-TRACK_KIND_FOR_MEDIA = {"video": "video", "image": "video", "audio": "audio"}
+TEXT_DEFAULT_SECONDS = 5
+MIN_SPEED, MAX_SPEED = 0.1, 16.0
+TRACK_KINDS = ("text", "video", "audio")
+TRACK_NAMES = {"text": "Texte", "video": "Vidéo", "audio": "Audio"}
+TRACK_PREFIX = {"text": "T", "video": "V", "audio": "A"}
+VIDEO_TRANSITIONS = ("dissolve", "dip_black", "dip_white", "wipe_right", "wipe_left",
+                     "slide_left", "slide_right", "zoom")
+AUDIO_TRANSITIONS = ("dissolve",)
 
 
 class TimelineError(ValueError):
@@ -43,7 +59,10 @@ class Timeline:
                 return c
         raise TimelineError(f"clip inconnu : {clip_id}")
 
-    def media_of(self, clip: Clip) -> MediaItem:
+    def media_of(self, clip: Clip) -> MediaItem | None:
+        """Média du clip (None pour un texte)."""
+        if clip.is_text:
+            return None
         media = self.project.find_media(clip.media_id)
         if media is None:
             raise TimelineError(f"média inconnu : {clip.media_id}")
@@ -59,29 +78,53 @@ class Timeline:
     def clips_at(self, frame: int) -> list[Clip]:
         return [c for c in self.project.clips if c.start <= frame < c.end]
 
-    def accepts(self, track: Track, media: MediaItem) -> bool:
-        return TRACK_KIND_FOR_MEDIA.get(media.kind) == track.kind
+    def accepts(self, track: Track, media: MediaItem | None) -> bool:
+        """La piste peut-elle recevoir ce média (None = clip de texte) ?"""
+        if media is None:
+            return track.kind == "text"
+        if track.kind == "video":
+            return media.kind in ("video", "image")
+        if track.kind == "audio":
+            return media.kind == "audio" or (media.kind == "video" and media.has_audio)
+        return False
+
+    def accepts_clip(self, track: Track, clip: Clip) -> bool:
+        """Un clip déjà placé ne change que pour une piste du même type."""
+        return track.kind == self.track(clip.track_id).kind
 
     def first_track(self, kind: str) -> Track | None:
-        """Piste du type demandé la plus basse (V1 pour la vidéo, A1 pour l'audio)."""
+        """Piste la plus basse du type (V1, T1) ou première piste audio (A1)."""
         tracks = [t for t in self.project.tracks if t.kind == kind]
         if not tracks:
             return None
-        return tracks[-1] if kind == "video" else tracks[0]
+        return tracks[0] if kind == "audio" else tracks[-1]
 
     def track_labels(self) -> dict[str, str]:
-        """Libellés courts : V1 = piste vidéo la plus basse, A1 = première piste audio."""
+        """Libellés courts : V1 et T1 = pistes les plus basses, A1 = première piste audio."""
         labels = {}
-        videos = [t for t in self.project.tracks if t.kind == "video"]
-        for i, t in enumerate(reversed(videos), start=1):
-            labels[t.id] = f"V{i}"
-        audios = [t for t in self.project.tracks if t.kind == "audio"]
-        for i, t in enumerate(audios, start=1):
-            labels[t.id] = f"A{i}"
+        for kind in TRACK_KINDS:
+            tracks = [t for t in self.project.tracks if t.kind == kind]
+            ordered = tracks if kind == "audio" else list(reversed(tracks))
+            for i, t in enumerate(ordered, start=1):
+                labels[t.id] = f"{TRACK_PREFIX[kind]}{i}"
         return labels
 
-    def source_length(self, clip: Clip) -> int | None:
-        return self.media_of(clip).length_frames(self.fps)
+    def available_after(self, clip: Clip) -> int | None:
+        """Images de timeline disponibles depuis le point d'entrée (None = illimité)."""
+        media = self.media_of(clip)
+        if media is None:
+            return None
+        length = media.length_frames(self.fps)
+        if length is None:
+            return None
+        return max(1, int((length - clip.source_in) / clip.speed))
+
+    def available_before(self, clip: Clip) -> int | None:
+        """Images de timeline dont le début du clip peut reculer (None = illimité)."""
+        media = self.media_of(clip)
+        if media is None or media.length_frames(self.fps) is None:
+            return None
+        return int(clip.source_in / clip.speed)
 
     def free_start(self, track_id: str, start: int, duration: int,
                    ignore: str | None = None) -> int:
@@ -103,6 +146,45 @@ class Timeline:
         assert best is not None
         return best
 
+    # --- transitions (lecture) ---------------------------------------------------------
+
+    def transition(self, transition_id: str) -> Transition:
+        for t in self.project.transitions:
+            if t.id == transition_id:
+                return t
+        raise TimelineError(f"transition inconnue : {transition_id}")
+
+    def transitions_of(self, clip_id: str) -> list[Transition]:
+        return [t for t in self.project.transitions if clip_id in (t.left_id, t.right_id)]
+
+    def transition_after(self, clip_id: str) -> Transition | None:
+        return next((t for t in self.project.transitions if t.left_id == clip_id), None)
+
+    def transition_before(self, clip_id: str) -> Transition | None:
+        return next((t for t in self.project.transitions if t.right_id == clip_id), None)
+
+    def neighbour(self, clip_id: str, side: str) -> Clip | None:
+        """Clip collé (ou relié par une transition) à droite ou à gauche."""
+        clip = self.clip(clip_id)
+        link = self.transition_after(clip_id) if side == "right" else \
+            self.transition_before(clip_id)
+        if link is not None:
+            return self.clip(link.right_id if side == "right" else link.left_id)
+        for c in self.clips_on(clip.track_id, ignore=clip.id):
+            if side == "right" and c.start == clip.end:
+                return c
+            if side == "left" and c.end == clip.start:
+                return c
+        return None
+
+    def max_transition(self, left: Clip, right: Clip) -> int:
+        """Durée maximale d'une transition entre deux clips (les autres transitions déduites)."""
+        before = self.transition_before(left.id)
+        after = self.transition_after(right.id)
+        room_left = left.duration - (before.duration if before else 0)
+        room_right = right.duration - (after.duration if after else 0)
+        return max(0, min(room_left, room_right) - 1)
+
     # --- modifications ------------------------------------------------------------
 
     def default_duration(self, media: MediaItem) -> int:
@@ -111,11 +193,13 @@ class Timeline:
 
     def add_clip(self, media: MediaItem, track_id: str | None = None,
                  start: int | None = None, duration: int | None = None) -> Clip:
-        kind = TRACK_KIND_FOR_MEDIA.get(media.kind)
-        if kind is None:
+        if media.kind not in ("video", "image", "audio"):
             raise TimelineError(f"type de média inconnu : {media.kind}")
-        track = self.track(track_id) if track_id else (self.first_track(kind)
-                                                       or self.add_track(kind))
+        if track_id:
+            track = self.track(track_id)
+        else:
+            kind = "audio" if media.kind == "audio" else "video"
+            track = self.first_track(kind) or self.add_track(kind)
         if not self.accepts(track, media):
             raise TimelineError("ce média ne peut pas être placé sur cette piste")
         if duration is None:
@@ -127,11 +211,24 @@ class Timeline:
         self.project.clips.append(clip)
         return clip
 
+    def add_text(self, style: TextStyle, start: int, track_id: str | None = None,
+                 duration: int | None = None) -> Clip:
+        track = self.track(track_id) if track_id else (self.first_track("text")
+                                                       or self.add_track("text"))
+        if track.kind != "text":
+            raise TimelineError("un texte se place sur une piste texte")
+        clip = Clip("", track.id, 0, duration or TEXT_DEFAULT_SECONDS * self.fps,
+                    text=copy.deepcopy(style))
+        clip.start = self.free_start(track.id, start, clip.duration)
+        self.project.clips.append(clip)
+        return clip
+
     def move_clip(self, clip_id: str, track_id: str, start: int) -> Clip:
         clip = self.clip(clip_id)
         track = self.track(track_id)
-        if not self.accepts(track, self.media_of(clip)):
+        if not self.accepts_clip(track, clip):
             track = self.track(clip.track_id)
+        self._drop_transitions(clip_id)
         clip.track_id = track.id
         clip.start = self.free_start(track.id, start, clip.duration, ignore=clip.id)
         return clip
@@ -139,18 +236,24 @@ class Timeline:
     def trim_bounds(self, clip_id: str, edge: str) -> tuple[int, int]:
         """Positions possibles du bord `edge` ("start" ou "end") du clip."""
         clip = self.clip(clip_id)
+        if edge == "start" and self.transition_before(clip_id) is not None:
+            return clip.start, clip.start  # bord occupé par une transition
+        if edge == "end" and self.transition_after(clip_id) is not None:
+            return clip.end, clip.end
         others = self.clips_on(clip.track_id, ignore=clip.id)
-        source_len = self.source_length(clip)
+        other_transition = self.transition_after(clip_id) if edge == "start" else \
+            self.transition_before(clip_id)
+        reserved = other_transition.duration if other_transition else 0
         if edge == "start":
             prev_end = max((c.end for c in others if c.end <= clip.start), default=0)
-            if source_len is None:  # image fixe : aucune limite côté source
-                return prev_end, clip.end - 1
-            low = max(prev_end, clip.start - clip.source_in)
-            return low, clip.end - 1
+            before = self.available_before(clip)
+            low = prev_end if before is None else max(prev_end, clip.start - before)
+            return low, clip.end - 1 - reserved
         next_start = min((c.start for c in others if c.start >= clip.end), default=None)
-        high = clip.start + (source_len - clip.source_in) if source_len is not None else None
+        after = self.available_after(clip)
+        high = clip.start + after if after is not None else None
         limits = [x for x in (next_start, high) if x is not None]
-        return clip.start + 1, min(limits) if limits else 1 << 30
+        return clip.start + 1 + reserved, min(limits) if limits else 1 << 30
 
     def trim(self, clip_id: str, edge: str, frame: int) -> Clip:
         clip = self.clip(clip_id)
@@ -158,9 +261,9 @@ class Timeline:
         frame = max(low, min(high, frame))
         if edge == "start":
             delta = frame - clip.start
-            still = self.source_length(clip) is None
             clip.start, clip.duration = frame, clip.duration - delta
-            clip.source_in = 0 if still else clip.source_in + delta
+            if self.available_before(clip) is not None:
+                clip.source_in = max(0, clip.source_in + round(delta * clip.speed))
         elif edge == "end":
             clip.duration = frame - clip.start
         else:
@@ -170,12 +273,21 @@ class Timeline:
     def split(self, clip_id: str, frame: int) -> Clip | None:
         """Coupe le clip à `frame` ; renvoie la seconde partie (None si hors du clip)."""
         clip = self.clip(clip_id)
-        if not clip.start < frame < clip.end:
+        before = self.transition_before(clip_id)
+        after = self.transition_after(clip_id)
+        low = clip.start + (before.duration if before else 0)
+        high = clip.end - (after.duration if after else 0)
+        if not low < frame < high:
             return None
         offset = frame - clip.start
-        second = Clip(clip.media_id, clip.track_id, frame, clip.duration - offset,
-                      clip.source_in + offset)
-        clip.duration = offset
+        second = copy.deepcopy(clip)
+        second.id = new_id()
+        second.start, second.duration = frame, clip.duration - offset
+        if self.available_before(clip) is not None:
+            second.source_in = clip.source_in + round(offset * clip.speed)
+        clip.duration, clip.fade_out, second.fade_in = offset, 0, 0
+        if after is not None:
+            after.left_id = second.id
         self.project.clips.insert(self.project.clips.index(clip) + 1, second)
         return second
 
@@ -186,45 +298,160 @@ class Timeline:
 
     def delete(self, clip_id: str, ripple: bool = False) -> None:
         clip = self.clip(clip_id)
+        overlap = sum(t.duration for t in self.transitions_of(clip_id))
+        self._drop_transitions(clip_id)
         self.project.clips.remove(clip)
         if ripple:  # referme l'espace laissé sur la piste
-            for c in self.clips_on(clip.track_id):
-                if c.start >= clip.end:
-                    c.start -= clip.duration
+            self._shift_from(clip.track_id, clip.end - overlap, -(clip.duration - overlap))
 
     def duplicate(self, clip_id: str) -> Clip:
         clip = self.clip(clip_id)
-        copy_ = Clip(clip.media_id, clip.track_id, 0, clip.duration, clip.source_in)
-        copy_.start = self.free_start(clip.track_id, clip.end, clip.duration)
+        copy_ = copy.deepcopy(clip)
+        copy_.id = new_id()
+        end = max(clip.end, self.neighbour(clip_id, "right").end
+                  if self.transition_after(clip_id) else clip.end)
+        copy_.start = self.free_start(clip.track_id, end, clip.duration)
         self.project.clips.append(copy_)
         return copy_
 
+    def set_speed(self, clip_id: str, speed: float) -> Clip:
+        """Change la vitesse ; la durée suit et les clips suivants de la piste se décalent."""
+        clip = self.clip(clip_id)
+        if self.media_of(clip) is None or self.media_of(clip).kind == "image":
+            raise TimelineError("la vitesse ne s'applique qu'aux vidéos et aux sons")
+        speed = max(MIN_SPEED, min(MAX_SPEED, round(speed, 3)))
+        if speed == clip.speed:
+            return clip
+        self._drop_transitions(clip_id)
+        old_end = clip.end
+        duration = max(1, round(clip.duration * clip.speed / speed))
+        clip.speed = speed
+        clip.duration = min(duration, self.available_after(clip) or duration)
+        clip.fade_in = min(clip.fade_in, clip.duration)
+        clip.fade_out = min(clip.fade_out, clip.duration)
+        self._shift_from(clip.track_id, old_end, clip.end - old_end, ignore=clip.id)
+        return clip
+
+    def detach_audio(self, clip_id: str) -> Clip:
+        """Place le son d'un clip vidéo sur une piste audio et coupe le son du clip vidéo."""
+        clip = self.clip(clip_id)
+        media = self.media_of(clip)
+        if media is None or media.kind != "video" or not media.has_audio:
+            raise TimelineError("ce clip n'a pas de son à détacher")
+        track = self.first_track("audio") or self.add_track("audio")
+        audio = Clip(media.id, track.id, 0, clip.duration, clip.source_in, clip.speed,
+                     clip.volume, clip.fade_in, clip.fade_out)
+        if any(c.start < clip.end and clip.start < c.end for c in self.clips_on(track.id)):
+            track = self.add_track("audio")
+            audio.track_id = track.id
+        audio.start = self.free_start(track.id, clip.start, clip.duration)
+        clip.volume = 0.0
+        self.project.clips.append(audio)
+        return audio
+
     def add_track(self, kind: str) -> Track:
-        if kind not in ("video", "audio"):
+        if kind not in TRACK_KINDS:
             raise TimelineError(f"type de piste inconnu : {kind}")
-        track = Track(kind, "Vidéo" if kind == "video" else "Audio")
-        if kind == "video":  # nouvelle piste vidéo au-dessus des autres
-            self.project.tracks.insert(0, track)
+        track = Track(kind, TRACK_NAMES[kind])
+        tracks = self.project.tracks
+        if kind == "text":  # au-dessus de tout
+            tracks.insert(0, track)
+        elif kind == "video":  # au-dessus des autres pistes vidéo, sous les textes
+            tracks.insert(sum(1 for t in tracks if t.kind == "text"), track)
         else:
-            self.project.tracks.append(track)
+            tracks.append(track)
         return track
 
     def remove_track(self, track_id: str) -> None:
         track = self.track(track_id)
-        if sum(1 for t in self.project.tracks if t.kind == track.kind) <= 1:
+        if track.kind != "text" and sum(1 for t in self.project.tracks
+                                        if t.kind == track.kind) <= 1:
             raise TimelineError("il faut garder au moins une piste de ce type")
         self.project.tracks.remove(track)
         self.project.clips = [c for c in self.project.clips if c.track_id != track_id]
+        self.sanitize()
 
     def remove_media(self, media_id: str) -> None:
         self.project.media = [m for m in self.project.media if m.id != media_id]
-        self.project.clips = [c for c in self.project.clips if c.media_id != media_id]
+        self.project.clips = [c for c in self.project.clips if c.media_id != media_id
+                              or c.is_text]
+        self.sanitize()
+
+    # --- transitions (modifications) -------------------------------------------------
+
+    def add_transition(self, left_id: str, right_id: str, kind: str = "dissolve",
+                       duration: int | None = None) -> Transition:
+        left, right = self.clip(left_id), self.clip(right_id)
+        track = self.track(left.track_id)
+        if right.track_id != track.id or right.start != left.end:
+            raise TimelineError("une transition relie deux clips qui se suivent sur une piste")
+        allowed = AUDIO_TRANSITIONS if track.kind == "audio" else VIDEO_TRANSITIONS
+        if kind not in allowed:
+            kind = allowed[0]
+        if self.transition_after(left_id) or self.transition_before(right_id):
+            raise TimelineError("ces clips sont déjà reliés par une transition")
+        limit = self.max_transition(left, right)
+        if limit < 2:
+            raise TimelineError("les clips sont trop courts pour une transition")
+        length = max(2, min(limit, duration or self.fps))
+        self._shift_from(track.id, right.start, -length)
+        transition = Transition(track.id, left_id, right_id, kind, length)
+        self.project.transitions.append(transition)
+        return transition
+
+    def set_transition(self, transition_id: str, kind: str | None = None,
+                       duration: int | None = None) -> Transition:
+        t = self.transition(transition_id)
+        if kind is not None:
+            allowed = AUDIO_TRANSITIONS if self.track(t.track_id).kind == "audio" \
+                else VIDEO_TRANSITIONS
+            if kind in allowed:
+                t.kind = kind
+        if duration is not None:
+            left, right = self.clip(t.left_id), self.clip(t.right_id)
+            limit = self.max_transition(left, right) + t.duration
+            limit = min(limit, left.duration - 1, right.duration - 1)
+            length = max(2, min(limit, duration))
+            self._shift_from(t.track_id, right.start, t.duration - length)
+            t.duration = length
+        return t
+
+    def remove_transition(self, transition_id: str) -> None:
+        t = self.transition(transition_id)
+        right = self.clip(t.right_id)
+        self.project.transitions.remove(t)
+        self._shift_from(t.track_id, right.start, t.duration)
+
+    def sanitize(self) -> None:
+        """Retire les transitions dont les clips ne sont plus en place."""
+        ids = {c.id: c for c in self.project.clips}
+        kept = []
+        for t in self.project.transitions:
+            left, right = ids.get(t.left_id), ids.get(t.right_id)
+            if (left is not None and right is not None and left.track_id == t.track_id
+                    and right.track_id == t.track_id and left.end - right.start == t.duration):
+                kept.append(t)
+        self.project.transitions = kept
+
+    def _drop_transitions(self, clip_id: str) -> None:
+        self.project.transitions = [t for t in self.project.transitions
+                                    if clip_id not in (t.left_id, t.right_id)]
+
+    def _shift_from(self, track_id: str, frame: int, delta: int,
+                    ignore: str | None = None) -> None:
+        """Décale de `delta` les clips de la piste commençant à `frame` ou après."""
+        if delta == 0:
+            return
+        for c in self.clips_on(track_id, ignore=ignore):
+            if c.start >= frame:
+                c.start = max(0, c.start + delta)
 
 
 def snapshot(project: Project) -> tuple:
     """Copie de l'état modifiable du projet (pour annuler / rétablir)."""
-    return copy.deepcopy((project.media, project.tracks, project.clips))
+    return copy.deepcopy((project.media, project.tracks, project.clips, project.transitions))
 
 
 def restore(project: Project, state: tuple) -> None:
-    project.media, project.tracks, project.clips = copy.deepcopy(state)
+    project.media, project.tracks, project.clips, project.transitions = copy.deepcopy(state)
+

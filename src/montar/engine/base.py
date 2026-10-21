@@ -2,10 +2,12 @@
 """Interface du moteur de rendu, indépendante de Qt et de MLT."""
 from __future__ import annotations
 
+import copy
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 
-from montar.core.project import Project
+from montar.core.project import Clip, ColorAdjust, Effects, Project, Transform
 
 
 class EngineUnavailable(RuntimeError):
@@ -26,18 +28,39 @@ class Canvas:
 @dataclass(frozen=True)
 class ClipSpec:
     path: str
-    kind: str  # video | image | audio
+    kind: str  # video | image | audio | text (image PNG transparente)
     start: int
     duration: int
-    source_in: int
+    source_in: int = 0
+    speed: float = 1.0
+    volume: float = 1.0
+    fade_in: int = 0
+    fade_out: int = 0
+    media_size: tuple[int, int] = (0, 0)
+    transform: Transform = field(default_factory=Transform)
+    color: ColorAdjust = field(default_factory=ColorAdjust)
+    preset: str = ""
+    preset_amount: float = 1.0
+    effects: Effects = field(default_factory=Effects)
+    animation_in: str = "none"  # textes : none | fade | slide
+    animation_out: str = "none"
+
+
+@dataclass(frozen=True)
+class TransitionSpec:
+    left: int  # indice du clip de gauche dans TrackSpec.clips
+    kind: str
+    duration: int
 
 
 @dataclass(frozen=True)
 class TrackSpec:
-    kind: str  # video | audio
+    kind: str  # video (pistes vidéo et texte) | audio
     muted: bool
     hidden: bool
     clips: tuple[ClipSpec, ...]
+    volume: float = 1.0
+    transitions: tuple[TransitionSpec, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -55,20 +78,51 @@ class TimelineSpec:
         return max((c.start + c.duration for t in self.tracks for c in t.clips), default=0)
 
 
-def timeline_spec(project: Project) -> TimelineSpec:
+TextImage = Callable[[Clip, int, int], str]  # (clip, largeur, hauteur) -> image PNG
+
+
+def _clip_spec(clip: Clip, path: str, kind: str, size: tuple[int, int]) -> ClipSpec:
+    text = clip.text
+    return ClipSpec(
+        path, kind, clip.start, clip.duration, clip.source_in, clip.speed, clip.volume,
+        clip.fade_in, clip.fade_out, size, copy.deepcopy(clip.transform),
+        copy.deepcopy(clip.color), clip.preset, clip.preset_amount, copy.deepcopy(clip.effects),
+        text.animation_in if text else "none", text.animation_out if text else "none")
+
+
+def timeline_spec(project: Project, text_image: TextImage | None = None) -> TimelineSpec:
+    """Description de la timeline pour le moteur. Sans `text_image`, les textes sont ignorés."""
     w, h = project.canvas_size
     media = {m.id: m for m in project.media}
-    videos = [t for t in project.tracks if t.kind == "video"]
-    audios = [t for t in project.tracks if t.kind == "audio"]
+    by_kind = {k: [t for t in project.tracks if t.kind == k] for k in ("video", "text", "audio")}
     tracks = []
-    for track in [*reversed(videos), *audios]:
-        clips = tuple(
-            ClipSpec(media[c.media_id].path, media[c.media_id].kind, c.start, c.duration,
-                     c.source_in)
-            for c in sorted(project.clips, key=lambda c: c.start)
-            if c.track_id == track.id and c.media_id in media and media[c.media_id].exists
+    for track in [*reversed(by_kind["video"]), *reversed(by_kind["text"]), *by_kind["audio"]]:
+        clips: list[ClipSpec] = []
+        ids: list[str] = []
+        for c in sorted(project.clips, key=lambda c: c.start):
+            if c.track_id != track.id:
+                continue
+            if c.is_text:
+                if text_image is None:
+                    continue
+                spec = _clip_spec(c, text_image(c, w, h), "text", (w, h))
+            else:
+                m = media.get(c.media_id)
+                if m is None or not m.exists:
+                    continue
+                kind = "audio" if track.kind == "audio" else m.kind
+                spec = _clip_spec(c, m.path, kind, (m.width, m.height))
+            clips.append(spec)
+            ids.append(c.id)
+        transitions = tuple(
+            TransitionSpec(ids.index(t.left_id), t.kind, t.duration)
+            for t in project.transitions
+            if t.track_id == track.id and t.left_id in ids and t.right_id in ids
+            and ids.index(t.right_id) == ids.index(t.left_id) + 1
         )
-        tracks.append(TrackSpec(track.kind, track.muted, track.hidden, clips))
+        tracks.append(TrackSpec("audio" if track.kind == "audio" else "video", track.muted,
+                                track.hidden, tuple(clips), track.volume,
+                                tuple(sorted(transitions, key=lambda t: t.left))))
     return TimelineSpec(Canvas(w, h, project.fps), tuple(tracks))
 
 

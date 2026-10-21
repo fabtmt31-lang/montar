@@ -6,13 +6,13 @@ import json
 import os
 import tempfile
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
 from montar.core import formats
 
-FORMAT_VERSION = 2  # 2 : ajout des clips de la timeline
+FORMAT_VERSION = 3  # 2 : clips de la timeline ; 3 : réglages des clips, textes, transitions
 PROJECT_SUFFIX = ".montar"
 
 
@@ -50,29 +50,153 @@ class MediaItem:
         return max(1, round(self.duration * fps))
 
 
+def new_id() -> str:
+    return uuid.uuid4().hex[:12]
+
+
 @dataclass
 class Track:
-    kind: str  # video | audio
+    kind: str  # video | audio | text
     name: str
     muted: bool = False
-    hidden: bool = False  # pistes vidéo : image masquée
-    id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    hidden: bool = False  # pistes vidéo et texte : image masquée
+    volume: float = 1.0  # gain linéaire de la piste (0 à 2)
+    id: str = field(default_factory=new_id)
+
+
+@dataclass
+class Transform:
+    """Taille, position et orientation d'un clip dans la toile."""
+
+    x: float = 0.0  # décalage du centre, en fraction de la largeur de la toile
+    y: float = 0.0  # décalage du centre, en fraction de la hauteur de la toile
+    scale: float = 1.0
+    rotation: float = 0.0  # degrés, sens horaire
+    opacity: float = 1.0
+    flip_h: bool = False
+    flip_v: bool = False
+    fit: str = "fit"  # fit (ajuster) | fill (remplir) | stretch (étirer)
+    crop_left: float = 0.0  # fractions de l'image source retirées sur chaque bord
+    crop_right: float = 0.0
+    crop_top: float = 0.0
+    crop_bottom: float = 0.0
+
+    def is_identity(self) -> bool:
+        return self == Transform()
+
+
+@dataclass
+class ColorAdjust:
+    """Réglages de couleur, chacun de -1 à 1 (0 = inchangé)."""
+
+    brightness: float = 0.0
+    contrast: float = 0.0
+    saturation: float = 0.0
+    temperature: float = 0.0  # > 0 : plus chaud
+    exposure: float = 0.0
+
+    def is_identity(self) -> bool:
+        return self == ColorAdjust()
+
+
+@dataclass
+class Effects:
+    """Effets simples, chacun de 0 (absent) à 1."""
+
+    blur: float = 0.0
+    sharpen: float = 0.0
+    vignette: float = 0.0
+
+    def is_identity(self) -> bool:
+        return self == Effects()
+
+
+@dataclass
+class TextStyle:
+    """Contenu et mise en forme d'un clip de texte (tailles pour une toile de 1080 px)."""
+
+    content: str = "Titre"
+    preset: str = "title"
+    family: str = "Manrope"
+    size: float = 96.0
+    weight: int = 700
+    italic: bool = False
+    underline: bool = False
+    uppercase: bool = False
+    color: str = "#17261E"
+    align: str = "center"  # left | center | right
+    letter_spacing: float = 0.0  # pixels
+    outline_color: str = "#FFFFFF"
+    outline_width: float = 0.0
+    shadow: bool = False
+    shadow_color: str = "#66000000"
+    background: str = ""  # couleur du bandeau, vide = aucun
+    pill: bool = False  # bandeau aux bords entièrement arrondis
+    x: float = 0.5  # centre du bloc de texte, en fraction de la toile
+    y: float = 0.5
+    animation_in: str = "none"  # none | fade | slide
+    animation_out: str = "none"
 
 
 @dataclass
 class Clip:
-    """Portion d'un média placée sur une piste. Toutes les valeurs sont en images du projet."""
+    """Portion d'un média (ou texte) placée sur une piste. Valeurs en images du projet."""
 
-    media_id: str
+    media_id: str  # vide pour un clip de texte
     track_id: str
     start: int  # position sur la timeline
     duration: int
-    source_in: int = 0  # première image utilisée dans le média
-    id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    source_in: int = 0  # première image utilisée dans le média (à vitesse normale)
+    speed: float = 1.0
+    volume: float = 1.0  # gain linéaire (0 = muet, 2 = +6 dB)
+    fade_in: int = 0  # images
+    fade_out: int = 0
+    transform: Transform = field(default_factory=Transform)
+    color: ColorAdjust = field(default_factory=ColorAdjust)
+    preset: str = ""  # filtre prédéfini (noir et blanc, sépia…)
+    preset_amount: float = 1.0
+    effects: Effects = field(default_factory=Effects)
+    text: TextStyle | None = None
+    id: str = field(default_factory=new_id)
 
     @property
     def end(self) -> int:
         return self.start + self.duration
+
+    @property
+    def is_text(self) -> bool:
+        return self.text is not None
+
+
+@dataclass
+class Transition:
+    """Transition entre deux clips consécutifs d'une piste.
+
+    Le clip de droite chevauche les `duration` dernières images du clip de gauche."""
+
+    track_id: str
+    left_id: str
+    right_id: str
+    kind: str = "dissolve"
+    duration: int = 25
+    id: str = field(default_factory=new_id)
+
+
+_NESTED = {"transform": Transform, "color": ColorAdjust, "effects": Effects, "text": TextStyle}
+
+
+def _build(cls, data: dict[str, Any]):
+    """Instancie une dataclass en ignorant les champs inconnus (fichiers plus récents)."""
+    known = {f.name for f in fields(cls)}
+    values = {}
+    for key, value in data.items():
+        if key not in known:
+            continue
+        nested = _NESTED.get(key)
+        if nested is not None and isinstance(value, dict):
+            value = _build(nested, value)
+        values[key] = value
+    return cls(**values)
 
 
 @dataclass
@@ -84,6 +208,7 @@ class Project:
     media: list[MediaItem] = field(default_factory=list)
     tracks: list[Track] = field(default_factory=list)  # de haut en bas, comme affiché
     clips: list[Clip] = field(default_factory=list)
+    transitions: list[Transition] = field(default_factory=list)
     path: Path | None = None  # emplacement du fichier .montar, non sérialisé
 
     def __post_init__(self) -> None:
@@ -122,6 +247,7 @@ class Project:
             "media": media,
             "tracks": [asdict(t) for t in self.tracks],
             "clips": [asdict(c) for c in self.clips],
+            "transitions": [asdict(t) for t in self.transitions],
         }
 
     @classmethod
@@ -135,17 +261,15 @@ class Project:
         base = path.parent if path else None
         media = []
         for raw in data.get("media", []):
-            fields = {k: v for k, v in raw.items() if k in MediaItem.__dataclass_fields__}
-            fields["path"] = _resolve_path(fields.get("path", ""), base)
-            media.append(MediaItem(**fields))
-        tracks = [
-            Track(**{k: v for k, v in t.items() if k in Track.__dataclass_fields__})
-            for t in data.get("tracks", [])
-        ]
-        clips = [
-            Clip(**{k: v for k, v in c.items() if k in Clip.__dataclass_fields__})
-            for c in data.get("clips", [])
-        ]
+            values = {k: v for k, v in raw.items() if k in MediaItem.__dataclass_fields__}
+            values["path"] = _resolve_path(values.get("path", ""), base)
+            media.append(MediaItem(**values))
+        try:
+            tracks = [_build(Track, t) for t in data.get("tracks", [])]
+            clips = [_build(Clip, c) for c in data.get("clips", [])]
+            transitions = [_build(Transition, t) for t in data.get("transitions", [])]
+        except (TypeError, AttributeError) as exc:
+            raise ProjectError(f"projet invalide : {exc}") from exc
         try:
             return cls(
                 name=data["name"],
@@ -155,6 +279,7 @@ class Project:
                 media=media,
                 tracks=tracks,
                 clips=clips,
+                transitions=transitions,
                 path=path,
             )
         except (KeyError, ValueError, TypeError) as exc:

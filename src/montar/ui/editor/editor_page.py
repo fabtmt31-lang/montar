@@ -2,10 +2,11 @@
 """Écran de montage (maquette 02)."""
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QButtonGroup,
@@ -15,6 +16,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QSplitter,
+    QStackedWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -22,6 +24,7 @@ from PyQt6.QtWidgets import (
 
 from montar.core.project import MediaItem, Project, ProjectError
 from montar.engine.base import Engine, timeline_spec
+from montar.engine.geometry import placement
 from montar.i18n import _
 from montar.media.probe import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, is_supported
 from montar.media.thumbnails import thumbnail_path
@@ -30,8 +33,11 @@ from montar.ui.editor.controller import EditorController
 from montar.ui.editor.importer import MediaImporter
 from montar.ui.editor.inspector import Inspector
 from montar.ui.editor.media_panel import MediaPanel
+from montar.ui.editor.panels import EffectsPanel, FiltersPanel, TextPanel, TransitionsPanel
 from montar.ui.editor.player import Player
 from montar.ui.editor.preview import PreviewPanel
+from montar.ui.text_render import image_path as text_image_path
+from montar.ui.text_render import preset_style, text_bounds
 from montar.ui.timeline.panel import TimelinePanel
 from montar.ui.widgets import LogoMark, Segmented, button, label, set_icon
 
@@ -90,13 +96,23 @@ class EditorPage(QWidget):
         body = QHBoxLayout(top)
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
-        body.addWidget(self._build_rail())
         self.media_panel = MediaPanel()
-        body.addWidget(self.media_panel)
+        self.text_panel = TextPanel()
+        self.transitions_panel = TransitionsPanel(self.controller)
+        self.effects_panel = EffectsPanel(self.controller)
+        self.filters_panel = FiltersPanel(self.controller)
+        self.side = QStackedWidget()
+        self._side_index = {}
+        for key, panel in (("media", self.media_panel), ("text", self.text_panel),
+                           ("transitions", self.transitions_panel),
+                           ("effects", self.effects_panel), ("filters", self.filters_panel)):
+            self._side_index[key] = self.side.addWidget(panel)
+        body.addWidget(self._build_rail())
+        body.addWidget(self.side)
         self.player = Player(engine_factory, self)
         self.preview = PreviewPanel(self.player, preview_quality)
         body.addWidget(self.preview, 1)
-        self.inspector = Inspector()
+        self.inspector = Inspector(self.controller)
         body.addWidget(self.inspector)
 
         self.timeline = TimelinePanel(self.controller, self.thumbnails.get, self.waveforms.get)
@@ -119,14 +135,23 @@ class EditorPage(QWidget):
         self.media_panel.removeRequested.connect(self.remove_media)
         self.media_panel.addToTimelineRequested.connect(self.add_to_timeline)
 
+        self.text_panel.addRequested.connect(self.add_text)
+        self.transitions_panel.applyRequested.connect(self.add_transition)
         self.controller.changed.connect(self._on_project_changed)
         self.controller.selectionChanged.connect(self._on_clip_selected)
+        self.controller.transitionSelected.connect(self._on_transition_selected)
+        self.preview.canvas.dragged.connect(self._on_preview_drag)
+        self.preview.canvas.dragFinished.connect(lambda: setattr(self, "_drag_origin", None))
+        self._drag_origin: tuple | None = None
         self.controller.historyChanged.connect(self._update_history_buttons)
         self.controller.error.connect(
             lambda msg: QMessageBox.information(self, _("Action impossible"), msg))
         self.timeline.view.seekRequested.connect(self.player.seek)
-        self.player.frameReady.connect(
-            lambda _img, frame: self.timeline.set_playhead(frame, follow=self.player.playing))
+        self.player.frameReady.connect(self._on_frame)
+        self._load_timer = QTimer(self)  # regroupe les reconstructions pendant un réglage
+        self._load_timer.setSingleShot(True)
+        self._load_timer.setInterval(40)
+        self._load_timer.timeout.connect(self._reload_player)
 
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
@@ -139,7 +164,7 @@ class EditorPage(QWidget):
         self._update_history_buttons()
         self.preview.set_canvas(*project.canvas_size)
         self.inspector.show_project(project)
-        self.player.load(timeline_spec(project))
+        self._reload_player()
 
     # --- construction -------------------------------------------------------
 
@@ -206,6 +231,7 @@ class EditorPage(QWidget):
         layout.setContentsMargins(6, 12, 6, 12)
         layout.setSpacing(4)
         group = QButtonGroup(rail)
+        self.rail_buttons: dict[str, QToolButton] = {}
         for key, text, icon in _RAIL:
             b = QToolButton()
             b.setText(_(text))
@@ -213,14 +239,16 @@ class EditorPage(QWidget):
             b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
             b.setCheckable(True)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
-            set_icon(b, icon, "forest" if key == "media" else "ink", 20)
-            if key == "media":
-                b.setChecked(True)
-            else:
+            set_icon(b, icon, "ink", 20)
+            if key in ("subtitles", "record"):
                 b.setEnabled(False)
                 b.setToolTip(_(SOON))
+            else:
+                b.clicked.connect(lambda _=False, k=key: self.show_side(k))
+            b.setChecked(key == "media")
             group.addButton(b)
             layout.addWidget(b)
+            self.rail_buttons[key] = b
         layout.addStretch()
         return rail
 
@@ -313,14 +341,118 @@ class EditorPage(QWidget):
         self.importer.wait(5000)
         return ok
 
+    def show_side(self, key: str) -> None:
+        """Affiche un panneau du rail ; « Audio » montre les sons du projet."""
+        if key in self.rail_buttons:
+            self.rail_buttons[key].setChecked(True)
+        if key == "audio":
+            self.media_panel.set_filter("audio")
+            key = "media"
+        elif key == "media":
+            self.media_panel.set_filter("all")
+        self.side.setCurrentIndex(self._side_index[key])
+
+    def _text_image(self, clip, width: int, height: int) -> str:
+        return text_image_path(self._cache, clip, width, height)
+
+    def _reload_player(self) -> None:
+        self._load_timer.stop()
+        self.player.load(timeline_spec(self.project, self._text_image))
+
+    def _on_frame(self, _image, frame: int) -> None:
+        self.timeline.set_playhead(frame, follow=self.player.playing)
+        self._update_preview_selection()
+
+    def _selection_rect(self) -> QRectF | None:
+        """Cadre de l'élément sélectionné dans la toile, s'il est visible à la tête de lecture."""
+        clip = self.controller.selected_clip()
+        if clip is None or not clip.start <= self.timeline.view.playhead < clip.end:
+            return None
+        cw, ch = self.project.canvas_size
+        if clip.is_text:
+            return text_bounds(clip.text, cw, ch)
+        media = self.project.find_media(clip.media_id)
+        if media is None or media.kind == "audio" or \
+                self.controller.timeline.track(clip.track_id).kind != "video":
+            return None
+        p = placement(cw, ch, media.width, media.height, clip.transform)
+        return QRectF(p.left, p.top, p.width, p.height)
+
+    def _update_preview_selection(self) -> None:
+        self.preview.canvas.set_selection(self._selection_rect())
+
+    def _on_preview_drag(self, mode: str, start: QPointF, current: QPointF) -> None:
+        clip = self.controller.selected_clip()
+        if clip is None:
+            return
+        cw, ch = self.project.canvas_size
+        if self._drag_origin is None or self._drag_origin[0] != clip.id:
+            rect = self._selection_rect()
+            if rect is None:
+                return
+            if clip.is_text:
+                values = (clip.text.x, clip.text.y, clip.text.size)
+            else:
+                values = (clip.transform.x, clip.transform.y, clip.transform.scale)
+            self._drag_origin = (clip.id, values, rect.center())
+        _cid, (x0, y0, s0), center = self._drag_origin
+        if mode == "move":
+            dx, dy = (current.x() - start.x()) / cw, (current.y() - start.y()) / ch
+
+            def change(c, dx=dx, dy=dy):
+                target = c.text if c.is_text else c.transform
+                target.x, target.y = round(x0 + dx, 4), round(y0 + dy, 4)
+        else:
+            d0 = max(1.0, math.hypot(start.x() - center.x(), start.y() - center.y()))
+            d1 = math.hypot(current.x() - center.x(), current.y() - center.y())
+            ratio = max(0.05, d1 / d0)
+
+            def change(c, ratio=ratio):
+                if c.is_text:
+                    c.text.size = round(max(8.0, min(600.0, s0 * ratio)), 1)
+                else:
+                    c.transform.scale = round(max(0.05, min(8.0, s0 * ratio)), 4)
+        label_ = _("Déplacer") if mode == "move" else _("Redimensionner")
+        self.controller.edit_clip(label_, clip.id, change, merge=(clip.id, f"preview:{mode}"))
+
+    def add_text(self, preset: str) -> None:
+        style = preset_style(preset)
+        playhead = self.timeline.view.playhead
+        clip = self.controller.edit(_("Ajouter un texte"), lambda t: t.add_text(style, playhead))
+        if clip is not None:
+            self.controller.select(clip.id)
+
+    def add_transition(self, kind: str) -> None:
+        pair = self.transitions_panel.target()
+        if pair is None:
+            return
+        left, right = pair[0].id, pair[1].id
+        transition = self.controller.edit(_("Ajouter une transition"),
+                                          lambda t: t.add_transition(left, right, kind))
+        if transition is not None:
+            self.controller.select_transition(transition.id)
+
+    def _on_transition_selected(self, transition_id: str | None) -> None:
+        transition = self.controller.selected_transition_obj()
+        if transition is not None:
+            self.media_panel.grid.clearSelection()
+            self.inspector.show_transition(transition)
+        elif self.controller.selected is None:
+            self.inspector.show_project(self.project)
+        self.timeline.view.viewport().update()
+
     def _on_project_changed(self) -> None:
         self.mark_dirty()
         media_ids = [m.id for m in self.project.media]
         if media_ids != self._shown_media:
             self._shown_media = media_ids
             self.media_panel.set_media(self.project.media, self.thumbnails)
-        self.player.load(timeline_spec(self.project))
-        self._on_clip_selected(self.controller.selected)
+        self._load_timer.start()
+        if self.controller.selected_transition:
+            self._on_transition_selected(self.controller.selected_transition)
+        else:
+            self._on_clip_selected(self.controller.selected)
+        self._update_preview_selection()
 
     # --- import -------------------------------------------------------------
 
@@ -412,13 +544,15 @@ class EditorPage(QWidget):
             self.inspector.show_project(self.project)
 
     def _on_clip_selected(self, clip_id: str | None) -> None:
+        self._update_preview_selection()
         clip = self.controller.selected_clip()
         if clip is None:
-            if clip_id is None and not self.media_panel.grid.selectedItems():
+            if (clip_id is None and not self.media_panel.grid.selectedItems()
+                    and self.controller.selected_transition is None):
                 self.inspector.show_project(self.project)
             return
         media = self.project.find_media(clip.media_id)
-        if media is None:
+        if media is None and not clip.is_text:
             return
         self.media_panel.grid.clearSelection()
         label_ = self.controller.timeline.track_labels().get(clip.track_id, "")

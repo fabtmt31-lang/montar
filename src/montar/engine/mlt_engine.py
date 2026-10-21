@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import threading
 from math import gcd
@@ -10,12 +11,16 @@ from math import gcd
 from montar.engine.base import (
     AudioOutput,
     Canvas,
+    ClipSpec,
     Engine,
     EngineUnavailable,
     Source,
     SourceError,
     TimelineSpec,
+    TrackSpec,
 )
+from montar.engine.geometry import affine_rect, crop_pixels
+from montar.engine.looks import color_filters, effect_filters, preset_filters
 
 try:
     import mlt7 as mlt
@@ -71,16 +76,56 @@ def _profile(canvas: Canvas):
     return profile
 
 
+def _anim(points: list[tuple[int, float]]) -> str:
+    """Valeur animée MLT « position=valeur;… » (positions relatives au filtre)."""
+    return ";".join(f"{pos}={value:g}" for pos, value in points)
+
+
+def _fade_points(duration: int, fade_in: int, fade_out: int, low: float,
+                 high: float) -> list[tuple[int, float]] | None:
+    fade_in, fade_out = min(fade_in, duration), min(fade_out, duration - min(fade_in, duration))
+    if not fade_in and not fade_out:
+        return None
+    points = []
+    if fade_in:
+        points += [(0, low), (fade_in, high)]
+    else:
+        points.append((0, high))
+    if fade_out:
+        points += [(duration - fade_out - 1, high), (duration - 1, low)]
+    return points
+
+
+def _luma_file(kind: str) -> str:
+    """Motif de balayage (dégradé horizontal) pour la transition « luma »."""
+    from montar.platform.paths import cache_dir
+
+    folder = cache_dir() / "lumas"
+    path = folder / f"{kind}.pgm"
+    if not path.exists():
+        folder.mkdir(parents=True, exist_ok=True)
+        width, height = 256, 16
+        ramp = bytes(round(x * 255 / (width - 1)) for x in range(width))
+        if kind == "wipe_left":
+            ramp = ramp[::-1]
+        tmp = path.with_suffix(".tmp")
+        tmp.write_bytes(f"P5 {width} {height} 255\n".encode() + ramp * height)
+        tmp.replace(path)
+    return str(path)
+
+
 class _TimelineGraph:
-    """Tracteur MLT : fond noir, pistes vidéo composées de bas en haut, son de toutes les
-    pistes mixé. Les objets MLT doivent rester référencés tant que le tracteur est utilisé."""
+    """Tracteur MLT : fond noir, pistes vidéo puis texte composées de bas en haut, son de
+    toutes les pistes mixé. Chaque clip a son propre producteur, qui porte ses filtres (ils
+    s'appliquent ainsi aussi pendant les transitions). Les objets MLT doivent rester
+    référencés tant que le tracteur est utilisé."""
 
     def __init__(self, spec: TimelineSpec) -> None:
         self.profile = _profile(spec.canvas)
+        self.canvas = spec.canvas
         self.length = spec.length
         self.tractor = mlt.Tractor(self.profile)
         self._keep: list = []
-        producers: dict[str, object] = {}
 
         background = mlt.Producer(self.profile, "color:black")
         background.set("length", max(1, self.length))
@@ -91,30 +136,15 @@ class _TimelineGraph:
 
         field = self.tractor.field()
         for index, track in enumerate(spec.tracks, start=1):
-            playlist = mlt.Playlist(self.profile)
-            cursor = 0
-            for clip in track.clips:
-                producer = producers.get(clip.path)
-                if producer is None:
-                    producer = mlt.Producer(self.profile, clip.path)
-                    if not producer.is_valid():
-                        raise SourceError(f"MLT ne sait pas ouvrir {clip.path}")
-                    producers[clip.path] = producer
-                if clip.kind == "image":
-                    needed = clip.source_in + clip.duration
-                    if producer.get_int("length") < needed:
-                        producer.set("length", needed)
-                        producer.set_in_and_out(0, needed - 1)
-                if clip.start > cursor:
-                    playlist.blank(clip.start - cursor - 1)
-                playlist.append(producer, clip.source_in, clip.source_in + clip.duration - 1)
-                cursor = clip.start + clip.duration
+            playlist = self._build_track(track)
             hide = 0
             if track.kind == "audio" or track.hidden:
                 hide |= _HIDE_VIDEO
             if track.muted:
                 hide |= _HIDE_AUDIO
             playlist.set("hide", hide)
+            if track.volume != 1.0:
+                self._attach(playlist, "volume", {"gain": max(0.0, track.volume)})
             self.tractor.set_track(playlist, index)
             mix = mlt.Transition(self.profile, "mix")
             mix.set("always_active", 1)
@@ -122,13 +152,168 @@ class _TimelineGraph:
             field.plant_transition(mix, 0, index)
             self._keep += [playlist, mix]
             if track.kind == "video":
-                blend = mlt.Transition(self.profile, "affine")
+                # superposition par transparence : chaque piste est déjà à la taille de la toile
+                blend = mlt.Transition(self.profile, "frei0r.cairoblend")
                 blend.set("always_active", 1)
-                blend.set("fill", 1)
-                blend.set("distort", 0)
                 field.plant_transition(blend, 0, index)
                 self._keep.append(blend)
-        self._keep += list(producers.values())
+
+    # --- pistes ---------------------------------------------------------------------
+
+    def _build_track(self, track: TrackSpec):
+        playlist = mlt.Playlist(self.profile)
+        transitions = {t.left: t for t in track.transitions}
+        cursor = 0  # longueur actuelle de la playlist
+        index_of: dict[int, int] = {}  # clip → position dans la playlist
+        for i, clip in enumerate(track.clips):
+            incoming = transitions.get(i - 1)
+            if incoming is None and clip.start > cursor:
+                playlist.blank(clip.start - cursor - 1)
+            producer, cut_in = self._clip_producer(clip, track.kind)
+            index_of[i] = playlist.count()
+            playlist.append(producer, cut_in, cut_in + clip.duration - 1)
+            if incoming is not None:
+                self._mix(playlist, index_of[i - 1], incoming, track.kind)
+                index_of[i] = index_of[i - 1] + 2
+            cursor = playlist.get_playtime()
+        return playlist
+
+    def _mix(self, playlist, left_index: int, t, track_kind: str) -> None:
+        length = t.duration
+        if track_kind == "audio":
+            transition = mlt.Transition(self.profile, "mix")
+        elif t.kind in ("slide_left", "slide_right", "zoom"):
+            transition = mlt.Transition(self.profile, "affine")
+            start = {"slide_left": "100% 0% 100% 100% 1", "slide_right": "-100% 0% 100% 100% 1",
+                     "zoom": "50% 50% 0% 0% 0"}[t.kind]
+            transition.set("rect", f"0={start};{length - 1}=0% 0% 100% 100% 1")
+            transition.set("fill", 1)
+            transition.set("distort", 0)
+        else:
+            transition = mlt.Transition(self.profile, "luma")
+            if t.kind in ("wipe_left", "wipe_right"):
+                transition.set("resource", _luma_file(t.kind))
+                transition.set("softness", 0.15)
+        playlist.mix(left_index, length, transition)
+        self._keep.append(transition)
+        mixed = playlist.get_clip(left_index + 1)
+        if track_kind != "audio":
+            audio = mlt.Transition(self.profile, "mix")
+            playlist.mix_add(left_index + 1, audio)
+            self._keep.append(audio)
+        if mixed is None:
+            return
+        mid = length // 2
+        if t.kind == "dip_black":
+            self._attach(mixed, "brightness",
+                         {"level": _anim([(0, 1), (mid, 0), (length - 1, 1)])},
+                         (mixed.get_in(), mixed.get_out()))
+        elif t.kind == "dip_white":
+            self._attach(mixed, "avfilter.eq", {
+                "av.contrast": _anim([(0, 1), (mid, 0), (length - 1, 1)]),
+                "av.brightness": _anim([(0, 0), (mid, 0.5), (length - 1, 0)]),
+                "av.saturation": _anim([(0, 1), (mid, 0), (length - 1, 1)]),
+            }, (mixed.get_in(), mixed.get_out()))
+
+    # --- clips ------------------------------------------------------------------------
+
+    def _clip_producer(self, clip: ClipSpec, track_kind: str):
+        """Producteur propre au clip, avec ses filtres ; renvoie (producteur, image d'entrée)."""
+        if clip.kind in ("video", "audio") and clip.speed != 1.0:
+            producer = mlt.Producer(self.profile, f"timewarp:{clip.speed:g}:{clip.path}")
+            cut_in = round(clip.source_in / clip.speed)
+        else:
+            producer = mlt.Producer(self.profile, clip.path)
+            cut_in = clip.source_in if clip.kind in ("video", "audio") else 0
+        if producer is None or not producer.is_valid():
+            raise SourceError(f"MLT ne sait pas ouvrir {clip.path}")
+        if clip.kind in ("image", "text"):
+            producer.set("length", clip.duration)
+            producer.set_in_and_out(0, clip.duration - 1)
+        span = (cut_in, cut_in + clip.duration - 1)
+        if track_kind == "video":
+            self._video_filters(producer, clip, span)
+        self._audio_filters(producer, clip, span)
+        self._keep.append(producer)
+        return producer, cut_in
+
+    def _attach(self, service, name: str, props: dict, span: tuple[int, int] | None = None):
+        f = mlt.Filter(self.profile, name)
+        if f is None or not f.is_valid():
+            log.warning("filtre MLT indisponible : %s", name)
+            return None
+        for key, value in props.items():
+            f.set(key, value)
+        if span is not None:
+            f.set_in_and_out(*span)
+        service.attach(f)
+        self._keep.append(f)
+        return f
+
+    def _video_filters(self, producer, clip: ClipSpec, span: tuple[int, int]) -> None:
+        t = clip.transform
+        mw, mh = clip.media_size
+        cw, ch = self.canvas.width, self.canvas.height
+        if clip.kind in ("video", "image"):
+            left, right, top, bottom = crop_pixels(mw or cw, mh or ch, t)
+            if left or right or top or bottom:
+                self._attach(producer, "crop", {"left": left, "right": right, "top": top,
+                                                "bottom": bottom})
+            if t.flip_h:
+                self._attach(producer, "avfilter.hflip", {})
+            if t.flip_v:
+                self._attach(producer, "avfilter.vflip", {})
+            for name, props in (color_filters(clip.color)
+                                + preset_filters(clip.preset, clip.preset_amount)
+                                + effect_filters(clip.effects)):
+                self._attach(producer, name, props)
+        animated = clip.kind == "text" and "slide" in (clip.animation_in, clip.animation_out)
+        if not t.is_identity() or animated:
+            (x, y, w, h), distort = affine_rect(cw, ch, mw, mh, t)
+            rect = f"{x:g} {y:g} {w:g} {h:g} {max(0.0, min(1.0, t.opacity)):g}"
+            if animated:
+                rect = self._slide_rect(clip, x, y, w, h, t.opacity)
+            self._attach(producer, "affine", {
+                "background": "color:#00000000", "transition.rect": rect,
+                "transition.fill": 1, "transition.distort": 1 if distort else 0,
+                "transition.fix_rotate_x": t.rotation,
+            }, span)
+        fade_in, fade_out = clip.fade_in, clip.fade_out
+        if clip.kind == "text":
+            step = max(1, self.canvas.fps // 2)
+            fade_in = max(fade_in, step if clip.animation_in in ("fade", "slide") else 0)
+            fade_out = max(fade_out, step if clip.animation_out in ("fade", "slide") else 0)
+        points = _fade_points(clip.duration, fade_in, fade_out, 0.0, 1.0)
+        if points is not None:
+            self._attach(producer, "brightness", {"level": _anim(points), "alpha": -1}, span)
+
+    def _slide_rect(self, clip: ClipSpec, x: float, y: float, w: float, h: float,
+                    opacity: float) -> str:
+        step = max(1, self.canvas.fps // 2)
+        offset = self.canvas.height * 0.06
+        final = f"{x:g} {y:g} {w:g} {h:g} {opacity:g}"
+        moved = f"{x:g} {y + offset:g} {w:g} {h:g} {opacity:g}"
+        points = []
+        if clip.animation_in == "slide":
+            points += [f"0={moved}", f"{min(step, clip.duration - 1)}={final}"]
+        else:
+            points.append(f"0={final}")
+        if clip.animation_out == "slide" and clip.duration > 2 * step:
+            points += [f"{clip.duration - step - 1}={final}", f"{clip.duration - 1}={moved}"]
+        return ";".join(points)
+
+    def _audio_filters(self, producer, clip: ClipSpec, span: tuple[int, int]) -> None:
+        if clip.kind in ("image", "text"):
+            return
+        if clip.volume <= 0.001:
+            self._attach(producer, "volume", {"gain": 0})
+            return
+        base = 20 * math.log10(clip.volume)
+        points = _fade_points(clip.duration, clip.fade_in, clip.fade_out, -60.0, base)
+        if points is not None:
+            self._attach(producer, "volume", {"level": _anim(points)}, span)
+        elif clip.volume != 1.0:
+            self._attach(producer, "volume", {"level": round(base, 3)})
 
 
 class MltSource(Source):

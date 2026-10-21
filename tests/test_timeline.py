@@ -186,3 +186,134 @@ def test_version_1_projects_still_open(tmp_path):
                  '"tracks": [{"kind": "video", "name": "Vidéo", "id": "v"}]}', encoding="utf-8")
     p = Project.load(f)
     assert p.clips == [] and p.tracks[0].muted is False
+
+
+# --- J2 : vitesse, transitions, textes, son détaché ------------------------------------
+
+
+def test_speed_changes_duration_and_shifts_followers(tl):
+    track = tl.first_track("video").id
+    a = tl.add_clip(media(tl, "video"), track)  # 0–100
+    b = tl.add_clip(media(tl, "image"), track)  # 100–225
+    tl.set_speed(a.id, 2.0)
+    assert (a.duration, b.start) == (50, 50)
+    tl.set_speed(a.id, 0.5)
+    assert (a.duration, b.start) == (200, 200)
+    tl.set_speed(a.id, 100)  # borné à ×16
+    assert a.speed == 16.0 and a.duration == 6
+    with pytest.raises(TimelineError):
+        tl.set_speed(b.id, 2.0)  # pas de vitesse pour une image
+
+
+def test_speed_bounds_trim_and_split(tl):
+    clip = tl.add_clip(media(tl, "video"))
+    tl.set_speed(clip.id, 2.0)  # 100 images source → 50 images de timeline
+    assert tl.trim_bounds(clip.id, "end")[1] == 50
+    second = tl.split(clip.id, 20)
+    assert second.source_in == 40 and second.speed == 2.0
+    assert tl.trim_bounds(second.id, "start")[0] == 20  # bloqué par la première partie
+
+
+def test_transition_overlaps_and_shifts(tl):
+    track = tl.first_track("video").id
+    a = tl.add_clip(media(tl, "video"), track)  # 0–100
+    b = tl.add_clip(media(tl, "video"), track)  # 100–200
+    c = tl.add_clip(media(tl, "image"), track)  # 200–325
+    t = tl.add_transition(a.id, b.id, "wipe_left", 20)
+    assert (b.start, c.start, tl.length()) == (80, 180, 305)
+    assert tl.neighbour(a.id, "right") is b and tl.neighbour(b.id, "left") is a
+    with pytest.raises(TimelineError):
+        tl.add_transition(a.id, b.id)  # déjà reliés
+    tl.set_transition(t.id, duration=40)
+    assert (b.start, c.start, t.duration) == (60, 160, 40)
+    tl.set_transition(t.id, duration=1000)  # borné par la durée des clips
+    assert t.duration == 99
+    tl.remove_transition(t.id)
+    assert (b.start, c.start) == (100, 200)
+
+
+def test_transition_requires_adjacent_clips(tl):
+    track = tl.first_track("video").id
+    a = tl.add_clip(media(tl, "image"), track, 0, duration=50)
+    b = tl.add_clip(media(tl, "image"), track, 60, duration=50)
+    with pytest.raises(TimelineError):
+        tl.add_transition(a.id, b.id)
+
+
+def test_audio_tracks_only_crossfade(tl):
+    a = tl.add_clip(media(tl, "audio"))
+    b = tl.add_clip(media(tl, "audio"))
+    t = tl.add_transition(a.id, b.id, "zoom", 25)
+    assert t.kind == "dissolve"
+
+
+def test_edges_in_transition_are_locked_and_moves_drop_it(tl):
+    track = tl.first_track("video").id
+    a = tl.add_clip(media(tl, "image"), track, duration=50)
+    b = tl.add_clip(media(tl, "image"), track, duration=50)
+    tl.add_transition(a.id, b.id, duration=10)
+    assert tl.trim_bounds(a.id, "end") == (a.end, a.end)
+    assert tl.trim_bounds(b.id, "start") == (b.start, b.start)
+    assert tl.split(a.id, 45) is None  # dans la zone de transition
+    part = tl.split(a.id, 20)
+    assert tl.transition_after(part.id) is not None  # la transition suit la seconde partie
+    tl.move_clip(b.id, track, 300)
+    assert tl.project.transitions == []
+
+
+def test_delete_with_transition_ripples_correctly(tl):
+    track = tl.first_track("video").id
+    a = tl.add_clip(media(tl, "image"), track, duration=100)
+    b = tl.add_clip(media(tl, "image"), track, duration=100)
+    c = tl.add_clip(media(tl, "image"), track, duration=50)
+    tl.add_transition(a.id, b.id, duration=20)  # b 80–180, c 180–230
+    tl.delete(b.id, ripple=True)
+    assert c.start == 100 and tl.project.transitions == []
+
+
+def test_texts_live_on_text_tracks(tl):
+    from montar.core.project import TextStyle
+
+    clip = tl.add_text(TextStyle(content="Bonjour"), 50)
+    track = tl.track(clip.track_id)
+    assert track.kind == "text" and tl.project.tracks[0] is track
+    assert (clip.start, clip.duration, clip.media_id) == (50, 125, "")
+    assert tl.track_labels()[track.id] == "T1"
+    v2 = tl.add_track("video")
+    assert tl.project.tracks[1] is v2  # sous les textes, au-dessus de V1
+    with pytest.raises(TimelineError):
+        tl.add_clip(media(tl, "video"), track.id)
+    tl.remove_track(track.id)  # on peut retirer toutes les pistes texte
+    assert tl.first_track("text") is None
+
+
+def test_detach_audio(tl):
+    clip = tl.add_clip(media(tl, "video"), start=10)
+    tl.add_clip(media(tl, "audio"), start=0)  # A1 occupée : le son va sur une nouvelle piste
+    audio = tl.detach_audio(clip.id)
+    assert clip.volume == 0.0
+    assert (audio.media_id, audio.start, audio.duration) == ("video", 10, 100)
+    track = tl.track(audio.track_id)
+    assert track.kind == "audio" and track is not tl.first_track("audio")
+    image = tl.add_clip(media(tl, "image"))
+    with pytest.raises(TimelineError):
+        tl.detach_audio(image.id)
+
+
+def test_clip_settings_survive_save(tmp_path, project):
+    from montar.core.project import TextStyle
+
+    tl = Timeline(project)
+    clip = tl.add_clip(media(tl, "video"))
+    clip.transform.scale, clip.transform.flip_h = 0.5, True
+    clip.color.saturation, clip.preset, clip.fade_in = -0.4, "sepia", 12
+    clip.effects.blur = 0.3
+    other = tl.add_clip(media(tl, "video"))
+    tl.add_transition(clip.id, other.id, "zoom", 10)
+    tl.add_text(TextStyle(content="Fin", background="#FFFFFF"), 0)
+    loaded = Project.load(project.save(tmp_path / "p.montar"))
+    c = loaded.clips[0]
+    assert (c.transform.scale, c.transform.flip_h, c.color.saturation) == (0.5, True, -0.4)
+    assert (c.preset, c.fade_in, c.effects.blur) == ("sepia", 12, 0.3)
+    assert loaded.transitions[0].kind == "zoom"
+    assert loaded.clips[2].text.content == "Fin" and loaded.clips[2].text.background == "#FFFFFF"

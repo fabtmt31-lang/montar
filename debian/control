@@ -15,17 +15,19 @@ Depends: ${misc:Depends},
          python3 (>= 3.10),
          ${python3:Depends},
          ffmpeg,
+         frei0r-plugins,
          libmlt-data,
          libmlt7,
          python3-mlt,
          python3-numpy,
          python3-pyqt6,
          python3-pyqt6.qtsvg
-Recommends: frei0r-plugins, xdg-user-dirs
+Recommends: xdg-user-dirs
 Description: simple and local video editor
  montar is a free video editor with the basic features of consumer editors:
- import of videos, images and sounds, preview, and (in upcoming releases)
- a multi-track timeline, titles, transitions, filters and export.
+ multi-track timeline, cutting and trimming, speed, titles and lower thirds,
+ transitions, colour adjustments, filters and effects, audio volume and fades.
+ Export is coming in an upcoming release.
  .
  Everything happens locally: no account, no cloud storage, no upload. Media
  files are referenced and never modified. montar can be extended with

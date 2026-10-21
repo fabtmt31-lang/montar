@@ -62,12 +62,20 @@ class MediaImporter(QObject):
         self._cache = cache
         self._pool = QThreadPool(self)
         self._pool.setMaxThreadCount(max(2, min(4, QThreadPool.globalInstance().maxThreadCount())))
-        self._signals = _Signals()
+        # Relais enfants de l'importateur : détruits avec lui, ils ne peuvent plus émettre
+        # vers une page de montage fermée.
+        self._signals = _Signals(self)
         self._signals.done.connect(self.finished)
-        self._thumb_signals = _Signals()
-        self._thumb_signals.done.connect(lambda p, _i, t, _e: self.thumbnailReady.emit(p, t))
-        self._wave_signals = _Signals()
-        self._wave_signals.done.connect(lambda p, _i, w, _e: self.waveformReady.emit(p, w))
+        self._thumb_signals = _Signals(self)
+        self._thumb_signals.done.connect(self._thumbnail_done)
+        self._wave_signals = _Signals(self)
+        self._wave_signals.done.connect(self._waveform_done)
+
+    def _thumbnail_done(self, path: str, _item, thumb, _error: str) -> None:
+        self.thumbnailReady.emit(path, thumb)
+
+    def _waveform_done(self, path: str, _item, peaks, _error: str) -> None:
+        self.waveformReady.emit(path, peaks)
 
     def import_files(self, paths: list[str]) -> None:
         for p in paths:

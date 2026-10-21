@@ -201,3 +201,96 @@ def drag(widget, start: QPoint, end: QPoint) -> None:
                             Qt.KeyboardModifier.NoModifier)
         QApplication.sendEvent(widget, event)
     QTest.mouseRelease(widget, Qt.MouseButton.LeftButton, pos=end)
+
+
+# --- J2 ----------------------------------------------------------------------------------
+
+
+@needs_ffmpeg
+def test_inspector_sliders_edit_clip_and_merge_history(window, media_dir):
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    clip = editor.project.clips[0]
+    editor.controller.select(clip.id)
+    inspector = editor.inspector
+    assert inspector.pages.currentWidget() is inspector._clip
+    scale = next(r for r in inspector._sliders if r.getter(clip) == 100 and r._max == 400)
+    for value in (90, 80, 70, 60):  # glissement du curseur : une seule étape d'annulation
+        scale.moved.emit(value)
+    assert clip.transform.scale == pytest.approx(0.6)
+    editor.controller.undo()
+    assert editor.project.clips[0].transform.scale == 1.0
+    assert not editor.controller.history.can_undo or \
+        editor.controller.history.undo_label() != "Échelle"
+
+
+@needs_ffmpeg
+def test_text_transition_filter_and_detach(window, media_dir):
+    editor = imported_editor(window, media_dir, ["red.mp4", "blue.mp4"])
+    red, blue = editor.project.media
+    editor.add_to_timeline(red)
+    editor.add_to_timeline(blue)
+    first, second = editor.project.clips
+
+    # transition depuis le panneau Transitions
+    editor.controller.select(first.id)
+    assert editor.transitions_panel.target() == (first, second)
+    editor.add_transition("dissolve")
+    transition = editor.project.transitions[0]
+    assert editor.controller.selected_transition == transition.id
+    assert editor.inspector.pages.currentWidget() is editor.inspector._transition
+    assert second.start == 50 - transition.duration
+
+    # filtre prédéfini sur le second clip
+    editor.controller.select(second.id)
+    editor.filters_panel._apply("bw")
+    assert second.preset == "bw"
+
+    # texte ajouté à la tête de lecture sur une nouvelle piste T1
+    editor.timeline.set_playhead(10)
+    editor.add_text("lower_third")
+    text = editor.controller.selected_clip()
+    assert text.is_text and text.start == 10 and text.text.background == "#FFFFFF"
+    assert editor.controller.timeline.track(text.track_id).kind == "text"
+    assert editor.inspector.pages.currentWidget() is editor.inspector._text
+    editor.inspector.text_edit.setPlainText("Fabien · Monteur")
+    assert text.text.content == "Fabien · Monteur"
+
+    # l'aperçu affiche le texte : le rendu final contient du blanc (bandeau) en bas à gauche
+    frames = []
+    editor.player.frameReady.connect(lambda img, f: frames.append((f, img)))
+    editor._reload_player()
+    editor.player.seek(20)
+    assert wait_until(lambda: any(f == 20 for f, _i in frames))
+    image = next(img for f, img in frames if f == 20)
+    bounds = editor._selection_rect()
+    assert bounds is not None
+    scale = image.width() / editor.project.canvas_size[0]
+    color = image.pixelColor(int((bounds.left() + 4) * scale), int(bounds.center().y() * scale))
+    assert color.red() > 200 and color.green() > 200 and color.blue() > 200
+
+    # déplacement du texte dans l'aperçu
+    x0 = text.text.x
+    editor._on_preview_drag("move", QPointF(100, 100), QPointF(292, 100))
+    editor.preview.canvas.dragFinished.emit()
+    assert text.text.x == pytest.approx(x0 + 192 / editor.project.canvas_size[0])
+
+    # sauvegarde et relecture
+    assert editor.save()
+    saved = Project.load(editor.project.path)
+    assert saved.transitions[0].kind == "dissolve"
+    assert any(c.is_text and c.text.content == "Fabien · Monteur" for c in saved.clips)
+
+
+@needs_ffmpeg
+def test_detach_audio_from_menu_logic(window, media_dir):
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    clip = editor.project.clips[0]
+    editor.controller.select(clip.id)
+    editor.inspector._detach_audio()
+    assert clip.volume == 0
+    audio = [c for c in editor.project.clips if c is not clip][0]
+    assert editor.controller.timeline.track(audio.track_id).kind == "audio"
+    editor.controller.undo()
+    assert len(editor.project.clips) == 1 and editor.project.clips[0].volume == 1.0

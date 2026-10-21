@@ -14,6 +14,14 @@ Files: src/montar/assets/fonts/JetBrainsMono_*
 Copyright: 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)
 License: OFL-1.1
 
+Files: src/montar/assets/fonts/Fraunces_*
+Copyright: 2018 The Fraunces Project Authors (https://github.com/undercasetype/Fraunces)
+License: OFL-1.1
+
+Files: src/montar/assets/fonts/Caveat_*
+Copyright: 2014 The Caveat Project Authors (https://github.com/googlefonts/caveat)
+License: OFL-1.1
+
 Files: src/montar/assets/icons/*
 Copyright: 2013-2022 Cole Bemis (Feather)
            2022 Lucide Contributors

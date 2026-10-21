@@ -87,6 +87,12 @@ QToolButton[variant="rail"]:checked {{ background: {mist}; color: {forest}; font
 #Segmented QPushButton {{ background: transparent; border: none; padding: 7px 16px;
                           border-radius: 8px; font-weight: 500; color: {ink}; }}
 #Segmented QPushButton:checked {{ background: {surface}; font-weight: 700; }}
+#Segmented[compact="true"] QPushButton {{ padding: 6px 8px; font-size: 13px; }}
+#Inspector QPushButton[variant="secondary"] {{ padding: 6px 8px; }}
+#Inspector QLineEdit, #Inspector QComboBox, #Inspector QSpinBox,
+#Inspector QPlainTextEdit {{ padding: 5px 8px; }}
+QPlainTextEdit {{ background: {field}; border: 1px solid {border};
+                  border-radius: {r_control}px; padding: 6px; }}
 #Segmented QPushButton:disabled {{ color: {text_muted}; }}
 
 /* tuiles et cartes */

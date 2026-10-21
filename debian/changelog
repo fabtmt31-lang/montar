@@ -1,3 +1,20 @@
+montar (0.3.0) unstable; urgency=medium
+
+  * Jalon J2 : édition de base.
+  * Inspecteur : position, échelle, rotation, opacité, ajuster / remplir /
+    étirer, retournement, recadrage, fondus d'entrée et de sortie, volume
+    du clip, détacher l'audio, vitesse (×0,1 à ×16), réglages de couleur.
+  * Panneaux Filtres (8 filtres prédéfinis avec intensité), Effets (flou,
+    netteté, vignettage), Transitions (fondu enchaîné, au noir, au blanc,
+    balayages, glissements, zoom).
+  * Textes et titres : 4 styles de titres, 4 bandeaux, police, taille,
+    graisse, couleur, contour, ombre, bandeau, animations d'entrée et de
+    sortie ; déplacement et redimensionnement directement dans l'aperçu.
+  * Volume par piste ; pistes texte.
+  * Nouvelle dépendance : frei0r-plugins.
+
+ -- Fabien <fab.tmt31@gmail.com>  Wed, 21 Oct 2026 20:00:00 +0200
+
 montar (0.2.0) unstable; urgency=medium
 
   * Jalon J1 : timeline multipiste (pistes vidéo superposées, pistes audio

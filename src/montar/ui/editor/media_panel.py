@@ -163,6 +163,11 @@ class MediaPanel(QFrame):
                                  else _("{n} éléments").format(n=n))
         self.empty_hint.setVisible(n == 0)
 
+    def set_filter(self, key: str) -> None:
+        for chip, (k, _t) in zip(self._filter_group.buttons(), _FILTERS, strict=True):
+            chip.setChecked(k == key)
+        self._set_filter(key)
+
     def _set_filter(self, key: str) -> None:
         self._filter = key
         for item in self._items.values():

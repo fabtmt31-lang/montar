@@ -2,8 +2,8 @@
 """Panneau d'aperçu : image, curseur de position, commandes de lecture."""
 from __future__ import annotations
 
-from PyQt6.QtCore import QRectF, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QImage, QKeySequence, QPainter, QPainterPath, QShortcut
+from PyQt6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QImage, QKeySequence, QPainter, QPainterPath, QPen, QShortcut
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QMenu, QVBoxLayout, QWidget
 
 from montar.core.settings import PREVIEW_QUALITIES
@@ -17,18 +17,80 @@ QUALITY_LABELS = {"low": "Basse", "medium": "Moyenne", "full": "Pleine"}
 EMPTY_MESSAGE = "Glissez des médias dans la timeline pour les voir ici"
 
 
+HANDLE = 10  # côté des poignées de redimensionnement (pixels écran)
+
+
 class PreviewCanvas(QWidget):
-    """Affiche l'image courante centrée, au format de la toile du projet."""
+    """Affiche l'image courante centrée, au format de la toile du projet.
+
+    Le cadre de l'élément sélectionné (`selection`, en pixels de la toile) se déplace en
+    le faisant glisser et se redimensionne par ses coins."""
 
     resized = pyqtSignal(QSize)
+    # (mode « move » ou « scale », point de départ, point courant), en pixels de la toile
+    dragged = pyqtSignal(str, QPointF, QPointF)
+    dragFinished = pyqtSignal()
 
     def __init__(self) -> None:
         super().__init__()
         self.setMinimumSize(320, 180)
+        self.setMouseTracking(True)
         self._image: QImage | None = None
         self.canvas_size = (1920, 1080)  # taille de la toile du projet
         self._message = ""
+        self.selection: QRectF | None = None
+        self._drag: tuple[str, QPointF] | None = None
         theme().changed.connect(self.update)
+
+    def set_selection(self, rect: QRectF | None) -> None:
+        self.selection = rect
+        self.update()
+
+    def _to_widget(self, rect: QRectF) -> QRectF:
+        frame = self.frame_rect()
+        k = frame.width() / self.canvas_size[0]
+        return QRectF(frame.left() + rect.left() * k, frame.top() + rect.top() * k,
+                      rect.width() * k, rect.height() * k)
+
+    def _to_canvas(self, point: QPointF) -> QPointF:
+        frame = self.frame_rect()
+        k = self.canvas_size[0] / frame.width()
+        return QPointF((point.x() - frame.left()) * k, (point.y() - frame.top()) * k)
+
+    def _handles(self) -> list[QRectF]:
+        if self.selection is None:
+            return []
+        r = self._to_widget(self.selection)
+        h = HANDLE
+        return [QRectF(pt.x() - h / 2, pt.y() - h / 2, h, h)
+                for pt in (r.topLeft(), r.topRight(), r.bottomLeft(), r.bottomRight())]
+
+    def _mode_at(self, pos: QPointF) -> str | None:
+        if self.selection is None:
+            return None
+        if any(h.adjusted(-4, -4, 4, 4).contains(pos) for h in self._handles()):
+            return "scale"
+        return "move" if self._to_widget(self.selection).contains(pos) else None
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        mode = self._mode_at(event.position())
+        if mode and event.button() == Qt.MouseButton.LeftButton:
+            self._drag = (mode, self._to_canvas(event.position()))
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if self._drag is not None:
+            mode, start = self._drag
+            self.dragged.emit(mode, start, self._to_canvas(event.position()))
+            return
+        mode = self._mode_at(event.position())
+        self.setCursor(Qt.CursorShape.SizeFDiagCursor if mode == "scale" else
+                       Qt.CursorShape.SizeAllCursor if mode == "move" else
+                       Qt.CursorShape.ArrowCursor)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if self._drag is not None:
+            self._drag = None
+            self.dragFinished.emit()
 
     def set_canvas(self, width: int, height: int) -> None:
         self.canvas_size = (width, height)
@@ -67,6 +129,17 @@ class PreviewCanvas(QWidget):
             painter.drawText(rect.adjusted(20, 20, -20, -20),
                              Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap,
                              self._message)
+        painter.setClipping(False)
+        if self.selection is not None and self._image is not None:
+            sel = self._to_widget(self.selection)
+            pen = QPen(QColor("#FFFFFF"), 1.5, Qt.PenStyle.DashLine)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(sel)
+            painter.setPen(QPen(QColor(p.forest), 1.5))
+            painter.setBrush(QColor("#FFFFFF"))
+            for h in self._handles():
+                painter.drawRect(h)
         painter.end()
 
     def resizeEvent(self, event) -> None:  # noqa: N802

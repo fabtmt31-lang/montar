@@ -56,15 +56,23 @@ class PlaybackWorker(QObject):
 
     @pyqtSlot(object)
     def load(self, spec: TimelineSpec) -> None:
-        """Reconstruit la timeline ; la lecture reprend où elle en était."""
+        """Reconstruit la timeline ; une lecture en cours continue sans interruption visible."""
         was_playing = self._playing
-        self._stop()
+        if was_playing:  # pause silencieuse : l'interface reste en mode lecture
+            self._position = self._clock()
+            if self._timer is not None:
+                self._timer.stop()
+            if self._audio is not None:
+                self._audio.stop()
         self._close()
         self._spec = spec
         try:
             self._source = self._ensure_engine().build(spec)
         except Exception as exc:  # moteur absent ou média illisible
             self._source = None
+            if was_playing:
+                self._playing = False
+                self.playingChanged.emit(False)
             self.failed.emit(str(exc))
             return
         self._audio_stale = True
@@ -72,7 +80,12 @@ class PlaybackWorker(QObject):
         self.loaded.emit(self._length, float(spec.canvas.fps))
         self._render(self._position)
         if was_playing:
-            self.play()
+            if self._length == 0:
+                self._playing = False
+                self.playingChanged.emit(False)
+                return
+            self._start_clock()
+            self._timer.start(max(1, int(500 / max(1, spec.canvas.fps))))
 
     def _close(self) -> None:
         if self._source is not None:
