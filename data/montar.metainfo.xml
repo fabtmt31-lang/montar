@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>montar.desktop</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>montar</name>
+  <summary>Simple, local video editor</summary>
+  <summary xml:lang="fr">Montage vidéo simple et 100 % local</summary>
+  <description>
+    <p>montar is a simple video editor that works entirely on your computer: no account,
+      no cloud storage, no upload.</p>
+    <p xml:lang="fr">montar est un logiciel de montage vidéo simple qui fonctionne entièrement
+      sur votre ordinateur : aucun compte, aucun stockage en ligne, aucun envoi de fichier.</p>
+  </description>
+  <launchable type="desktop-id">montar.desktop</launchable>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Video</category>
+  </categories>
+  <provides>
+    <binary>montar</binary>
+    <mediatype>application/x-montar-project</mediatype>
+  </provides>
+  <url type="homepage">https://github.com/fabtmt31-lang/montar</url>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-10-21"/>
+  </releases>
+</component>

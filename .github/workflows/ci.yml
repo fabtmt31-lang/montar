@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: pipx run ruff check src tests
+
+  test-and-package:
+    name: ${{ matrix.image }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # Debian 12 couvre LMDE 6 ; Ubuntu 22.04 / 24.04 couvrent Linux Mint 21 / 22.
+        image: ["debian:12", "ubuntu:22.04", "ubuntu:24.04"]
+    container: ${{ matrix.image }}
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dépendances
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            python3 python3-pytest python3-pyqt6 python3-pyqt6.qtsvg python3-mlt libmlt7 \
+            ffmpeg build-essential debhelper dh-python lintian
+      - name: Tests
+        run: python3 -m pytest -v
+      - name: Paquet .deb
+        run: ./scripts/build-deb.sh
+      - name: Lintian
+        run: lintian --fail-on error,warning dist/*.deb
+      - name: Installation, lancement, désinstallation
+        run: |
+          apt-get install -y ./dist/*.deb
+          montar --version
+          test -f /usr/share/applications/montar.desktop
+          apt-get remove -y montar
+          test ! -e /usr/share/montar
+      - name: Nom de l'artefact
+        id: name
+        run: echo "slug=$(echo '${{ matrix.image }}' | tr ':' '-')" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: montar-deb-${{ steps.name.outputs.slug }}
+          path: dist/*.deb

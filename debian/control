@@ -1,0 +1,30 @@
+Source: montar
+Section: video
+Priority: optional
+Maintainer: Fabien <fab.tmt31@gmail.com>
+Build-Depends: debhelper-compat (= 13), dh-python, python3
+Standards-Version: 4.6.2
+Homepage: https://github.com/fabtmt31-lang/montar
+Vcs-Browser: https://github.com/fabtmt31-lang/montar
+Vcs-Git: https://github.com/fabtmt31-lang/montar.git
+Rules-Requires-Root: no
+
+Package: montar
+Architecture: all
+Depends: ${misc:Depends},
+         python3 (>= 3.10),
+         ${python3:Depends},
+         ffmpeg,
+         libmlt7,
+         python3-mlt,
+         python3-pyqt6,
+         python3-pyqt6.qtsvg
+Recommends: frei0r-plugins, xdg-user-dirs
+Description: simple and local video editor
+ montar is a free video editor with the basic features of consumer editors:
+ import of videos, images and sounds, preview, and (in upcoming releases)
+ a multi-track timeline, titles, transitions, filters and export.
+ .
+ Everything happens locally: no account, no cloud storage, no upload. Media
+ files are referenced and never modified. montar can be extended with
+ modules written in Python.

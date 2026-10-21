@@ -1,0 +1,31 @@
+.TH MONTAR 1 "octobre 2026" "montar 0.1.0" "Commandes utilisateur"
+.SH NOM
+montar \- logiciel de montage vidéo simple et local
+.SH SYNOPSIS
+.B montar
+[\fIPROJET.montar\fR]
+[\fB\-\-version\fR]
+.SH DESCRIPTION
+.B montar
+est un logiciel libre de montage vidéo. Il fonctionne entièrement en local :
+aucun compte ni stockage en ligne n'est nécessaire. Les médias importés sont
+référencés et jamais modifiés.
+.SH OPTIONS
+.TP
+.I PROJET.montar
+Ouvre directement le projet indiqué.
+.TP
+.B \-\-version
+Affiche la version et quitte.
+.SH FICHIERS
+.TP
+.I ~/.config/montar/settings.json
+Préférences.
+.TP
+.I ~/.local/share/montar/recent.json
+Liste des projets récents.
+.TP
+.I ~/.cache/montar/
+Vignettes et journaux.
+.SH LICENCE
+GNU GPL version 3 ou ultérieure.

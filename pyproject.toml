@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "montar"
+dynamic = ["version"]
+description = "Logiciel libre de montage vidéo, simple et local, extensible par modules"
+readme = "README.md"
+license = { text = "GPL-3.0-or-later" }
+requires-python = ">=3.10"
+# PyQt6 et les bindings MLT (mlt7) sont fournis par les paquets système
+# (python3-pyqt6, python3-pyqt6.qtsvg, python3-mlt) : ils ne sont pas listés ici.
+dependencies = []
+
+[project.scripts]
+montar = "montar.app:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "montar.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+montar = ["assets/fonts/*", "assets/icons/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]

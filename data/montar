@@ -1,0 +1,10 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Lanceur installé dans /usr/bin : le code de montar est un module privé de /usr/share/montar.
+import sys
+
+sys.path.insert(0, "/usr/share/montar")
+
+from montar.app import main  # noqa: E402
+
+sys.exit(main())

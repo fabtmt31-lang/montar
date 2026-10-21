@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=montar
+GenericName=Video Editor
+GenericName[fr]=Éditeur vidéo
+Comment=Simple, local video editor
+Comment[fr]=Montage vidéo simple et 100 % local
+Exec=montar %f
+Icon=montar
+Terminal=false
+Categories=AudioVideo;Video;AudioVideoEditing;
+MimeType=application/x-montar-project;
+Keywords=video;editor;montage;timelapse;vidéo;
+Keywords[fr]=vidéo;montage;éditeur;timelapse;
+StartupWMClass=montar

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-montar-project">
+    <comment>montar project</comment>
+    <comment xml:lang="fr">Projet montar</comment>
+    <sub-class-of type="application/json"/>
+    <generic-icon name="video-x-generic"/>
+    <glob pattern="*.montar"/>
+  </mime-type>
+</mime-info>

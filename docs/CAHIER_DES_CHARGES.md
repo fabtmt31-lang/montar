@@ -316,25 +316,22 @@ montar/
 ├── LICENSE                     # GPLv3
 ├── src/montar/
 │   ├── __main__.py             # point d'entrée : python -m montar
-│   ├── app.py                  # QApplication, fenêtre principale, navigation
-│   ├── ui/
-│   │   ├── theme/              # jetons de la charte, génération QSS clair/sombre, polices
-│   │   ├── home/               # Accueil, Mes projets, Médiathèque, Corbeille
-│   │   ├── editor/             # en-tête, rail latéral, panneaux, aperçu, inspecteur
-│   │   ├── timeline/           # widget de timeline sur mesure
-│   │   └── dialogs/            # Nouveau projet, Export, Préférences
-│   ├── core/                   # modèle : Project, Track, Clip, Effect, Transition, commandes Undo/Redo
+│   ├── app.py                  # QApplication, arguments, journalisation
+│   ├── core/                   # modèle sans Qt : Project, MediaItem, Track, formats, préférences
 │   ├── engine/                 # interface Engine + implémentation MLT (lecture, rendu)
-│   ├── media/                  # import, ffprobe, vignettes, formes d'onde, proxys, cache
-│   ├── plugins/                # chargeur de modules, registre, API publique (montar.api)
-│   ├── export/                 # préréglages, file d'export
-│   ├── platform/               # chemins XDG/Windows, détection accélération matérielle
-│   └── i18n/                   # traductions (.ts / .qm)
-├── modules/                    # modules intégrés : timelapse, filters, transitions, titles
-├── assets/                     # icônes, polices OFL
-├── packaging/
-│   ├── debian/                 # control, rules, changelog, montar.desktop, montar.xml (MIME)
-│   └── windows/
+│   ├── media/                  # analyse ffprobe, vignettes, (proxys, formes d'onde)
+│   ├── ui/
+│   │   ├── theme/              # jetons de la charte, feuille de style clair/sombre, icônes, polices
+│   │   ├── home/               # Accueil, Mes projets, Préférences
+│   │   ├── editor/             # en-tête, rail, panneaux, aperçu, inspecteur (timeline au J1)
+│   │   └── dialogs/            # Nouveau projet, (Export)
+│   ├── plugins/                # chargeur de modules et API publique montar.api (J3)
+│   ├── platform/               # chemins XDG/Windows, prénom de l'utilisateur, (accélération)
+│   └── assets/                 # polices OFL, icônes Lucide, logo
+├── modules/                    # modules intégrés : timelapse, filtres, transitions (J3)
+├── data/                       # lanceur, montar.desktop, type MIME, AppStream, page de manuel
+├── debian/                     # empaquetage Debian (format natif)
+├── scripts/build-deb.sh        # construction du .deb dans dist/
 ├── docs/
 └── tests/
 ```
@@ -427,13 +424,13 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
 ## 7. Packaging et distribution
 
 ### 7.1 Linux (phase 1) — Debian, Ubuntu, Mint
-- Paquet source dans `packaging/debian/`, construit avec `dpkg-buildpackage` / `dh` + `pybuild` ; un seul paquet binaire **`montar_<version>_all.deb`** (code Python pur, architecture `all`).
+- Dossier `debian/` à la racine du dépôt (format source natif), construit avec `dpkg-buildpackage` / `dh` + `dh_python3` via `scripts/build-deb.sh` ; un seul paquet binaire **`montar_<version>_all.deb`** (code Python pur, architecture `all`).
 - Dépendances (noms à valider pour chaque version ciblée) :
-  `python3 (>= 3.10)`, `python3-pyqt6`, `python3-mlt`, `melt`, `ffmpeg`, `frei0r-plugins`, `python3-numpy` ;
-  recommandées : `va-driver-all` (accélération matérielle), `fonts-…` non requis (polices embarquées).
+  `python3 (>= 3.10)`, `python3-pyqt6`, `python3-pyqt6.qtsvg`, `python3-mlt`, `libmlt7`, `ffmpeg` ;
+  recommandées : `frei0r-plugins`, `xdg-user-dirs` ; plus tard `python3-numpy`, `va-driver-all` (accélération matérielle). Les polices sont embarquées.
 - Installation :
-  - lanceur `/usr/bin/montar`, code dans `/usr/lib/python3/dist-packages/montar` ;
-  - modules intégrés `/usr/share/montar/modules`, ressources `/usr/share/montar` ;
+  - lanceur `/usr/bin/montar`, code installé comme module privé dans `/usr/share/montar/montar` (recommandation Debian pour une application) ;
+  - modules intégrés `/usr/share/montar/modules` ;
   - entrée de menu `/usr/share/applications/montar.desktop` (catégorie AudioVideo / Video) ;
   - icônes `/usr/share/icons/hicolor/*/apps/montar.*` ;
   - type MIME `application/x-montar-project` (`*.montar`) : double-clic sur un projet ;

@@ -1,0 +1,6 @@
+montar (0.1.0) unstable; urgency=medium
+
+  * Première version (jalon J0) : accueil, création de projet, import de
+    médias, aperçu via MLT, préférences, thèmes clair et sombre.
+
+ -- Fabien <fab.tmt31@gmail.com>  Wed, 21 Oct 2026 12:00:00 +0200
