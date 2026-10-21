@@ -1,3 +1,15 @@
+montar (0.3.1) unstable; urgency=medium
+
+  * Aperçu fluide : le rendu des images libère le verrou de Python, l'interface
+    ne se fige plus pendant la lecture.
+  * Les réglages d'un clip (déplacement, redimensionnement, curseurs) sont
+    appliqués sans reconstruire la timeline ; l'aperçu suit le geste en direct.
+  * Transitions : glisser-déposer sur la jonction entre deux clips.
+  * Inspecteur : plus de contenu coupé à droite.
+  * Responsable du paquet : admin@appsdoc.fr.
+
+ -- Fabien <admin@appsdoc.fr>  Wed, 21 Oct 2026 22:00:00 +0200
+
 montar (0.3.0) unstable; urgency=medium
 
   * Jalon J2 : édition de base.
@@ -13,7 +25,7 @@ montar (0.3.0) unstable; urgency=medium
   * Volume par piste ; pistes texte.
   * Nouvelle dépendance : frei0r-plugins.
 
- -- Fabien <fab.tmt31@gmail.com>  Wed, 21 Oct 2026 20:00:00 +0200
+ -- Fabien <admin@appsdoc.fr>  Wed, 21 Oct 2026 20:00:00 +0200
 
 montar (0.2.0) unstable; urgency=medium
 
@@ -26,11 +38,11 @@ montar (0.2.0) unstable; urgency=medium
   * Corrige le gel de l'interface à l'ouverture d'une image (modules MLT
     liés à Qt 5 exclus).
 
- -- Fabien <fab.tmt31@gmail.com>  Wed, 21 Oct 2026 16:00:00 +0200
+ -- Fabien <admin@appsdoc.fr>  Wed, 21 Oct 2026 16:00:00 +0200
 
 montar (0.1.0) unstable; urgency=medium
 
   * Première version (jalon J0) : accueil, création de projet, import de
     médias, aperçu via MLT, préférences, thèmes clair et sombre.
 
- -- Fabien <fab.tmt31@gmail.com>  Wed, 21 Oct 2026 12:00:00 +0200
+ -- Fabien <admin@appsdoc.fr>  Wed, 21 Oct 2026 12:00:00 +0200

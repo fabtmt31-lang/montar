@@ -1,7 +1,7 @@
 Source: montar
 Section: video
 Priority: optional
-Maintainer: Fabien <fab.tmt31@gmail.com>
+Maintainer: Fabien <admin@appsdoc.fr>
 Build-Depends: debhelper-compat (= 13), dh-python, python3
 Standards-Version: 4.6.2
 Homepage: https://github.com/fabtmt31-lang/montar

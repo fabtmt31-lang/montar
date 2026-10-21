@@ -31,7 +31,7 @@ from montar.ui.editor.controller import EditorController
 from montar.ui.editor.controls import ColorSwatches, SliderRow, Tabs, page, section
 from montar.ui.labels import TRANSITIONS
 from montar.ui.text_render import FAMILIES
-from montar.ui.widgets import Segmented, button, label, set_icon
+from montar.ui.widgets import Segmented, button, label, set_icon, shrink
 
 _KIND = {"video": "Clip vidéo", "image": "Image", "audio": "Son"}
 TEXT_COLORS = ("#17261E", "#FFFFFF", "#2F7A56", "#BFE3CF", "#D9EBB9")
@@ -52,7 +52,7 @@ class Inspector(QFrame):
     def __init__(self, controller: EditorController) -> None:
         super().__init__()
         self.setObjectName("Inspector")
-        self.setFixedWidth(320)
+        self.setFixedWidth(340)
         self.controller = controller
         self.clip_id: str | None = None
         self._refreshing = False
@@ -63,7 +63,6 @@ class Inspector(QFrame):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         outer.addWidget(scroll)
         body = QWidget()
-        body.setMaximumWidth(310)  # pas de défilement horizontal
         scroll.setWidget(body)
         layout = QVBoxLayout(body)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -142,7 +141,7 @@ class Inspector(QFrame):
                      lambda c, v: setattr(c.transform, "opacity", v / 100))
         il.addWidget(section(_("AJUSTEMENTS")))
         self.fit = Segmented([("fit", _("Ajuster")), ("fill", _("Remplir")),
-                              ("stretch", _("Étirer"))])
+                              ("stretch", _("Étirer"))], compact=True)
         self.fit.changed.connect(lambda k: self._edit(_("Ajustement"), "fit",
                                                       lambda c: setattr(c.transform, "fit", k)))
         il.addWidget(self.fit)
@@ -160,7 +159,7 @@ class Inspector(QFrame):
             b = button("", "secondary", icon, tooltip=tip)
             set_icon(b, icon, "ink", 18)
             b.clicked.connect(lambda _=False, t=tip, ch=change: self._edit(t, f"tool:{t}", ch))
-            tools.addWidget(b)
+            tools.addWidget(shrink(b))
         il.addLayout(tools)
         il.addWidget(section(_("RECADRAGE")))
         for name, title in (("crop_left", _("Gauche")), ("crop_right", _("Droite")),
@@ -277,7 +276,7 @@ class Inspector(QFrame):
                                                                      align=k))
             self.align_group.addButton(b)
             self._align_buttons[key] = b
-            fmt.addWidget(b)
+            fmt.addWidget(shrink(b))
         self._toggles = {}
         for key, icon, tip in (("italic", "italic", _("Italique")),
                                ("underline", "underline", _("Souligné")),
@@ -287,7 +286,7 @@ class Inspector(QFrame):
             set_icon(b, icon, "ink", 18)
             b.toggled.connect(lambda on, k=key, t=tip: self._edit_text(t, k, **{k: on}))
             self._toggles[key] = b
-            fmt.addWidget(b)
+            fmt.addWidget(shrink(b))
         sl.addLayout(fmt)
         sl.addWidget(label(_("Couleur")))
         self.text_color = ColorSwatches(TEXT_COLORS)
@@ -323,7 +322,7 @@ class Inspector(QFrame):
                            ("animation_out", _("Animation de sortie"))):
             al.addWidget(label(title))
             seg = Segmented([("none", _("Aucune")), ("fade", _("Fondu")),
-                             ("slide", _("Glisser"))])
+                             ("slide", _("Glisser"))], compact=True)
             seg.changed.connect(lambda v, k=key, t=title: self._edit_text(t, k, **{k: v}))
             self._anims[key] = seg
             al.addWidget(seg)

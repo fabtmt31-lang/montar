@@ -4,9 +4,17 @@ from __future__ import annotations
 
 import copy
 
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QLinearGradient, QPainter, QPixmap
-from PyQt6.QtWidgets import QButtonGroup, QFrame, QGridLayout, QLabel, QPushButton, QVBoxLayout
+from PyQt6.QtCore import QMimeData, QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QDrag, QLinearGradient, QPainter, QPixmap
+from PyQt6.QtWidgets import (
+    QApplication,
+    QButtonGroup,
+    QFrame,
+    QGridLayout,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+)
 
 from montar.core.project import Clip, Effects
 from montar.core.timeline import VIDEO_TRANSITIONS
@@ -22,6 +30,37 @@ from montar.ui.theme.icons import pixmap as icon_pixmap
 from montar.ui.widgets import button, label, rounded_pixmap
 
 TILE = QSize(126, 72)
+TRANSITION_MIME = "application/x-montar-transition"  # type de transition glissée
+
+
+class _DragTile(QPushButton):
+    """Tuile qui se glisse vers la timeline (données `mime` → `payload`)."""
+
+    def __init__(self, mime: str, payload: str) -> None:
+        super().__init__()
+        self._mime, self._payload = mime, payload
+        self._press = None
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._press = event.position().toPoint()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if (self._press is not None and event.buttons() & Qt.MouseButton.LeftButton
+                and (event.position().toPoint() - self._press).manhattanLength()
+                >= QApplication.startDragDistance()):
+            self._press = None
+            self.setDown(False)
+            mime = QMimeData()
+            mime.setData(self._mime, self._payload.encode())
+            drag = QDrag(self)
+            drag.setMimeData(mime)
+            drag.setPixmap(self.grab().scaledToWidth(
+                90, Qt.TransformationMode.SmoothTransformation))
+            drag.exec(Qt.DropAction.CopyAction)
+            return
+        super().mouseMoveEvent(event)
 
 
 class _Panel(QFrame):
@@ -40,8 +79,8 @@ class _Panel(QFrame):
         return lbl
 
 
-def _tile(pm: QPixmap, text: str = "") -> QPushButton:
-    b = QPushButton()
+def _tile(pm: QPixmap, text: str = "", button: QPushButton | None = None) -> QPushButton:
+    b = button or QPushButton()
     b.setProperty("variant", "tile")
     b.setCheckable(True)
     b.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -118,8 +157,10 @@ class TransitionsPanel(_Panel):
         self._tiles = []
         for i, kind in enumerate(VIDEO_TRANSITIONS):
             name, icon = TRANSITIONS[kind]
-            tile = _tile(self._icon_tile(icon), _(name))
+            tile = _tile(self._icon_tile(icon), _(name), _DragTile(TRANSITION_MIME, kind))
             tile.setCheckable(False)
+            tile.setToolTip(_("Glissez la transition entre deux clips de la timeline, ou "
+                              "cliquez pour la placer après le clip sélectionné"))
             tile.clicked.connect(lambda _=False, k=kind: self.applyRequested.emit(k))
             grid.addWidget(tile, i // 2, i % 2)
             self._tiles.append(tile)
@@ -156,14 +197,13 @@ class TransitionsPanel(_Panel):
 
     def refresh(self) -> None:
         pair = self.target()
-        for tile in self._tiles:
-            tile.setEnabled(pair is not None)
         if pair is None:
-            self.info.setText(_("Sélectionnez dans la timeline un clip collé à un autre clip, "
-                                "puis choisissez une transition."))
+            self.info.setText(_("Glissez une transition entre deux clips qui se suivent dans "
+                                "la timeline. Un clic la place après le clip sélectionné."))
         else:
-            self.info.setText(_("La transition sera placée entre le clip sélectionné et son "
-                                "voisin. Cliquez dessus dans la timeline pour la régler."))
+            self.info.setText(_("Glissez une transition entre deux clips, ou cliquez pour la "
+                                "placer entre le clip sélectionné et son voisin. Cliquez "
+                                "ensuite sur sa pastille dans la timeline pour la régler."))
 
 
 class FiltersPanel(_Panel):

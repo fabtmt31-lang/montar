@@ -2,6 +2,8 @@
 """Implémentation du moteur avec MLT 7 (bindings Python « mlt7 »)."""
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
 import logging
 import math
 import os
@@ -42,6 +44,38 @@ AUDIO_CHANNELS = 2
 
 # Valeurs de la propriété « hide » d'une piste MLT.
 _HIDE_VIDEO, _HIDE_AUDIO = 1, 2
+
+
+_lib_get_image = None
+
+
+def _native_get_image():
+    """`mlt_frame_get_image` appelé via ctypes : contrairement aux bindings SWIG, l'appel
+    libère le verrou global de Python, et l'interface reste fluide pendant le rendu."""
+    global _lib_get_image
+    if _lib_get_image is None:
+        try:
+            lib = ctypes.CDLL(ctypes.util.find_library("mlt-7") or "libmlt-7.so.7")
+            fn = lib.mlt_frame_get_image
+            fn.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p),
+                           ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
+                           ctypes.POINTER(ctypes.c_int), ctypes.c_int]
+            fn.restype = ctypes.c_int
+            _lib_get_image = fn
+        except (OSError, AttributeError) as exc:
+            log.warning("rendu natif indisponible, repli sur les bindings : %s", exc)
+            _lib_get_image = False
+    return _lib_get_image or None
+
+
+def _structure(spec: TimelineSpec) -> tuple:
+    """Ce qui impose de reconstruire le graphe ; les réglages des clips en sont exclus."""
+    tracks = []
+    for t in spec.tracks:
+        clips = tuple((c.path, c.kind, c.start, c.duration, c.source_in, c.speed, c.media_size)
+                      for c in t.clips)
+        tracks.append((t.kind, t.muted, t.hidden, t.volume, t.transitions, clips))
+    return spec.canvas, tuple(tracks)
 
 
 def _deny_qt5_modules() -> None:
@@ -124,8 +158,12 @@ class _TimelineGraph:
         self.profile = _profile(spec.canvas)
         self.canvas = spec.canvas
         self.length = spec.length
+        self.spec = spec
         self.tractor = mlt.Tractor(self.profile)
         self._keep: list = []
+        # (piste, clip) → (producteur, filtres du clip, intervalle, type de piste)
+        self.nodes: dict[tuple[int, int], tuple[object, list, tuple[int, int], str]] = {}
+        self._collect: list | None = None
 
         background = mlt.Producer(self.profile, "color:black")
         background.set("length", max(1, self.length))
@@ -136,7 +174,7 @@ class _TimelineGraph:
 
         field = self.tractor.field()
         for index, track in enumerate(spec.tracks, start=1):
-            playlist = self._build_track(track)
+            playlist = self._build_track(track, index - 1)
             hide = 0
             if track.kind == "audio" or track.hidden:
                 hide |= _HIDE_VIDEO
@@ -160,7 +198,33 @@ class _TimelineGraph:
 
     # --- pistes ---------------------------------------------------------------------
 
-    def _build_track(self, track: TrackSpec):
+    def update_settings(self, spec: TimelineSpec) -> bool:
+        """Applique de nouveaux réglages de clips sans reconstruire le graphe (curseurs,
+        déplacement dans l'aperçu). Renvoie False si la structure a changé."""
+        if _structure(spec) != _structure(self.spec):
+            return False
+        for ti, (old_track, new_track) in enumerate(zip(self.spec.tracks, spec.tracks,
+                                                         strict=True)):
+            for ci, (old, new) in enumerate(zip(old_track.clips, new_track.clips, strict=True)):
+                if old == new:
+                    continue
+                producer, filters, span, kind = self.nodes[(ti, ci)]
+                for f in filters:
+                    producer.detach(f)
+                self._attach_clip_filters(producer, new, span, kind, (ti, ci))
+        self.spec = spec
+        return True
+
+    def _attach_clip_filters(self, producer, clip: ClipSpec, span: tuple[int, int],
+                             track_kind: str, key: tuple[int, int]) -> None:
+        self._collect = []
+        if track_kind == "video":
+            self._video_filters(producer, clip, span)
+        self._audio_filters(producer, clip, span)
+        self.nodes[key] = (producer, self._collect, span, track_kind)
+        self._collect = None
+
+    def _build_track(self, track: TrackSpec, track_index: int):
         playlist = mlt.Playlist(self.profile)
         transitions = {t.left: t for t in track.transitions}
         cursor = 0  # longueur actuelle de la playlist
@@ -169,7 +233,7 @@ class _TimelineGraph:
             incoming = transitions.get(i - 1)
             if incoming is None and clip.start > cursor:
                 playlist.blank(clip.start - cursor - 1)
-            producer, cut_in = self._clip_producer(clip, track.kind)
+            producer, cut_in = self._clip_producer(clip, track.kind, (track_index, i))
             index_of[i] = playlist.count()
             playlist.append(producer, cut_in, cut_in + clip.duration - 1)
             if incoming is not None:
@@ -217,7 +281,7 @@ class _TimelineGraph:
 
     # --- clips ------------------------------------------------------------------------
 
-    def _clip_producer(self, clip: ClipSpec, track_kind: str):
+    def _clip_producer(self, clip: ClipSpec, track_kind: str, key: tuple[int, int]):
         """Producteur propre au clip, avec ses filtres ; renvoie (producteur, image d'entrée)."""
         if clip.kind in ("video", "audio") and clip.speed != 1.0:
             producer = mlt.Producer(self.profile, f"timewarp:{clip.speed:g}:{clip.path}")
@@ -231,9 +295,7 @@ class _TimelineGraph:
             producer.set("length", clip.duration)
             producer.set_in_and_out(0, clip.duration - 1)
         span = (cut_in, cut_in + clip.duration - 1)
-        if track_kind == "video":
-            self._video_filters(producer, clip, span)
-        self._audio_filters(producer, clip, span)
+        self._attach_clip_filters(producer, clip, span, track_kind, key)
         self._keep.append(producer)
         return producer, cut_in
 
@@ -248,6 +310,8 @@ class _TimelineGraph:
             f.set_in_and_out(*span)
         service.attach(f)
         self._keep.append(f)
+        if self._collect is not None:
+            self._collect.append(f)
         return f
 
     def _video_filters(self, producer, clip: ClipSpec, span: tuple[int, int]) -> None:
@@ -332,10 +396,24 @@ class MltSource(Source):
         tractor.seek(max(0, min(frame, self.length - 1)))
         mlt_frame = tractor.get_frame()
         mlt_frame.set("consumer.rescale", "bilinear")
+        native = _native_get_image()
+        if native is not None:
+            image = ctypes.c_void_p()
+            fmt = ctypes.c_int(mlt.mlt_image_rgba)
+            w, h = ctypes.c_int(width), ctypes.c_int(height)
+            error = native(int(mlt_frame.get_frame()), ctypes.byref(image), ctypes.byref(fmt),
+                           ctypes.byref(w), ctypes.byref(h), 0)
+            if (error or not image.value or fmt.value != mlt.mlt_image_rgba
+                    or (w.value, h.value) != (width, height)):
+                raise SourceError("image non disponible")
+            return ctypes.string_at(image.value, expected)
         data = mlt_frame.get_image(mlt.mlt_image_rgba, width, height)
         if data is None or len(data) < expected:
             raise SourceError("image non disponible")
         return bytes(data[:expected])
+
+    def update(self, spec: TimelineSpec) -> bool:
+        return self._graph.update_settings(spec)
 
     def close(self) -> None:
         self._graph = None

@@ -148,9 +148,11 @@ class EditorPage(QWidget):
             lambda msg: QMessageBox.information(self, _("Action impossible"), msg))
         self.timeline.view.seekRequested.connect(self.player.seek)
         self.player.frameReady.connect(self._on_frame)
-        self._load_timer = QTimer(self)  # regroupe les reconstructions pendant un réglage
+        # Limite les mises à jour de l'aperçu pendant un réglage (sans attendre la fin du
+        # geste : l'aperçu suit le curseur ou la souris).
+        self._load_timer = QTimer(self)
         self._load_timer.setSingleShot(True)
-        self._load_timer.setInterval(40)
+        self._load_timer.setInterval(30)
         self._load_timer.timeout.connect(self._reload_player)
 
         self._save_timer = QTimer(self)
@@ -447,7 +449,8 @@ class EditorPage(QWidget):
         if media_ids != self._shown_media:
             self._shown_media = media_ids
             self.media_panel.set_media(self.project.media, self.thumbnails)
-        self._load_timer.start()
+        if not self._load_timer.isActive():
+            self._load_timer.start()
         if self.controller.selected_transition:
             self._on_transition_selected(self.controller.selected_transition)
         else:

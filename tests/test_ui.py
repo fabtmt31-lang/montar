@@ -294,3 +294,56 @@ def test_detach_audio_from_menu_logic(window, media_dir):
     assert editor.controller.timeline.track(audio.track_id).kind == "audio"
     editor.controller.undo()
     assert len(editor.project.clips) == 1 and editor.project.clips[0].volume == 1.0
+
+
+@needs_ffmpeg
+def test_transition_drop_on_junction(window, media_dir):
+    from PyQt6.QtCore import QMimeData
+    from PyQt6.QtGui import QDropEvent
+
+    from montar.ui.editor.panels import TRANSITION_MIME
+
+    editor = imported_editor(window, media_dir, ["red.mp4", "blue.mp4", "photo.png"])
+    red, blue, photo = editor.project.media
+    for m in (red, blue, photo):
+        editor.add_to_timeline(m)
+    a, b, c = editor.project.clips
+    view = editor.timeline.view
+    view.snap = False
+    rect_b = view.clip_rect(b)
+    # près de la jonction b|c (et non a|b) : la transition va entre b et c
+    near_bc = QPoint(int(rect_b.right()) - 6, int(rect_b.center().y()))
+    assert view.junction_at(near_bc) == (b, c)
+    assert view.junction_at(QPoint(int(rect_b.center().x()), int(rect_b.center().y()))) is None
+    mime = QMimeData()
+    mime.setData(TRANSITION_MIME, b"dip_black")
+    event = QDropEvent(QPointF(near_bc), Qt.DropAction.CopyAction, mime,
+                       Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    view.dropEvent(event)
+    t = editor.project.transitions[0]
+    assert (t.left_id, t.right_id, t.kind) == (b.id, c.id, "dip_black")
+    assert editor.controller.selected_transition == t.id
+
+
+@needs_ffmpeg
+def test_preview_follows_drag(window, media_dir):
+    editor = imported_editor(window, media_dir, ["clip.mp4", "photo.png"])
+    clip_media, photo = editor.project.media
+    editor.add_to_timeline(clip_media)
+    v2 = editor.controller.edit("piste", lambda t: t.add_track("video"))
+    editor.timeline.view.add_media(photo, v2.id, 0)
+    image_clip = editor.controller.selected_clip()
+    editor.player.seek(5)
+    assert wait_until(lambda: editor.player.length > 0)
+    pump(300)
+    frames = []
+    editor.player.frameReady.connect(lambda img, f: frames.append(f))
+    for i in range(1, 16):
+        editor._on_preview_drag("move", QPointF(600, 300), QPointF(600 + 10 * i, 300))
+        pump(40)
+    editor.preview.canvas.dragFinished.emit()
+    assert len(frames) >= 5  # l'aperçu est mis à jour pendant le geste
+    assert image_clip.transform.x == pytest.approx(150 / editor.project.canvas_size[0], abs=1e-3)
+    editor.controller.undo()  # tout le geste = une seule étape
+    assert editor.controller.selected_clip() is None or \
+        editor.project.clips[-1].transform.x == 0

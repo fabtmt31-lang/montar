@@ -30,6 +30,7 @@ from montar.i18n import _
 from montar.media.waveform import PEAKS_PER_SECOND
 from montar.ui.editor.controller import EditorController
 from montar.ui.editor.media_panel import MEDIA_MIME
+from montar.ui.editor.panels import TRANSITION_MIME
 from montar.ui.theme import theme
 from montar.ui.theme.icons import pixmap as icon_pixmap
 from montar.ui.theme.tokens import FONT_MONO, FONT_UI
@@ -80,6 +81,7 @@ class TimelineView(QAbstractScrollArea):
         self.snap = True
         self._drag: _Drag | None = None
         self._drop: tuple[str | None, int, int, str] | None = None  # piste, début, durée, type
+        self._junction: tuple[Clip, Clip] | None = None  # jonction visée par une transition
         self._hover_header: tuple[str, str] | None = None
         self.setAcceptDrops(True)
         self.viewport().setMouseTracking(True)
@@ -261,6 +263,8 @@ class TimelineView(QAbstractScrollArea):
             painter.drawText(QRect(HEADER_W, RULER_H, w - HEADER_W, h - RULER_H),
                              Qt.AlignmentFlag.AlignCenter,
                              _("Glissez ici un média du panneau « Médias du projet »"))
+        if self._junction is not None:
+            self._paint_junction(painter, self._junction)
         if self._drop is not None:
             track_id, start, duration, kind = self._drop
             self._paint_drop(painter, track_id, start, duration, kind, rows)
@@ -851,11 +855,58 @@ class TimelineView(QAbstractScrollArea):
         media_id = bytes(event.mimeData().data(MEDIA_MIME)).decode()
         return self.controller.project.find_media(media_id)
 
+    # --- dépôt de transitions sur une jonction --------------------------------------------
+
+    def junction_at(self, pos: QPoint) -> tuple[Clip, Clip] | None:
+        """Paire de clips collés dont la jonction est la plus proche du pointeur (≤ 40 px)."""
+        row = self.row_at(pos.y())
+        if row is None or pos.x() < HEADER_W:
+            return None
+        timeline = self.controller.timeline
+        best, best_dist = None, 40.0
+        clips = timeline.clips_on(row.track.id)
+        for left, right in zip(clips, clips[1:], strict=False):
+            if right.start != left.end or timeline.transition_after(left.id) is not None:
+                continue
+            dist = abs(self.frame_to_x(left.end) - pos.x())
+            if dist < best_dist:
+                best, best_dist = (left, right), dist
+        return best
+
+    def _dragged_transition(self, event) -> str | None:
+        if not event.mimeData().hasFormat(TRANSITION_MIME):
+            return None
+        return bytes(event.mimeData().data(TRANSITION_MIME)).decode()
+
+    def _paint_junction(self, painter: QPainter, pair: tuple[Clip, Clip]) -> None:
+        p = theme().palette
+        rect = self.clip_rect(pair[0])
+        if rect is None:
+            return
+        x = rect.right()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(p.forest))
+        painter.drawRoundedRect(QRectF(x - 2, rect.top() - 4, 4, rect.height() + 8), 2, 2)
+        badge = QRectF(x - 14, rect.center().y() - 12, 28, 24)
+        painter.setBrush(QColor(p.surface))
+        painter.setPen(QPen(QColor(p.forest), 2))
+        painter.drawRoundedRect(badge, 8, 8)
+        painter.drawPixmap(int(badge.center().x()) - 8, int(badge.center().y()) - 8,
+                           icon_pixmap("blend", p.forest, 16))
+
     def dragEnterEvent(self, event) -> None:  # noqa: N802
-        if self._dragged_media(event) is not None:
+        if self._dragged_media(event) is not None or self._dragged_transition(event):
             event.acceptProposedAction()
 
     def dragMoveEvent(self, event) -> None:  # noqa: N802
+        if self._dragged_transition(event):
+            self._junction = self.junction_at(event.position().toPoint())
+            self.viewport().update()
+            if self._junction is not None:
+                event.acceptProposedAction()
+            else:
+                event.ignore()
+            return
         media = self._dragged_media(event)
         if media is None:
             return
@@ -866,9 +917,19 @@ class TimelineView(QAbstractScrollArea):
 
     def dragLeaveEvent(self, event) -> None:  # noqa: N802
         self._drop = None
+        self._junction = None
         self.viewport().update()
 
     def dropEvent(self, event) -> None:  # noqa: N802
+        kind = self._dragged_transition(event)
+        if kind:
+            self._junction = None
+            pair = self.junction_at(event.position().toPoint())
+            self.viewport().update()
+            if pair is not None:
+                self.add_transition(pair[0].id, pair[1].id, kind)
+                event.acceptProposedAction()
+            return
         media = self._dragged_media(event)
         self._drop = None
         if media is None:
@@ -876,6 +937,12 @@ class TimelineView(QAbstractScrollArea):
         track_id, start, duration = self._drop_target(event.position().toPoint(), media)
         self.add_media(media, track_id, start)
         event.acceptProposedAction()
+
+    def add_transition(self, left_id: str, right_id: str, kind: str) -> None:
+        transition = self.controller.edit(_("Ajouter une transition"),
+                                          lambda t: t.add_transition(left_id, right_id, kind))
+        if transition is not None:
+            self.controller.select_transition(transition.id)
 
     def add_media(self, media: MediaItem, track_id: str | None, start: int | None) -> None:
         def operation(t):

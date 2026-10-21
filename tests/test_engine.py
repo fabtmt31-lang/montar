@@ -241,3 +241,34 @@ def test_volume_and_audio_build(engine, media_dir):
         out.start(0)
         out.stop()
         out.close()
+
+
+def test_settings_update_without_rebuild(engine, media_dir):
+    blue = str(media_dir / "blue.mp4")
+    clip = ClipSpec(blue, "video", 0, 20, media_size=(64, 36))
+    src = engine.build(spec(video(clip)))
+    assert near(rgb(src, 5, 4, 4), BLUE)
+    smaller = ClipSpec(blue, "video", 0, 20, media_size=(64, 36), transform=Transform(scale=0.5))
+    assert src.update(spec(video(smaller)))  # même structure : mise à jour sur place
+    assert rgb(src, 5, 4, 4) == BLACK and near(rgb(src, 5), BLUE)
+    grey = ClipSpec(blue, "video", 0, 20, media_size=(64, 36), color=ColorAdjust(saturation=-1))
+    assert src.update(spec(video(grey)))
+    r, g, b = rgb(src, 5)
+    assert abs(r - b) < 20 and rgb(src, 5, 4, 4) != BLACK  # filtres précédents retirés
+    longer = ClipSpec(blue, "video", 0, 30, media_size=(64, 36))
+    assert not src.update(spec(video(longer)))  # durée changée : reconstruction nécessaire
+
+
+def test_placement_is_independent_of_preview_size(engine, media_dir):
+    """L'aperçu est rendu plus petit que la toile : le placement doit rester proportionnel."""
+    blue = str(media_dir / "blue.mp4")
+    t = Transform(scale=0.5, x=0.25, y=-0.1)
+    src = engine.build(spec(video(ClipSpec(blue, "video", 0, 10, media_size=(64, 36),
+                                           transform=t)), w=1280, h=720))
+    p = placement(1280, 720, 64, 36, t)
+    for w, h in ((1280, 720), (640, 360), (320, 180)):
+        data = src.render(0, w, h)
+        k = w / 1280
+        inside = pixel(data, w, int(p.cx * k), int(p.cy * k))[:3]
+        outside = pixel(data, w, int((p.left - 10) * k), int(p.cy * k))[:3]
+        assert near(inside, BLUE) and outside == BLACK, (w, h)

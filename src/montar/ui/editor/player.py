@@ -35,6 +35,7 @@ class PlaybackWorker(QObject):
         self._size = (320, 180)
         self._position = 0
         self._pending_seek: int | None = None
+        self._pending_spec: TimelineSpec | None = None
         self._playing = False
         self._play_origin = (0.0, 0)  # (instant, image) du début de lecture sans son
         self._timer: QTimer | None = None
@@ -56,6 +57,31 @@ class PlaybackWorker(QObject):
 
     @pyqtSlot(object)
     def load(self, spec: TimelineSpec) -> None:
+        # Les demandes accumulées pendant un rendu sont regroupées : seule la dernière compte.
+        first = self._pending_spec is None
+        self._pending_spec = spec
+        if first:
+            QTimer.singleShot(0, self._apply_load)
+
+    def _apply_load(self) -> None:
+        spec, self._pending_spec = self._pending_spec, None
+        if spec is None:
+            return
+        if self._source is not None and self._spec is not None and self._source.update(spec):
+            # seuls des réglages de clips ont changé : pas de reconstruction
+            self._spec = spec
+            self._audio_stale = True
+            if self._playing:
+                self._position = self._clock()
+                if self._audio is not None:
+                    self._audio.stop()
+                self._start_clock()
+            else:
+                self._render(self._position)
+            return
+        self._rebuild(spec)
+
+    def _rebuild(self, spec: TimelineSpec) -> None:
         """Reconstruit la timeline ; une lecture en cours continue sans interruption visible."""
         was_playing = self._playing
         if was_playing:  # pause silencieuse : l'interface reste en mode lecture

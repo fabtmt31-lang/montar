@@ -8,7 +8,7 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
 
 ## État d'avancement
 
-**Jalon J2 — édition de base** (version 0.3.0) :
+**Jalon J2 — édition de base** (version 0.3.1) :
 
 - inspecteur du clip, onglets **Image** (position, échelle, rotation, opacité,
   ajuster / remplir / étirer, retournement, recadrage, fondus), **Audio** (volume, couper le
@@ -17,7 +17,8 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
 - panneau **Filtres** : noir et blanc, noir intense, sépia, vintage, chaud, froid, éclatant,
   délavé, avec intensité ; panneau **Effets** : flou, netteté, vignettage ;
 - panneau **Transitions** : fondu enchaîné, fondu au noir, fondu au blanc, balayages,
-  glissements, zoom ; durée réglable dans l'inspecteur ;
+  glissements, zoom, à glisser sur la jonction entre deux clips ; durée réglable dans
+  l'inspecteur ;
 - panneau **Texte** : 4 styles de titres et 4 bandeaux (maquette 03), police, taille, graisse,
   alignement, couleur, interlettrage, contour, ombre, bandeau, animations d'entrée et de
   sortie ; le texte se déplace et se redimensionne directement dans l'aperçu ;
@@ -43,7 +44,7 @@ Pas encore disponible : effet Timelapse et modules (J3), export (J4).
 ## Installer le paquet
 
 ```sh
-sudo apt install ./montar_0.3.0_all.deb
+sudo apt install ./montar_0.3.1_all.deb
 ```
 
 Le paquet est produit par l'intégration continue (onglet *Actions* de GitHub, artefacts

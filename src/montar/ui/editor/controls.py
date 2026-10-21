@@ -141,8 +141,7 @@ class Tabs(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
-        self.bar = Segmented([(key, text) for key, text, _w in pages])
-        self.bar.setProperty("compact", True)
+        self.bar = Segmented([(key, text) for key, text, _w in pages], compact=True)
         layout.addWidget(self.bar)
         self.stack = QStackedWidget()
         self._index = {}

@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QWidget,
 )
 
@@ -49,6 +50,15 @@ def set_icon(button: QAbstractButton, name: str, role: str = "ink", size: int = 
     _IconBinder(button, name, role)
 
 
+def shrink(widget: QWidget) -> QWidget:
+    """Le widget accepte d'être plus étroit que son contenu (panneaux de largeur fixe)."""
+    policy = widget.sizePolicy()
+    policy.setHorizontalPolicy(QSizePolicy.Policy.Ignored)
+    widget.setSizePolicy(policy)
+    widget.setMinimumWidth(0)
+    return widget
+
+
 def label(text: str = "", role: str | None = None, parent: QWidget | None = None) -> QLabel:
     lbl = QLabel(text, parent)
     if role:
@@ -83,9 +93,11 @@ class Segmented(QFrame):
     changed = pyqtSignal(str)
 
     def __init__(self, options: Sequence[tuple[str, str]], current: str | None = None,
-                 parent: QWidget | None = None) -> None:
+                 parent: QWidget | None = None, compact: bool = False) -> None:
         super().__init__(parent)
         self.setObjectName("Segmented")
+        if compact:  # se partage la largeur disponible au lieu d'imposer la sienne
+            self.setProperty("compact", True)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(2)
@@ -97,6 +109,8 @@ class Segmented(QFrame):
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(lambda _=False, k=key: self.changed.emit(k))
+            if compact:
+                shrink(btn)
             self._group.addButton(btn)
             layout.addWidget(btn)
             self._buttons[key] = btn

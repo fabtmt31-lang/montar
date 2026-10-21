@@ -138,6 +138,10 @@ class Source(ABC):
     def render(self, frame: int, width: int, height: int) -> bytes:
         """Image `frame` en RGBA 8 bits, de taille width × height (toile entière)."""
 
+    def update(self, spec: TimelineSpec) -> bool:
+        """Applique une timeline de même structure sans reconstruction ; False sinon."""
+        return False
+
     def close(self) -> None:  # noqa: B027 - implémentation facultative
         pass
 
