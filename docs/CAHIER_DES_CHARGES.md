@@ -1,7 +1,12 @@
-# Cahier des charges — Montar
+# Cahier des charges — montar
 
 > Logiciel de montage vidéo de bureau, simple et local, extensible par modules.
-> Version du document : 0.1 (brouillon initial) — 21/10/2026
+> Version du document : 0.2 — 21/10/2026
+>
+> | Version | Modifications |
+> |---------|---------------|
+> | 0.1 | Brouillon initial |
+> | 0.2 | Décisions actées (§8) : licence GPLv3, nom « montar », développement en Python, pas de bibliothèque de ressources fournie, cibles Debian / Ubuntu / Mint. Intégration des maquettes d'interface et de la charte graphique (§6). |
 
 ---
 
@@ -17,16 +22,18 @@ et ne sont pas disponibles nativement sous Linux.
 |---|----------|
 | O1 | Proposer un éditeur vidéo **simple**, au niveau fonctionnel de Clipchamp (fonctions de base). |
 | O2 | Fonctionner **100 % en local** : aucun compte, aucune connexion obligatoire, aucun envoi de média vers un drive. |
-| O3 | Cibler **Linux en premier** (paquet `.deb`), puis **Windows** (installeur `.exe`/`.msi`). |
-| O4 | Être **extensible par modules** (effets, transitions, formats d'export, outils) sans recompiler l'application. |
+| O3 | Cibler **Linux en premier** — Debian, Ubuntu, Linux Mint (paquet `.deb`) —, puis **Windows** (installeur). |
+| O4 | Être **extensible par modules** (effets, transitions, formats d'export, outils) écrits en Python, sans recompiler ni réinstaller l'application. |
 | O5 | Fournir dès la v1 un **effet Timelapse** applicable à une **portion** d'une vidéo. |
+| O6 | Logiciel **libre sous licence GPLv3**. |
 
 ### 1.3 Hors périmètre (v1)
 - Montage collaboratif / temps réel à plusieurs.
-- Stockage cloud intégré (l'utilisateur reste libre de travailler dans un dossier synchronisé, mais l'application ne l'exige pas).
+- Stockage cloud intégré et liens de partage en ligne (l'utilisateur reste libre de travailler dans un dossier synchronisé, mais l'application ne l'exige pas).
+- **Bibliothèque de ressources fournie** (musiques, sons, autocollants, fonds, vidéos d'illustration) : l'utilisateur importe ses propres médias. L'architecture doit permettre d'en ajouter une plus tard sous forme de module.
 - Fonctions IA nécessitant un service en ligne.
 - Compositing avancé (keying 3D, suivi de mouvement, étalonnage professionnel).
-- Version macOS (envisageable plus tard, l'architecture ne doit pas l'empêcher).
+- Autres distributions Linux (Fedora, Arch, openSUSE…) et macOS : envisageables plus tard, l'architecture ne doit pas l'empêcher.
 
 ---
 
@@ -34,7 +41,7 @@ et ne sont pas disponibles nativement sous Linux.
 
 - **Utilisateur occasionnel** : monte des vidéos de vacances, tutoriels, vidéos pour réseaux sociaux.
 - **Créateur de contenu débutant** : besoin de titres, musique, sous-titres, export vertical (9:16).
-- **Développeur / contributeur** : souhaite ajouter un module (effet, export) via une API documentée.
+- **Développeur / contributeur** : souhaite ajouter un module (effet, export) en Python via une API documentée.
 
 Hypothèses : aucune compétence technique requise pour l'utilisateur final ; interface en français et en anglais dès la v1.
 
@@ -43,91 +50,104 @@ Hypothèses : aucune compétence technique requise pour l'utilisateur final ; in
 ## 3. Exigences fonctionnelles
 
 Priorités : **P1** = indispensable v1 · **P2** = souhaitable v1 · **P3** = versions ultérieures.
+La colonne « Écran » renvoie aux maquettes du §6.
 
-### 3.1 Gestion de projet
-| ID | Exigence | Prio |
-|----|----------|------|
-| F-PRJ-01 | Créer, ouvrir, enregistrer, « enregistrer sous » un projet dans un fichier local (`.montar`). | P1 |
-| F-PRJ-02 | Choisir le format du projet : 16:9, 9:16, 1:1, 4:5, 21:9 ; résolution et fréquence d'images (24/25/30/50/60 i/s). | P1 |
-| F-PRJ-03 | Sauvegarde automatique périodique + récupération après plantage. | P1 |
-| F-PRJ-04 | Liste des projets récents sur l'écran d'accueil (avec vignette). | P1 |
-| F-PRJ-05 | Les médias sont **référencés** (non copiés) ; option « Rassembler le projet » pour copier tous les médias dans un dossier (archivage / transfert). | P2 |
-| F-PRJ-06 | Détection des médias manquants et outil de reliaison. | P1 |
-| F-PRJ-07 | Annuler / Rétablir illimité (dans la limite de la session). | P1 |
+### 3.1 Écran d'accueil et gestion de projet
+| ID | Exigence | Prio | Écran |
+|----|----------|------|-------|
+| F-PRJ-01 | Créer, ouvrir, enregistrer, « enregistrer sous » un projet dans un fichier local (`.montar`). | P1 | — |
+| F-PRJ-02 | Dialogue « Nouveau projet » : nom, format (16:9 Paysage, 9:16 Vertical, 1:1 Carré, 4:5 Portrait, 21:9 Cinéma), résolution (720p, 1080p, 4K), images par seconde (24, 25, 30, 60), récapitulatif de la taille de la toile. Le format reste modifiable ensuite. | P1 | 04 |
+| F-PRJ-03 | Sauvegarde automatique périodique (par défaut toutes les 2 min) + récupération après plantage. | P1 | 06 |
+| F-PRJ-04 | Accueil : message de bienvenue, tuiles de création rapide (Nouveau projet, Paysage 16:9, Vertical 9:16, Carré 1:1), **projets récents** avec vignette, durée, date de modification et format ; affichage grille / liste. | P1 | 01 |
+| F-PRJ-05 | Barre de recherche locale (projets, modèles, médias). | P2 | 01 |
+| F-PRJ-06 | Navigation latérale : Accueil, Mes projets, Modèles, Médiathèque, Kit de marque, Corbeille, Préférences. | P1 (Accueil, Mes projets, Médiathèque, Corbeille, Préférences) / P2 (Modèles) / P3 (Kit de marque) | 01 |
+| F-PRJ-07 | **Corbeille** : un projet supprimé y reste jusqu'à vidage manuel (ou après 30 jours, réglable). | P2 | 01 |
+| F-PRJ-08 | Indicateur d'**espace disque local** utilisé par montar (cache, proxys, sauvegardes) par rapport à l'espace libre du disque — et non un quota cloud. | P2 | 01 |
+| F-PRJ-09 | Les médias sont **référencés** (non copiés) ; option « Rassembler le projet » pour copier tous les médias dans un dossier (archivage / transfert). | P2 | — |
+| F-PRJ-10 | Détection des médias manquants et outil de reliaison. | P1 | — |
+| F-PRJ-11 | Annuler / Rétablir illimité (dans la limite de la session), boutons dans l'en-tête de l'éditeur. | P1 | 02 |
+| F-PRJ-12 | **Modèles** : enregistrer un projet comme modèle et créer un projet à partir d'un modèle (« Partir d'un modèle »). Aucun modèle fourni n'est exigé ; quelques modèles minimaux de démonstration (intro titre, outro, story verticale) sont acceptés s'ils n'utilisent aucun média externe. | P2 | 01, 04 |
+| F-PRJ-13 | **Kit de marque** : logos, couleurs, polices de l'utilisateur, réutilisables dans les projets. | P3 | 01 |
+| F-PRJ-14 | Notifications locales (cloche) : export terminé, proxys prêts, erreur de module. | P2 | 01 |
 
 ### 3.2 Bibliothèque de médias
-| ID | Exigence | Prio |
-|----|----------|------|
-| F-MED-01 | Import par glisser-déposer ou sélecteur de fichiers : vidéo, audio, image. | P1 |
-| F-MED-02 | Formats d'entrée minimaux : MP4 (H.264/H.265), MOV, MKV, WebM, AVI ; MP3, WAV, AAC, FLAC, OGG ; JPG, PNG, WebP, GIF. | P1 |
-| F-MED-03 | Vignettes, durée, résolution affichées ; aperçu au survol. | P1 |
-| F-MED-04 | Génération de **proxys** (copies basse résolution) pour les fichiers lourds (4K), en tâche de fond. | P2 |
-| F-MED-05 | Enregistrement webcam / micro / écran local. | P3 |
+| ID | Exigence | Prio | Écran |
+|----|----------|------|-------|
+| F-MED-01 | Import par glisser-déposer, bouton « Importer » de l'accueil ou « Importer des fichiers » du panneau Médias : vidéo, audio, image. | P1 | 01, 02 |
+| F-MED-02 | Formats d'entrée minimaux : MP4 (H.264/H.265), MOV, MKV, WebM, AVI ; MP3, WAV, AAC, FLAC, OGG ; JPG, PNG, WebP, GIF. | P1 | — |
+| F-MED-03 | Panneau « Médias du projet » : vignettes, durée, nombre d'éléments, filtres Tout / Vidéos / Images / Sons. Aperçu au survol. | P1 | 02 |
+| F-MED-04 | **Médiathèque** globale : médias déjà utilisés dans les projets, réutilisables (index local, aucun fichier copié). | P2 | 01 |
+| F-MED-05 | Génération de **proxys** (copies basse résolution) pour les fichiers lourds (4K), en tâche de fond. | P2 | — |
+| F-MED-06 | « Enregistrer l'écran » (écran + webcam) et voix off (micro), en local. | P3 (écran) / P2 (voix off, cf. F-AUD-04) | 01, 02 |
 
-### 3.3 Timeline (frise chronologique)
-| ID | Exigence | Prio |
-|----|----------|------|
-| F-TL-01 | Pistes multiples : vidéo/image, texte, audio (nombre non limité arbitrairement). | P1 |
-| F-TL-02 | Ajout de clips par glisser-déposer depuis la bibliothèque. | P1 |
-| F-TL-03 | Déplacer, rogner (début/fin), **scinder** au curseur (raccourci `S`), supprimer, dupliquer. | P1 |
-| F-TL-04 | Suppression avec fermeture automatique de l'espace (« ripple delete »). | P1 |
-| F-TL-05 | Magnétisme (aimantation aux bords des clips et au curseur), activable/désactivable. | P1 |
-| F-TL-06 | Zoom de la timeline, défilement, « ajuster à la fenêtre ». | P1 |
-| F-TL-07 | Sélection d'une **plage** (point d'entrée / point de sortie) sur un clip — utilisée notamment par le Timelapse. | P1 |
-| F-TL-08 | Verrouiller / masquer / couper le son d'une piste. | P2 |
-| F-TL-09 | Affichage des formes d'onde audio. | P1 |
-| F-TL-10 | Marqueurs nommés. | P2 |
+### 3.3 Timeline (ligne de temps)
+| ID | Exigence | Prio | Écran |
+|----|----------|------|-------|
+| F-TL-01 | Pistes multiples typées et nommées : Texte (T*n*), Vidéo / Incrustation (V*n*), Musique / Voix off (A*n*). Nombre non limité arbitrairement. | P1 | 02 |
+| F-TL-02 | Ajout de clips par glisser-déposer depuis les panneaux. | P1 | 02 |
+| F-TL-03 | Barre d'outils : sélection, ciseaux / **scinder** au curseur (raccourci `S`), scinder à la sélection, supprimer, magnétisme, marqueur, enregistrement voix off ; curseur de zoom. | P1 | 02 |
+| F-TL-04 | Déplacer, rogner (poignées début/fin), dupliquer. | P1 | 02 |
+| F-TL-05 | Suppression avec fermeture automatique de l'espace (« ripple delete »). | P1 | — |
+| F-TL-06 | Magnétisme (aimantation aux bords des clips et à la tête de lecture), activable/désactivable, état par défaut réglable. | P1 | 02, 06 |
+| F-TL-07 | Zoom de la timeline, défilement, « ajuster à la fenêtre ». | P1 | 02 |
+| F-TL-08 | Sélection d'une **plage** (point d'entrée / point de sortie) sur un clip — utilisée notamment par le Timelapse. | P1 | — |
+| F-TL-09 | Masquer (œil) / verrouiller / couper le son d'une piste. | P2 | 02 |
+| F-TL-10 | Formes d'onde sur les clips audio ; option d'affichage sous les clips vidéo. | P1 | 02, 06 |
+| F-TL-11 | Marqueurs nommés. | P2 | 02 |
+| F-TL-12 | Code couleur des clips conforme à la charte (§6.2) ; clip sélectionné mis en évidence par une bordure. | P1 | 07 |
 
 ### 3.4 Lecteur / prévisualisation
-| ID | Exigence | Prio |
-|----|----------|------|
-| F-PRV-01 | Lecture temps réel de la timeline avec son, en résolution réduite si nécessaire. | P1 |
-| F-PRV-02 | Navigation image par image, raccourcis J/K/L, espace = lecture/pause. | P1 |
-| F-PRV-03 | Choix de la qualité d'aperçu (Complète, 1/2, 1/4). | P1 |
-| F-PRV-04 | Manipulation directe dans l'aperçu : déplacer / redimensionner / pivoter un clip, un texte, une image. | P1 |
-| F-PRV-05 | Mode plein écran. | P2 |
+| ID | Exigence | Prio | Écran |
+|----|----------|------|-------|
+| F-PRV-01 | Lecture temps réel de la timeline avec son, en résolution réduite si nécessaire. | P1 | 02 |
+| F-PRV-02 | Timecode `hh:mm:ss:ii` (police à chasse fixe), précédent / lecture / suivant, volume, plein écran. Raccourcis J/K/L, espace = lecture/pause, flèches = image par image. | P1 | 02 |
+| F-PRV-03 | Qualité d'aperçu : Basse, Moyenne, Pleine (défaut réglable dans les préférences). Bouton « Ajuster » (zoom de l'aperçu). | P1 | 02, 06 |
+| F-PRV-04 | Manipulation directe dans l'aperçu : poignées pour déplacer / redimensionner / pivoter un clip, un texte, une image. | P1 | 02, 03 |
+| F-PRV-05 | Affichage optionnel de la **zone de sécurité** (titres). | P2 | 03 |
 
-### 3.5 Édition de base des clips (équivalent Clipchamp)
-| ID | Exigence | Prio |
-|----|----------|------|
-| F-EDT-01 | Recadrage (crop), rotation, retournement horizontal/vertical. | P1 |
-| F-EDT-02 | Redimensionnement : ajuster / remplir / étirer ; position libre. | P1 |
-| F-EDT-03 | Vitesse de clip constante (0,1× à 16×). | P1 |
-| F-EDT-04 | Réglages de couleur simples : luminosité, contraste, saturation, température, exposition. | P1 |
-| F-EDT-05 | Filtres prédéfinis (noir et blanc, sépia, vintage, froid, chaud…). | P1 |
-| F-EDT-06 | Opacité et fondu d'entrée / de sortie (vidéo et audio). | P1 |
-| F-EDT-07 | Effets simples : flou, vignettage, netteté, zoom lent (« Ken Burns ») sur image. | P2 |
-| F-EDT-08 | Incrustation d'image (picture-in-picture) via pistes superposées. | P1 |
-| F-EDT-09 | Image fixe (« freeze frame ») à la position du curseur. | P2 |
-| F-EDT-10 | Lecture inversée. | P2 |
-| F-EDT-11 | Images clés (keyframes) sur position, échelle, opacité. | P3 |
-| F-EDT-12 | Fond vert (chroma key) basique. | P3 |
-| F-EDT-13 | Stabilisation vidéo (traitement local). | P3 |
+### 3.5 Inspecteur et édition des clips (équivalent Clipchamp)
+L'inspecteur (panneau de droite) affiche le nom, le type et la durée du clip sélectionné, et des onglets **Image / Audio / Vitesse / Couleur** (vidéo) ou **Style / Animation / Position** (texte).
+
+| ID | Exigence | Prio | Écran |
+|----|----------|------|-------|
+| F-EDT-01 | **Transformation** : position X/Y, échelle, rotation, opacité (champs numériques + curseurs). | P1 | 02 |
+| F-EDT-02 | **Ajustements** : rotation 90°, retournement horizontal/vertical, recadrage (crop), ajuster / remplir / étirer. | P1 | 02 |
+| F-EDT-03 | Onglet **Vitesse** : vitesse constante (0,1× à 16×), lecture inversée, accès à l'effet **Timelapse** (§3.9). | P1 (vitesse, Timelapse) / P2 (inversée) | 02 |
+| F-EDT-04 | Onglet / mode **Couleur** : luminosité, contraste, saturation, température, exposition. | P1 | 02 |
+| F-EDT-05 | Panneau **Filtres** : filtres prédéfinis (noir et blanc, sépia, vintage, froid, chaud…) avec intensité. | P1 | 02 |
+| F-EDT-06 | Fondu d'entrée / de sortie (vidéo et audio). | P1 | — |
+| F-EDT-07 | Panneau **Effets** : flou, vignettage, netteté, zoom lent (« Ken Burns ») sur image. | P2 | 02 |
+| F-EDT-08 | Incrustation d'image / vidéo (picture-in-picture) via pistes superposées. | P1 | 02 |
+| F-EDT-09 | Image fixe (« freeze frame ») à la position du curseur. | P2 | — |
+| F-EDT-10 | **Images clés** (bouton « + Ajouter ») sur position, échelle, rotation, opacité. | P2 | 02 |
+| F-EDT-11 | Fond vert (chroma key) basique. | P3 | — |
+| F-EDT-12 | Stabilisation vidéo (traitement local). | P3 | — |
 
 ### 3.6 Transitions
-| ID | Exigence | Prio |
-|----|----------|------|
-| F-TRN-01 | Transitions entre deux clips adjacents : fondu enchaîné, fondu au noir/blanc, glissement, balayage, zoom. | P1 |
-| F-TRN-02 | Durée réglable par glisser ou saisie. | P1 |
+| ID | Exigence | Prio | Écran |
+|----|----------|------|-------|
+| F-TRN-01 | Panneau **Transitions** : fondu enchaîné, fondu au noir/blanc, glissement, balayage, zoom ; application par glisser-déposer entre deux clips adjacents. | P1 | 02 |
+| F-TRN-02 | Durée réglable par glisser ou saisie. | P1 | — |
 
 ### 3.7 Texte et titres
-| ID | Exigence | Prio |
-|----|----------|------|
-| F-TXT-01 | Ajout de textes sur une piste dédiée ; police, taille, couleur, contour, ombre, fond, alignement. | P1 |
-| F-TXT-02 | Modèles de titres (titre, sous-titre, bas de vignette / « lower third »). | P1 |
-| F-TXT-03 | Animations d'entrée/sortie simples (fondu, glissement, machine à écrire). | P2 |
-| F-TXT-04 | Import / export de sous-titres SRT ; sous-titres incrustés ou piste séparée à l'export. | P2 |
-| F-TXT-05 | Transcription automatique **locale** (module optionnel, modèle de reconnaissance vocale hors ligne). | P3 |
+| ID | Exigence | Prio | Écran |
+|----|----------|------|-------|
+| F-TXT-01 | Panneau **Texte** : « Ajouter une zone de texte » ; styles de **titres** (Titre, GRAS, Manuscrit, Néon doux) ; **bandeaux & sous-titres** (Nom · Rôle, Sous-titre, Info défilante, S'abonner). Ces styles sont de simples préréglages (police, taille, couleurs, fond) et non des ressources externes. | P1 | 03 |
+| F-TXT-02 | Onglet **Style** : police (polices système + polices embarquées, §6.2), taille, graisse, alignement gauche/centre/droite, italique, souligné, couleur (palette + personnalisée), interlettrage, contour, ombre, fond. | P1 | 03 |
+| F-TXT-03 | Onglet **Animation** : animation d'entrée / de sortie (Fondu, Glisser, Machine à écrire). | P2 | 03 |
+| F-TXT-04 | Onglet **Position** : position, alignement sur la toile, respect de la zone de sécurité. | P1 | 03 |
+| F-TXT-05 | Mode **Sous-titres** : édition, import / export SRT ; sous-titres incrustés ou piste séparée à l'export. | P2 | 02 |
+| F-TXT-06 | « Sous-titres automatiques » par transcription **locale** (module optionnel, modèle de reconnaissance vocale hors ligne, ex. Whisper). | P3 | 03 |
 
 ### 3.8 Audio
-| ID | Exigence | Prio |
-|----|----------|------|
-| F-AUD-01 | Volume par clip et par piste ; couper le son. | P1 |
-| F-AUD-02 | Détacher l'audio d'un clip vidéo. | P1 |
-| F-AUD-03 | Fondu audio d'entrée / de sortie. | P1 |
-| F-AUD-04 | Enregistrement de voix off depuis le micro. | P2 |
-| F-AUD-05 | Normalisation du volume ; atténuation automatique de la musique sous la voix (« ducking »). | P3 |
-| F-AUD-06 | Réduction de bruit basique. | P3 |
+| ID | Exigence | Prio | Écran |
+|----|----------|------|-------|
+| F-AUD-01 | Volume par clip et par piste ; couper le son. | P1 | 02 |
+| F-AUD-02 | Détacher l'audio d'un clip vidéo. | P1 | — |
+| F-AUD-03 | Fondu audio d'entrée / de sortie (affiché sur le clip, ex. « fondu d'entrée 2 s »). | P1 | 03 |
+| F-AUD-04 | Enregistrement de voix off depuis le micro (panneau Enregistrer / bouton micro de la timeline). | P2 | 02 |
+| F-AUD-05 | Mode **Audio** : normalisation du volume ; atténuation automatique de la musique sous la voix (« ducking »). | P3 | 02 |
+| F-AUD-06 | Réduction de bruit basique. | P3 | — |
 
 ### 3.9 Effet Timelapse (fonction par défaut, P1)
 
@@ -136,8 +156,8 @@ L'effet Timelapse doit permettre d'**accélérer fortement une partie seulement 
 #### 3.9.1 Parcours utilisateur
 1. L'utilisateur sélectionne un clip dans la timeline.
 2. Il définit une plage : points d'entrée/sortie (`I` / `O`) ou glisser sur le clip, ou bien sélectionne directement un clip déjà scindé.
-3. Il choisit **Effets → Timelapse** (ou clic droit → « Timelapse sur la sélection »).
-4. Un panneau propose les réglages ci-dessous, avec aperçu immédiat.
+3. Il ouvre l'onglet **Vitesse** de l'inspecteur → **Timelapse** (ou clic droit → « Timelapse sur la sélection », ou panneau Effets).
+4. Les réglages ci-dessous s'affichent dans l'inspecteur, avec aperçu immédiat.
 5. Validation : le clip est découpé en 3 segments (avant / timelapse / après) ; le segment accéléré est visuellement repéré dans la timeline (badge « TL ×N »).
 
 #### 3.9.2 Réglages
@@ -165,37 +185,45 @@ L'effet Timelapse doit permettre d'**accélérer fortement une partie seulement 
 - Les parties avant/après sont strictement identiques à la source (même nombre d'images, synchro audio conservée).
 
 ### 3.10 Export
-| ID | Exigence | Prio |
-|----|----------|------|
-| F-EXP-01 | Export MP4 (H.264 + AAC) en 480p, 720p, 1080p, 4K. | P1 |
-| F-EXP-02 | Préréglages : « Web », « Réseaux sociaux vertical », « Haute qualité », « Brouillon rapide ». | P1 |
-| F-EXP-03 | Export WebM (VP9/AV1), MOV, GIF animé, audio seul (MP3/WAV). | P2 |
-| F-EXP-04 | Export d'une plage seulement de la timeline. | P2 |
-| F-EXP-05 | Encodage matériel si disponible (VA-API sous Linux, NVENC, QSV, AMF sous Windows), repli logiciel automatique. | P2 |
-| F-EXP-06 | Export en tâche de fond avec progression, temps restant estimé, annulation ; l'interface reste utilisable. | P1 |
-| F-EXP-07 | Le fichier est écrit localement dans le dossier choisi ; **aucun téléversement automatique**. | P1 |
-| F-EXP-08 | Exporter une image fixe (capture) au curseur. | P2 |
+| ID | Exigence | Prio | Écran |
+|----|----------|------|-------|
+| F-EXP-01 | Dialogue d'export : aperçu, récapitulatif (projet, sortie, **taille estimée**), nom du fichier, dossier de destination. | P1 | 05 |
+| F-EXP-02 | Formats : **MP4** (H.264 + AAC) P1 ; MOV, WebM (VP9/AV1), GIF animé P2. | P1 / P2 | 05 |
+| F-EXP-03 | Résolutions 480p, 720p, 1080p, 4K ; images/s (par défaut celles du projet) ; codec (H.264, H.265, VP9, AV1 selon format). | P1 | 05 |
+| F-EXP-04 | Curseur de **qualité** Légère / Équilibrée / Maximale, avec position « Recommandée ». | P1 | 05 |
+| F-EXP-05 | Onglet **Audio seul** (MP3, WAV, AAC). | P2 | 05 |
+| F-EXP-06 | Bascule **Accélération matérielle** (VA-API / VDPAU / NVENC sous Linux ; NVENC, QSV, AMF sous Windows), repli logiciel automatique si indisponible. | P2 | 05, 06 |
+| F-EXP-07 | Export en tâche de fond avec progression, temps restant estimé, annulation ; l'interface reste utilisable ; notification à la fin. | P1 | — |
+| F-EXP-08 | Le fichier est écrit localement ; **aucun téléversement automatique**. L'onglet « Lien de partage » et le bouton « Partager » de la maquette sont **hors v1** : en v1, « Partager » ouvre le dossier contenant le fichier exporté (ou le menu de partage du bureau) ; un vrai partage en ligne ne pourra être qu'un module optionnel (P3). | P1 | 02, 05 |
+| F-EXP-09 | Export d'une plage seulement de la timeline ; export d'une image fixe au curseur. | P2 | — |
 
 ### 3.11 Modules (extensibilité)
 | ID | Exigence | Prio |
 |----|----------|------|
-| F-MOD-01 | Gestionnaire de modules : liste, activer/désactiver, version, auteur, description. | P1 |
-| F-MOD-02 | Installation d'un module depuis un fichier local (archive `.montar-module`) ; aucun dépôt en ligne requis. | P1 |
-| F-MOD-03 | Types de modules supportés : **effet vidéo**, **effet audio**, **transition**, **générateur** (titre, fond, forme), **format d'export**, **outil** (action sur la timeline / panneau). | P1 (effet, transition) / P2 (autres) |
-| F-MOD-04 | Le Timelapse est lui-même implémenté comme un **module intégré**, servant de référence pour l'API. | P1 |
-| F-MOD-05 | Un module défectueux ne doit pas empêcher le démarrage (isolation, désactivation automatique après plantage). | P1 |
+| F-MOD-01 | Gestionnaire de modules (Préférences → **Extensions**) : liste, activer/désactiver, version, auteur, description. | P1 |
+| F-MOD-02 | Installation d'un module depuis un fichier local (archive `.montar-module`, c.-à-d. un zip) ; aucun dépôt en ligne requis. | P1 |
+| F-MOD-03 | Modules écrits en **Python** ; types supportés : **effet vidéo**, **effet audio**, **transition**, **générateur** (titre, fond, forme), **format d'export**, **outil** (action sur la timeline / panneau). | P1 (effet, transition) / P2 (autres) |
+| F-MOD-04 | Le Timelapse, les filtres et les transitions de base sont eux-mêmes implémentés comme **modules intégrés**, servant de référence pour l'API. | P1 |
+| F-MOD-05 | Un module défectueux ne doit pas empêcher le démarrage (chargement protégé, désactivation automatique après erreur, message dans les notifications). | P1 |
 | F-MOD-06 | Un projet utilisant un module absent s'ouvre quand même ; l'effet manquant est signalé et ignoré au rendu. | P1 |
-| F-MOD-07 | Dépôt / catalogue de modules en ligne (optionnel, désactivable). | P3 |
+| F-MOD-07 | Un module peut ajouter un onglet / panneau à la barre latérale de l'éditeur ou à l'inspecteur. | P2 |
+| F-MOD-08 | Catalogue de modules en ligne (optionnel, désactivable) ; modules de ressources (bibliothèques de musiques, autocollants…). | P3 |
 
-### 3.12 Préférences et ergonomie
+### 3.12 Préférences
+Les préférences s'organisent en rubriques : **Général**, **Lecture & aperçu**, **Projets & sauvegarde**, **Raccourcis clavier**, **Stockage & cache**, **Extensions** (cf. écran 06).
+
 | ID | Exigence | Prio |
 |----|----------|------|
-| F-UX-01 | Interface en français et anglais (fichiers de traduction, ajout d'autres langues possible). | P1 |
-| F-UX-02 | Thème sombre et clair. | P1 |
-| F-UX-03 | Raccourcis clavier documentés et personnalisables. | P2 |
-| F-UX-04 | Choix des dossiers : cache, proxys, sauvegardes automatiques, export par défaut. | P1 |
-| F-UX-05 | Vider le cache depuis les préférences, avec affichage de la taille occupée. | P1 |
-| F-UX-06 | Aucune télémétrie par défaut ; rapport de plantage uniquement sur action explicite de l'utilisateur. | P1 |
+| F-UX-01 | Apparence : thème **Clair / Sombre / Système** ; **couleur d'accent** parmi 5 verts de la charte. | P1 (thèmes) / P2 (accent) |
+| F-UX-02 | Langue de l'interface (Français, English ; fichiers de traduction, ajout d'autres langues possible). | P1 |
+| F-UX-03 | Dossier des projets (défaut `~/Vidéos/Montar`, ou `XDG_VIDEOS_DIR/Montar`). | P1 |
+| F-UX-04 | Sauvegarde automatique (activée, intervalle réglable). | P1 |
+| F-UX-05 | Accélération matérielle (décodage et rendu). | P2 |
+| F-UX-06 | Ondes audio sur les clips vidéo ; magnétisme par défaut ; qualité de l'aperçu par défaut. | P1 |
+| F-UX-07 | Raccourcis clavier documentés et personnalisables. | P2 |
+| F-UX-08 | Stockage & cache : dossiers cache / proxys / sauvegardes, taille occupée, bouton « Vider le cache ». | P1 |
+| F-UX-09 | La rubrique « Compte » de la maquette est **supprimée** : aucune notion de compte. Le prénom affiché sur l'accueil (« Bonjour Fabien ») et l'avatar proviennent du nom de l'utilisateur système, modifiable localement. | P1 |
+| F-UX-10 | Aucune télémétrie ; rapport de plantage uniquement sur action explicite de l'utilisateur. | P1 |
 
 ---
 
@@ -204,156 +232,236 @@ L'effet Timelapse doit permettre d'**accélérer fortement une partie seulement 
 ### 4.1 Plateformes
 | Phase | Plateforme | Livrable |
 |-------|------------|----------|
-| 1 | Linux x86_64 — Debian 12+, Ubuntu 22.04 LTS+ (et dérivées : Mint, Pop!_OS) | Paquet **`.deb`** (+ AppImage en option) |
-| 2 | Windows 10 (22H2) / 11 x64 | Installeur `.exe` (NSIS ou Inno Setup) ou `.msi`, + version portable `.zip` |
-| Ultérieur | Linux arm64, Flatpak, macOS | — |
+| 1 | Linux x86_64 : **Debian 12** (bookworm) et 13 (trixie), **Ubuntu 22.04 LTS** et **24.04 LTS**, **Linux Mint 21.x** et **22.x** (bases Ubuntu 22.04 / 24.04), ainsi que LMDE 6 (base Debian 12) | Paquet **`.deb`** (`amd64`) |
+| 2 | Windows 10 (22H2) / 11 x64 | Installeur `.exe` + version portable `.zip` |
+| Ultérieur | Autres distributions (Flatpak, `.rpm`), Linux arm64, macOS | — |
 
-Le code doit être **multiplateforme dès le départ** : pas d'appel système spécifique à Linux hors d'une couche d'abstraction.
+Socle commun minimal imposé par ces distributions : **Python 3.10**, Qt 6.2, MLT 7.4, FFmpeg 4.4 (Ubuntu 22.04 / Mint 21). Le code ne doit utiliser aucune fonctionnalité plus récente sans repli.
+
+Le code doit être **multiplateforme dès le départ** : pas d'appel système spécifique à Linux hors du module `platform/`.
 
 ### 4.2 Configuration de référence
 - **Minimale** : CPU 4 cœurs (2015+), 8 Go RAM, GPU compatible OpenGL 3.3, montage 1080p.
 - **Recommandée** : CPU 6–8 cœurs, 16 Go RAM, GPU avec décodage/encodage matériel, montage 4K avec proxys.
 
 ### 4.3 Performances
+Le code Python pilote l'application ; tout traitement image par image est délégué au moteur natif (MLT/FFmpeg) ou à NumPy, jamais fait en Python pur dans la boucle de lecture.
+
 | ID | Exigence |
 |----|----------|
-| NF-PRF-01 | Démarrage de l'application < 3 s (machine recommandée, SSD). |
-| NF-PRF-02 | Lecture temps réel d'une timeline 1080p30 avec 2 pistes vidéo + 1 transition + 1 texte, sans image perdue en qualité d'aperçu 1/2. |
+| NF-PRF-01 | Démarrage de l'application < 4 s (machine recommandée, SSD). |
+| NF-PRF-02 | Lecture temps réel d'une timeline 1080p25 avec 2 pistes vidéo + 1 transition + 1 texte, sans image perdue en qualité d'aperçu Moyenne. |
 | NF-PRF-03 | Réponse aux actions de la timeline (déplacer, scinder) < 100 ms. |
 | NF-PRF-04 | Export 1080p H.264 d'une minute en < 1 min (encodage matériel) / < 2 min (logiciel), machine recommandée. |
-| NF-PRF-05 | Toutes les tâches lourdes (import, vignettes, proxys, export) s'exécutent hors du fil de l'interface. |
+| NF-PRF-05 | Toutes les tâches lourdes (import, vignettes, formes d'onde, proxys, export) s'exécutent hors du fil de l'interface (threads Qt ou processus séparés). |
 
 ### 4.4 Fiabilité et données
-- Le fichier projet est un format **texte lisible** (JSON ou XML) versionné, avec migration automatique entre versions.
+- Le fichier projet est un document **JSON** lisible, versionné (`"format_version"`), avec migration automatique entre versions.
 - Écriture atomique du projet (fichier temporaire puis renommage) pour éviter toute corruption.
 - Les fichiers sources ne sont **jamais modifiés**.
 - Chemins des médias stockés en relatif au projet quand c'est possible (portabilité du dossier projet Linux ↔ Windows).
+- Emplacements conformes XDG sous Linux : configuration `~/.config/montar`, données `~/.local/share/montar`, cache `~/.cache/montar`.
 
 ### 4.5 Confidentialité et fonctionnement hors ligne
-- Toutes les fonctions P1 et P2 fonctionnent **sans connexion Internet**.
+- **Toutes** les fonctions P1 et P2 fonctionnent sans connexion Internet.
 - Aucun compte utilisateur.
-- Aucune donnée envoyée sans action explicite (vérification de mise à jour désactivable, désactivée par défaut dans le `.deb` puisque gérée par le gestionnaire de paquets).
+- Aucune donnée envoyée sans action explicite ; pas de vérification de mise à jour dans la version `.deb` (gérée par le gestionnaire de paquets).
 
 ### 4.6 Sécurité des modules
-- Un module déclare ses permissions dans son manifeste (accès fichiers hors projet, réseau).
-- Avertissement à l'installation d'un module non signé.
-- Signature des modules officiels.
+- Un module Python s'exécute avec les mêmes droits que l'application : l'utilisateur en est averti à l'installation d'un module tiers.
+- Le manifeste déclare les permissions demandées (accès fichiers hors projet, réseau) ; elles sont affichées avant installation.
+- Signature (somme de contrôle + clé GPG) des modules officiels.
 
 ### 4.7 Maintenabilité / qualité
-- Tests unitaires du modèle (timeline, projet, calcul des durées, Timelapse) ; couverture ≥ 70 % sur le cœur.
+- Code conforme PEP 8, vérifié par `ruff` ; annotations de types vérifiées par `mypy`.
+- Tests `pytest` du modèle (timeline, projet, calcul des durées, Timelapse) ; couverture ≥ 70 % sur `core/`.
 - Tests de rendu automatisés (comparaison d'images sur mires de test).
-- Intégration continue : compilation et tests Linux + Windows à chaque commit ; génération automatique du `.deb`.
-- Journalisation (logs) dans un fichier local rotatif.
+- Intégration continue : tests et génération automatique du `.deb` à chaque commit, installation testée dans des conteneurs Debian 12, Ubuntu 22.04 et 24.04.
+- Journalisation (module `logging`) dans un fichier local rotatif.
 
 ### 4.8 Accessibilité
 - Navigation complète au clavier des menus et dialogues.
-- Contrastes conformes WCAG AA ; taille d'interface réglable (mise à l'échelle HiDPI).
+- Contrastes conformes WCAG AA sur tous les fonds clairs (exigence de la charte) et en thème sombre.
+- Taille d'interface réglable (mise à l'échelle HiDPI).
 
 ### 4.9 Licence
-À décider (voir §8). Les dépendances envisagées (FFmpeg, MLT, Qt) imposent des contraintes LGPL/GPL à respecter, notamment en cas de distribution Windows.
+- **GNU GPL version 3** (ou ultérieure) pour tout le code de montar ; fichier `LICENSE` à la racine et en-tête SPDX `GPL-3.0-or-later` dans chaque fichier source.
+- Dépendances compatibles : PyQt6 (GPLv3), MLT (LGPL 2.1+), FFmpeg (LGPL/GPL), NumPy (BSD).
+- Polices embarquées Manrope, JetBrains Mono, Fraunces, Caveat : SIL Open Font License 1.1, compatible ; licences jointes dans le paquet.
+- Les modules tiers chargés dans le processus sont des œuvres dérivées au sens de la GPL : la documentation de l'API le précise.
 
 ---
 
-## 5. Architecture technique proposée
+## 5. Architecture technique
 
-### 5.1 Choix technologiques (proposition)
-| Couche | Technologie proposée | Justification |
-|--------|---------------------|---------------|
-| Langage cœur | **C++20** | Performances temps réel, accès direct aux bibliothèques multimédia. |
-| Interface | **Qt 6 (QML / Qt Quick)** | Multiplateforme Linux/Windows, rendu GPU, interface moderne type Clipchamp, système de plugins natif. |
-| Moteur de montage | **MLT Framework 7** | Moteur éprouvé (Kdenlive, Shotcut) : timeline multipiste, transitions, filtres, changement de vitesse (`timewarp`), rendu ; évite de réécrire un moteur. |
-| Décodage / encodage | **FFmpeg 6+** (via MLT) | Couverture formats/codecs, accélération matérielle. |
-| Effets supplémentaires | frei0r, filtres FFmpeg (`framestep`, `tmix`, `deflicker`), shaders GLSL | Base d'effets riche. |
-| Scripts de modules | API C++ + **modules déclaratifs QML/JSON** ; Python embarqué en option (P3) | Les modules simples n'ont pas besoin de compilation. |
-| Build | CMake + CPack | Génère directement le `.deb` ; NSIS/WiX pour Windows. |
-| CI | GitHub Actions (Ubuntu + Windows) | Paquets générés à chaque version. |
+### 5.1 Choix technologiques
+| Couche | Technologie | Justification |
+|--------|-------------|---------------|
+| Langage | **Python ≥ 3.10** | Choix du projet ; développement rapide ; modules faciles à écrire pour les contributeurs. |
+| Interface | **PyQt6 — Qt Widgets** + feuille de style QSS générée depuis les jetons de la charte | Paquets officiels présents dans Debian 12, Ubuntu 22.04/24.04 et Mint (`python3-pyqt6`), licence GPLv3 compatible ; Qt Widgets disponible partout, contrairement aux bindings QML non packagés sur toutes les versions ciblées. La timeline est un widget dessiné sur mesure (`QGraphicsView` ou `QWidget` + `QPainter`). |
+| Moteur de montage | **MLT 7** via ses bindings Python (`python3-mlt`) | Moteur éprouvé (Kdenlive, Shotcut) : timeline multipiste, transitions, filtres, changement de vitesse (`timewarp`), rendu multi-thread natif. Évite d'écrire un moteur temps réel en Python. |
+| Décodage / encodage | **FFmpeg** (via MLT ; `ffprobe` pour l'analyse des médias) | Couverture formats/codecs, accélération matérielle. |
+| Effets supplémentaires | frei0r, filtres FFmpeg (`framestep`, `tmix`, `deflicker`), filtres GLSL de MLT | Base d'effets riche sans traitement pixel en Python. |
+| Calculs ponctuels | NumPy | Formes d'onde, analyses, effets personnalisés de modules. |
+| Packaging Linux | `debian/` + `dh-python` / `pybuild` | Paquet `.deb` natif dépendant des paquets système, conforme Debian. |
+| Packaging Windows | PyInstaller (ou Briefcase) + Inno Setup / NSIS | Embarque Python, Qt, MLT, FFmpeg. |
+| CI | GitHub Actions | Tests + `.deb` à chaque commit ; Windows en phase 2. |
 
-*Alternative étudiée* : Tauri/Electron + FFmpeg en ligne de commande — plus rapide à prototyper côté interface, mais prévisualisation temps réel et précision à l'image nettement plus difficiles. **Non retenue** pour le cœur.
+**Point d'attention Windows** : les bindings Python de MLT ne sont pas distribués officiellement sous Windows. L'accès au moteur passe donc par une **couche d'abstraction** (`engine/`), permettant en phase 2 soit de compiler les bindings (MSYS2 / vcpkg), soit d'implémenter un second moteur (pilotage de `melt` en sous-processus pour l'export, PyAV pour l'aperçu). À valider par un prototype au début de la phase 2.
 
-### 5.2 Découpage en modules logiciels
+### 5.2 Organisation du code
 ```
 montar/
-├── app/            # Point d'entrée, fenêtre principale
-├── ui/             # QML : bibliothèque, timeline, aperçu, inspecteur, export
-├── core/           # Modèle : Projet, Piste, Clip, Effet, Transition, Undo/Redo
-├── engine/         # Adaptateur MLT : construction du graphe, lecture, rendu
-├── media/          # Import, analyse, vignettes, formes d'onde, proxys, cache
-├── plugins-api/    # Interfaces publiques stables (en-têtes) pour les modules
-├── plugins/        # Modules intégrés : timelapse, filtres de base, transitions
-├── export/         # Préréglages et file d'export
-├── platform/       # Abstractions OS (chemins, encodage matériel, intégration bureau)
-├── packaging/      # debian/, windows/ (NSIS), icônes, .desktop
+├── pyproject.toml
+├── LICENSE                     # GPLv3
+├── src/montar/
+│   ├── __main__.py             # point d'entrée : python -m montar
+│   ├── app.py                  # QApplication, fenêtre principale, navigation
+│   ├── ui/
+│   │   ├── theme/              # jetons de la charte, génération QSS clair/sombre, polices
+│   │   ├── home/               # Accueil, Mes projets, Médiathèque, Corbeille
+│   │   ├── editor/             # en-tête, rail latéral, panneaux, aperçu, inspecteur
+│   │   ├── timeline/           # widget de timeline sur mesure
+│   │   └── dialogs/            # Nouveau projet, Export, Préférences
+│   ├── core/                   # modèle : Project, Track, Clip, Effect, Transition, commandes Undo/Redo
+│   ├── engine/                 # interface Engine + implémentation MLT (lecture, rendu)
+│   ├── media/                  # import, ffprobe, vignettes, formes d'onde, proxys, cache
+│   ├── plugins/                # chargeur de modules, registre, API publique (montar.api)
+│   ├── export/                 # préréglages, file d'export
+│   ├── platform/               # chemins XDG/Windows, détection accélération matérielle
+│   └── i18n/                   # traductions (.ts / .qm)
+├── modules/                    # modules intégrés : timelapse, filters, transitions, titles
+├── assets/                     # icônes, polices OFL
+├── packaging/
+│   ├── debian/                 # control, rules, changelog, montar.desktop, montar.xml (MIME)
+│   └── windows/
+├── docs/
 └── tests/
 ```
 
 ### 5.3 API de modules (principes)
-- Chaque module = dossier/archive contenant un **manifeste** (`module.json` : id, nom, version, version d'API requise, type, permissions, paramètres exposés) + code (bibliothèque partagée `.so`/`.dll` **ou** description déclarative s'appuyant sur des filtres existants).
-- Les **paramètres** déclarés dans le manifeste génèrent automatiquement l'interface dans l'inspecteur (curseurs, listes, couleurs, cases).
-- **Versionnage sémantique** de l'API ; compatibilité ascendante garantie à l'intérieur d'une version majeure.
-- Points d'extension : `VideoEffect`, `AudioEffect`, `Transition`, `Generator`, `ExportFormat`, `Tool`.
-- Emplacements : modules système (`/usr/lib/montar/modules`, `C:\Program Files\Montar\modules`) et utilisateur (`~/.local/share/montar/modules`, `%APPDATA%\Montar\modules`).
+- Un module = dossier (ou archive `.montar-module`) contenant :
+  - `module.json` : `id`, `name`, `version`, `api_version` requise, `type`, `author`, `license`, `permissions`, liste des **paramètres** exposés (type, bornes, défaut, libellé traduit) ;
+  - un paquet Python (`__init__.py`) exposant une fonction `register(api)`.
+- Exemple :
+  ```python
+  from montar.api import VideoEffect, Param
 
-### 5.4 Implémentation envisagée du Timelapse
+  class Negatif(VideoEffect):
+      id = "exemple.negatif"
+      name = "Négatif"
+      params = [Param.float("intensite", 0.0, 1.0, default=1.0)]
+
+      def build(self, ctx):
+          # renvoie un ou plusieurs filtres du moteur (pas de boucle pixel en Python)
+          return ctx.filter("frei0r.invert0r", mix=self.value("intensite"))
+
+  def register(api):
+      api.add_video_effect(Negatif)
+  ```
+- Les paramètres déclarés génèrent automatiquement l'interface dans l'inspecteur (curseurs, listes, couleurs, cases).
+- Points d'extension : `VideoEffect`, `AudioEffect`, `Transition`, `Generator`, `ExportFormat`, `Tool`, `Panel`.
+- **Versionnage sémantique** de l'API ; compatibilité garantie à l'intérieur d'une version majeure.
+- Emplacements : modules système `/usr/share/montar/modules` (Windows : dossier d'installation) et utilisateur `~/.local/share/montar/modules` (Windows : `%APPDATA%\montar\modules`).
+- Chargement isolé : chaque module est importé dans un bloc protégé ; une exception désactive le module sans arrêter l'application.
+
+### 5.4 Implémentation envisagée du Timelapse (module `modules/timelapse`)
 - Découpage du clip en 3 producteurs MLT partageant la même source.
 - Segment central :
-  - *Échantillonnage* : producteur `timewarp` (vitesse = facteur) ou filtre `framestep`.
-  - *Fusion* : moyenne de N images (`tmix` FFmpeg ou filtre dédié) puis décimation, avec cache de rendu.
+  - *Échantillonnage* : producteur `timewarp` (vitesse = facteur) ou filtre `framestep` ;
+  - *Fusion* : moyenne de N images (`tmix` FFmpeg ou filtre dédié) puis décimation, avec cache de rendu ;
   - *Rampe* : courbe de vitesse appliquée sur les bords du segment.
 - Persistance dans le projet sous forme d'effet paramétré (pas de fichier intermédiaire obligatoire).
+- Les calculs de durée (facteur ↔ durée cible, rampe) sont dans du code Python pur, testé unitairement indépendamment du moteur.
 
 ---
 
-## 6. Interface utilisateur (maquette fonctionnelle)
+## 6. Interface utilisateur et charte graphique
 
-```
-┌───────────────────────────────────────────────────────────────────────┐
-│ Menu  |  Projet: Vacances.montar   [16:9 ▾]        [Annuler][Rétablir] [Exporter] │
-├──────────┬──────────────────────────────────────┬─────────────────────┤
-│ Médias   │                                      │ Inspecteur          │
-│ Texte    │           APERÇU VIDÉO               │ (propriétés du      │
-│ Audio    │                                      │  clip sélectionné : │
-│ Transit. │      ◀◀   ▶   ▶▶   00:01:23 / 04:09  │  Vitesse, Couleur,  │
-│ Effets   │                                      │  Timelapse, Audio…) │
-│ Modules  │                                      │                     │
-├──────────┴──────────────────────────────────────┴─────────────────────┤
-│ [✂ Scinder][🗑][🧲]                                    zoom ─────●──  │
-│ T1 ▸ [Titre ]                                                         │
-│ V2 ▸        [ Logo ]                                                  │
-│ V1 ▸ [ Clip A ][ Clip B ▓▓ TL ×40 ▓▓ Clip B ][ Clip C ]               │
-│ A1 ▸ [~~~~~~~~~~~~~~~~ musique.mp3 ~~~~~~~~~~~~~~~~~~~]               │
-└───────────────────────────────────────────────────────────────────────┘
-```
-- Panneau gauche : onglets de ressources (style Clipchamp).
-- Centre : aperçu, contrôles de lecture.
-- Droite : inspecteur contextuel.
-- Bas : timeline multipiste.
+Les maquettes de référence sont dans [`docs/maquettes/`](maquettes/) (source : `Montar.html`, à ouvrir dans un navigateur). Elles décrivent l'intention visuelle ; les écarts avec le périmètre (compte, partage en ligne, quota de stockage) sont tranchés au §3.
+
+### 6.1 Écrans
+| N° | Écran | Aperçu | Contenu principal |
+|----|-------|--------|-------------------|
+| 01 | Accueil | ![Accueil](maquettes/01-accueil.png) | Navigation latérale, recherche, Importer, notifications, tuiles de création rapide, projets récents (grille/liste), modèles par catégorie, indicateur de stockage. |
+| 02 | Montage | ![Montage](maquettes/02-montage.png) | En-tête (nom du projet, état d'enregistrement, résolution, i/s, annuler/rétablir), modes Montage / Couleur / Audio / Sous-titres, Partager, Exporter ; rail Médias / Audio / Texte / Transitions / Effets / Filtres / Sous-titres / Enregistrer ; panneau Médias ; aperçu ; inspecteur ; timeline multipiste. |
+| 03 | Montage — Titres & texte | ![Texte](maquettes/03-montage-texte.png) | Panneau Texte (titres, bandeaux), inspecteur Style / Animation / Position, zone de sécurité. |
+| 04 | Nouveau projet | ![Nouveau projet](maquettes/04-nouveau-projet.png) | Nom, format, résolution, i/s, taille de la toile, « Partir d'un modèle ». |
+| 05 | Export | ![Export](maquettes/05-export.png) | Aperçu et récapitulatif, onglets Fichier / Audio seul, format, résolution, qualité, codec, i/s, accélération matérielle. |
+| 06 | Préférences | ![Préférences](maquettes/06-preferences.png) | Rubriques, apparence (thème, accent), langue, dossier des projets, sauvegarde auto, accélération matérielle, ondes audio, magnétisme, qualité d'aperçu. |
+| 07 | Charte UI | ![Charte](maquettes/07-charte-ui.png) | Palette, typographie, boutons, contrôles, clips de timeline. |
+
+### 6.2 Charte graphique — « verts pastel, clair, épuré »
+**Palette** (jetons, thème clair) :
+
+| Jeton | Couleur | Usage |
+|-------|---------|-------|
+| `ink` — Encre | `#17261E` | Texte principal, bouton sélectionné sombre |
+| `forest` — Forêt | `#2F7A56` | Actions principales, accent, tête de lecture |
+| `sage` — Sauge | `#9CCBB0` | Éléments secondaires, illustrations |
+| `mint` — Menthe | `#BFE3CF` | Clips **vidéo** |
+| `water` — Eau | `#C9E7E3` | Clips **texte / titre** |
+| `pistachio` — Pistache | `#D9EBB9` | Clips **audio / musique** |
+| `mist` — Brume | `#DCEDE2` | Sélection, survol, boutons tonals |
+| `background` — Fond | `#F4F8F5` | Fond des fenêtres |
+
+Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. maquette 07). Un jeu de jetons équivalent est à définir pour le **thème sombre** (fond basé sur l'Encre).
+
+**Typographie** :
+- **Manrope** : interface (titres 800 / sections 700, texte courant 14 px).
+- **JetBrains Mono** : timecodes, valeurs numériques, résolution.
+- **Fraunces** et **Caveat** : styles de titres « Titre » et « Manuscrit » proposés dans le panneau Texte.
+- Polices embarquées dans le paquet (licence OFL), aucun chargement en ligne.
+
+**Formes et composants** :
+- Rayons : 8 px (clips), 10–12 px (boutons, champs), 16–24 px (cartes, fenêtres).
+- Espacements : multiples de 4 px.
+- Icônes : trait 1,8 px, bouts arrondis (jeu libre de type Lucide, licence ISC, embarqué).
+- Boutons : Principal (Forêt plein), Secondaire (contour), Tonal (Brume) ; boutons ronds lecture ; segments Actif/Inactif ; interrupteurs ; curseurs à piste Forêt.
+- Clip sélectionné : bordure Forêt de 2 px.
+
+**Logo** : carré arrondi Forêt avec triangle « lecture » blanc, suivi du mot « montar » en minuscules (Manrope 800). Icône d'application déclinée en 16 à 512 px + SVG.
 
 ---
 
 ## 7. Packaging et distribution
 
-### 7.1 Linux (phase 1)
-- Paquet `.deb` généré par CPack (ou `debian/` + `dpkg-buildpackage`) :
-  - Nom : `montar`, architecture `amd64`.
-  - Dépendances déclarées : `libmlt++7`, `libavcodec60` (ou version de la distribution), `qt6-declarative`, `frei0r-plugins`…
-  - Installe : binaire `/usr/bin/montar`, ressources `/usr/share/montar`, modules `/usr/lib/montar/modules`, entrée de menu `.desktop`, icônes, type MIME `application/x-montar-project` (double-clic sur un `.montar`).
-- Vérification avec `lintian` sans erreur.
-- Option : AppImage pour les distributions non Debian.
+### 7.1 Linux (phase 1) — Debian, Ubuntu, Mint
+- Paquet source dans `packaging/debian/`, construit avec `dpkg-buildpackage` / `dh` + `pybuild` ; un seul paquet binaire **`montar_<version>_all.deb`** (code Python pur, architecture `all`).
+- Dépendances (noms à valider pour chaque version ciblée) :
+  `python3 (>= 3.10)`, `python3-pyqt6`, `python3-mlt`, `melt`, `ffmpeg`, `frei0r-plugins`, `python3-numpy` ;
+  recommandées : `va-driver-all` (accélération matérielle), `fonts-…` non requis (polices embarquées).
+- Installation :
+  - lanceur `/usr/bin/montar`, code dans `/usr/lib/python3/dist-packages/montar` ;
+  - modules intégrés `/usr/share/montar/modules`, ressources `/usr/share/montar` ;
+  - entrée de menu `/usr/share/applications/montar.desktop` (catégorie AudioVideo / Video) ;
+  - icônes `/usr/share/icons/hicolor/*/apps/montar.*` ;
+  - type MIME `application/x-montar-project` (`*.montar`) : double-clic sur un projet ;
+  - métadonnées AppStream (`/usr/share/metainfo/`) pour l'affichage dans les logithèques (Logithèque Mint, GNOME Logiciels).
+- `lintian` sans erreur ; test d'installation / lancement / désinstallation automatisé dans des conteneurs Debian 12, Ubuntu 22.04 et Ubuntu 24.04 (Mint 21/22 et LMDE 6 partagent ces bases).
+- Distribution : fichier `.deb` attaché aux versions GitHub ; dépôt APT signé ou PPA envisageable ensuite.
 
 ### 7.2 Windows (phase 2)
-- Toutes les dépendances embarquées (Qt, MLT, FFmpeg en version LGPL).
-- Installeur NSIS/Inno Setup : raccourcis, association `.montar`, désinstallation propre.
-- Signature de code de l'exécutable (certificat à prévoir).
-- Version portable `.zip`.
+- Exécutable gelé (PyInstaller / Briefcase) embarquant Python, PyQt6, le moteur et FFmpeg.
+- Installeur Inno Setup / NSIS : raccourcis, association `.montar`, désinstallation propre ; version portable `.zip`.
+- Code source correspondant publié (obligation GPL) ; signature de code de l'exécutable (certificat à prévoir).
 
 ---
 
-## 8. Points ouverts / décisions à prendre
-1. **Licence du projet** : GPLv3 (compatible MLT/FFmpeg GPL, simple) ou propriétaire / LGPL (contraintes plus fortes sur les dépendances).
-2. **Nom définitif** et identité visuelle (« Montar » provisoire).
-3. **Langage des modules** : C++ uniquement en v1, ou Python embarqué dès la v1 pour faciliter les contributions ?
-4. Fournir une **bibliothèque de ressources libres** (musiques, autocollants, fonds) embarquée, ou téléchargeable à part pour limiter la taille du paquet ?
-5. Distributions Linux visées en priorité au-delà de Debian/Ubuntu (Fedora → `.rpm`, Flatpak) ?
+## 8. Décisions actées
+| # | Sujet | Décision |
+|---|-------|----------|
+| D1 | Licence | **GPLv3** (`GPL-3.0-or-later`). |
+| D2 | Nom | **montar** (en minuscules dans le logo). |
+| D3 | Langage | **Python** pour l'application et les modules ; moteur natif MLT/FFmpeg piloté depuis Python. |
+| D4 | Bibliothèque de ressources | **Aucune fournie pour le moment** ; possible plus tard via un module. |
+| D5 | Distributions Linux | **Debian, Ubuntu, Linux Mint** pour le moment (paquet `.deb`). |
+| D6 | Interface | Basée sur les maquettes `docs/maquettes/Montar.html` et leur charte « verts pastel ». |
+
+### Points restant ouverts
+1. Moteur sous Windows (bindings MLT ou moteur alternatif) : à trancher par prototype en début de phase 2.
+2. Contenu exact des modèles de démonstration (s'il y en a) et du thème sombre.
+3. Mode de diffusion du `.deb` au-delà des versions GitHub (dépôt APT, PPA).
 
 ---
 
@@ -361,21 +469,22 @@ montar/
 
 | Jalon | Contenu | Livrable |
 |-------|---------|----------|
-| **J0 — Socle** | Architecture CMake/Qt/MLT, fenêtre, import, aperçu d'un clip, CI Linux | Build de dev |
-| **J1 — Timeline** | Pistes, glisser-déposer, rogner, scinder, undo/redo, sauvegarde projet | Alpha interne |
-| **J2 — Édition de base** | Texte, transitions, audio, couleur, filtres, vitesse | Alpha |
-| **J3 — Timelapse + API modules** | Module Timelapse, gestionnaire de modules, API v1 documentée | Bêta |
-| **J4 — Export & packaging Linux** | Préréglages, file d'export, accélération matérielle, `.deb` | **v1.0 Linux** |
-| **J5 — Portage Windows** | CI Windows, encodage matériel Windows, installeur | **v1.0 Windows** |
-| **J6+** | Fonctions P3, catalogue de modules, Flatpak/macOS | v1.x |
+| **J0 — Socle** | Projet Python (`pyproject.toml`), thème QSS issu de la charte, fenêtre principale et navigation, accueil, import, aperçu d'un clip via MLT, CI avec `.deb` de développement | Build de dev |
+| **J1 — Timeline** | Widget timeline, pistes, glisser-déposer, rogner, scinder, undo/redo, sauvegarde projet JSON, Nouveau projet | Alpha interne |
+| **J2 — Édition de base** | Inspecteur (transformation, ajustements, vitesse, couleur), filtres, texte et titres, transitions, audio | Alpha |
+| **J3 — Timelapse + API modules** | Chargeur de modules, API v1 documentée, module Timelapse, Préférences → Extensions | Bêta |
+| **J4 — Export & packaging Linux** | Dialogue d'export, file d'export, accélération matérielle, préférences complètes, `.deb` validé sur Debian / Ubuntu / Mint | **v1.0 Linux** |
+| **J5 — Portage Windows** | Prototype moteur, exécutable, installeur | **v1.0 Windows** |
+| **J6+** | Fonctions P3, kit de marque, sous-titres automatiques, catalogue de modules, autres distributions | v1.x |
 
 ---
 
 ## 10. Critères de recette globaux (v1.0)
 - Toutes les exigences **P1** implémentées et testées.
-- Scénario de bout en bout réussi sans connexion réseau : *créer un projet 16:9 → importer 3 vidéos + 1 musique → couper, ordonner, ajouter 2 transitions et un titre → appliquer un Timelapse ×20 sur une portion → exporter en MP4 1080p → relire le fichier dans un lecteur tiers.*
-- Le paquet `.deb` s'installe et se désinstalle proprement sur Ubuntu 24.04 et Debian 12 ; `lintian` sans erreur.
-- Un module d'exemple tiers (effet « négatif ») s'installe depuis un fichier local et fonctionne sans recompiler l'application.
+- Interface conforme aux maquettes 01 à 07 (hors écarts tranchés au §3), en thème clair et sombre.
+- Scénario de bout en bout réussi **sans connexion réseau** : *créer un projet 16:9 → importer 3 vidéos + 1 musique → couper, ordonner, ajouter 2 transitions et un titre → appliquer un Timelapse ×20 sur une portion → exporter en MP4 1080p → relire le fichier dans un lecteur tiers.*
+- Le paquet `.deb` s'installe, se lance et se désinstalle proprement sur Debian 12, Ubuntu 22.04, Ubuntu 24.04, Linux Mint 21 et 22 ; `lintian` sans erreur.
+- Un module d'exemple tiers en Python (effet « négatif ») s'installe depuis un fichier local et fonctionne sans réinstaller l'application.
 - Aucun plantage sur la suite de tests de robustesse (fichiers corrompus, médias manquants, module défaillant).
 
 ---
@@ -386,4 +495,5 @@ montar/
 - **Ripple delete** : suppression qui décale automatiquement les clips suivants.
 - **Timelapse** : accélération forte d'une séquence pour condenser un temps long.
 - **Rampe de vitesse** : transition progressive entre vitesse normale et vitesse accélérée.
-- **Module** : extension installable ajoutant une fonction (effet, transition, export…).
+- **Module** : extension Python installable ajoutant une fonction (effet, transition, export…).
+- **Jeton (de design)** : valeur nommée de la charte (couleur, rayon, espacement) utilisée par le code de l'interface.
