@@ -1,3 +1,22 @@
+montar (0.4.4) unstable; urgency=medium
+
+  * Projets : chaque projet a son dossier (~/Vidéos/Montar/<nom>/, avec le
+    fichier .montar et un sous-dossier medias/). Tous les médias importés y
+    sont copiés, vidéos comprises, en tâche de fond avec avancement ; une
+    copie identique est réutilisée. Les projets enregistrés directement dans
+    le dossier des projets sont rangés dans leur dossier à l'ouverture, et
+    leurs médias y sont copiés.
+  * Timelapse : la sélection des images est une formule évaluée en temps
+    constant (et non une liste de milliers de termes) : calcul beaucoup plus
+    rapide sur les longues vidéos avec un facteur non entier ou des rampes.
+    La fusion moyenne 8 images réparties sur chaque intervalle (au lieu de
+    jusqu'à 1000 images en mémoire) ; elle se fait sans rampe.
+  * Timelapse : bouton Annuler pendant le calcul, Relancer après un échec ou
+    une annulation ; un ffmpeg qui ne progresse plus pendant 2 minutes est
+    arrêté ; ses messages ne peuvent plus le bloquer.
+
+ -- Fabien <admin@appsdoc.fr>  Sat, 24 Oct 2026 10:00:00 +0200
+
 montar (0.4.3) unstable; urgency=medium
 
   * Correction de la vraie cause du placement erroné dans l'aperçu : Qt

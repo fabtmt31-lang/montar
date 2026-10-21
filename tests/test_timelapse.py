@@ -2,6 +2,7 @@
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -129,3 +130,82 @@ def test_render_can_be_cancelled(tl_core, media_dir, tmp_path):
         tl_core.render(str(media_dir / "clip.mp4"), out, segment.source_in,
                        tl_core.settings_of(segment), 25, cancelled=lambda: True)
     assert not out.exists() and not list(tmp_path.glob("*.part.mp4"))
+
+
+def _numbered(tmp_path, seconds=40):
+    numbered = tmp_path / "numerotee.mp4"
+    subprocess.run([shutil.which("ffmpeg"), "-v", "error", "-y", "-f", "lavfi", "-i",
+                    f"color=c=black:s=64x36:r=30:d={seconds},format=gray,"
+                    "geq=lum='mod(N\\,256)'",
+                    "-c:v", "libx264", "-qp", "0", "-pix_fmt", "yuv420p", str(numbered)],
+                   check=True, timeout=120)
+    return numbered
+
+
+def _lumas(path):
+    raw = subprocess.run([shutil.which("ffmpeg"), "-v", "error", "-i", str(path), "-f",
+                          "rawvideo", "-pix_fmt", "gray", "-"],
+                         capture_output=True, check=True).stdout
+    return [raw[i + 18 * 64 + 32] for i in range(0, len(raw), 64 * 36)]
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("settings", [
+    {"factor": 7.5},
+    {"factor": 6, "ramp": "both", "ramp_seconds": 1.0},
+    {"factor": 12.3, "ramp": "in", "ramp_seconds": 2.0},
+])
+def test_render_matches_planned_frames(tl_core, tmp_path, settings):
+    """Facteur non entier et rampes : ffmpeg garde exactement les images prévues (la
+    sélection est une formule, pas une liste de milliers de termes)."""
+    numbered = _numbered(tmp_path, 20)
+    p, t, clip = project_with_video(20, path=str(numbered))
+    segment = tl_core.apply(t, clip.id, 0, 600, tl_core.Settings(**settings))
+    data = tl_core.settings_of(segment)
+    cmd, produced = tl_core.ffmpeg_command(str(numbered), tmp_path / "x.mp4", 0, data, 30)
+    assert len(cmd[cmd.index("-vf") + 1]) < 4000
+    out = tl_core.render(str(numbered), tmp_path / "out.mp4", 0, data, 30)
+    lumas = _lumas(out)
+    expected = [i % 256 for i in tl_core.frame_indices(
+        600, data["factor"], *tl_core.Settings.from_dict(data).ramp_frames(30))]
+    assert len(lumas) == produced == segment.duration == len(expected)
+    assert all(abs(a - b) <= 3 for a, b in zip(lumas, expected, strict=True)), lumas
+
+
+def test_long_segment_selection_stays_small(tl_core):
+    data = {"factor": 2.7, "ramp": "both", "ramp_seconds": 3.0, "source_frames": 16333}
+    cmd, produced = tl_core.ffmpeg_command("x.mp4", Path("y.mp4"), 0, data, 25)
+    assert produced > 5000 and len(cmd[cmd.index("-vf") + 1]) < 6000
+
+
+@needs_ffmpeg
+def test_blend_large_factor_is_quick(tl_core, tmp_path):
+    numbered = _numbered(tmp_path, 40)
+    p, t, clip = project_with_video(40, path=str(numbered))
+    segment = tl_core.apply(t, clip.id, 0, 1200, tl_core.Settings(factor=300, method="blend",
+                                                                   ramp="both"))
+    data = tl_core.settings_of(segment)
+    assert data["ramp"] == "none"  # pas de rampe avec la fusion
+    out = tl_core.render(str(numbered), tmp_path / "blend.mp4", 0, data, 30)
+    assert len(_lumas(out)) == segment.duration == 4
+
+
+def test_stalled_ffmpeg_is_stopped_and_cancel_works(tl_core, tmp_path, monkeypatch):
+    import sys
+    import time
+
+    sleeper = [sys.executable, "-c", "import time; time.sleep(30)"]
+    monkeypatch.setattr(tl_core, "ffmpeg_command", lambda *a: (sleeper, 10))
+    monkeypatch.setattr(tl_core, "STALL_SECONDS", 1)
+    data = {"factor": 4, "source_frames": 40}
+    start = time.monotonic()
+    with pytest.raises(RuntimeError, match="n'avance plus"):
+        tl_core.render("x.mp4", tmp_path / "a.mp4", 0, data, 25)
+    assert time.monotonic() - start < 6
+    monkeypatch.setattr(tl_core, "STALL_SECONDS", 60)
+    deadline = time.monotonic() + 0.5
+    start = time.monotonic()
+    with pytest.raises(tl_core.Cancelled):
+        tl_core.render("x.mp4", tmp_path / "b.mp4", 0, data, 25,
+                       cancelled=lambda: time.monotonic() > deadline)
+    assert time.monotonic() - start < 3

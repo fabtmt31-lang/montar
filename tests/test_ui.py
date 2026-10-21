@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Tests de l'interface (plateforme Qt « offscreen »)."""
 import time
+from pathlib import Path
 
 import pytest
 
@@ -71,7 +72,7 @@ def test_create_project_and_back_home(window, isolated_home):
     editor = window.create_project(NewProjectParams("Mon vlog", "1:1", "720p", 30))
     assert editor is not None
     path = editor.project.path
-    assert path == isolated_home / "Vidéos" / "Montar" / "Mon vlog.montar"
+    assert path == isolated_home / "Vidéos" / "Montar" / "Mon vlog" / "Mon vlog.montar"
     assert Project.load(path).canvas_size == (720, 720)
     window.show_home()
     assert window.editor is None
@@ -585,3 +586,73 @@ def test_detached_clip_hides_waveform(window, media_dir, monkeypatch):
     assert clip.id not in painted and len(painted) == 1  # seul le clip audio détaché
     assert "mute" in view._badges(clip, editor.project.media[0])
 
+
+
+@needs_ffmpeg
+def test_timelapse_job_cancel_and_retry(window, media_dir, monkeypatch):
+    import importlib
+    import sys
+
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    clip = editor.project.clips[0]
+    core = importlib.import_module("montar_modules.timelapse.core")
+    editor.controller.edit("tl", lambda t: core.apply(t, clip.id, 0, 40, core.Settings()))
+    # ffmpeg remplacé par un processus qui ne répond plus
+    sleeper = [sys.executable, "-c", "import time; time.sleep(60)"]
+    real = core.ffmpeg_command
+    monkeypatch.setattr(core, "ffmpeg_command", lambda *a: (sleeper, 3))
+    editor._reload_player()
+    jobs = editor.modules.jobs
+    assert wait_until(lambda: jobs.jobs and editor.jobs_box.isVisibleTo(editor))
+    editor.jobs_cancel.click()
+    assert wait_until(lambda: not jobs.jobs, 5)
+    assert editor.failed_box.isVisibleTo(editor) and "annulé" in editor.failed_label.text()
+    editor._reload_player()
+    pump(200)
+    assert not jobs.jobs  # une annulation n'est pas relancée d'elle-même
+    monkeypatch.setattr(core, "ffmpeg_command", real)
+    editor.retry_button.click()
+    assert wait_until(lambda: not jobs.jobs and not jobs.failed, 30)
+    assert not editor.failed_box.isVisibleTo(editor)
+    segment = next(c for c in editor.project.clips if c.modules)
+    assert editor.modules.hook(segment, editor.project.media[0]) is not None
+
+
+# --- 0.5 : dossier de projet --------------------------------------------------------------
+
+
+@needs_ffmpeg
+def test_import_copies_media_into_project(window, media_dir):
+    editor = imported_editor(window, media_dir, ["clip.mp4", "photo.png"])
+    folder = editor.project.path.parent / "medias"
+    assert {Path(m.path) for m in editor.project.media} == {folder / "clip.mp4",
+                                                              folder / "photo.png"}
+    assert {m.original_path for m in editor.project.media} == {
+        str(media_dir / "clip.mp4"), str(media_dir / "photo.png")}
+    editor.import_files([str(media_dir / "clip.mp4")])  # déjà importé : ignoré
+    pump(300)
+    assert len(editor.project.media) == 2 and editor.pending_imports == 0
+    assert not editor.jobs_box.isVisibleTo(editor)
+
+
+@needs_ffmpeg
+def test_old_project_moves_into_folder_and_gathers_media(window, isolated_home, media_dir):
+    from montar.core.project import MediaItem
+    from montar.media.probe import probe
+
+    root = isolated_home / "Vidéos" / "Montar"
+    root.mkdir(parents=True, exist_ok=True)
+    old = Project("Ancien")
+    item = probe(str(media_dir / "clip.mp4"))
+    old.media.append(MediaItem(**{**item.__dict__}))
+    old.save(root / "Ancien.montar")
+    editor = window.open_project(root / "Ancien.montar")
+    assert editor.project.path == root / "Ancien" / "Ancien.montar"
+    assert not (root / "Ancien.montar").exists()
+    copy = root / "Ancien" / "medias" / "clip.mp4"
+    assert wait_until(lambda: editor.project.media[0].path == str(copy))
+    assert editor.project.media[0].original_path == str(media_dir / "clip.mp4")
+    assert copy.exists() and (media_dir / "clip.mp4").exists()  # l'original est intact
+    assert editor.save()
+    assert Project.load(editor.project.path).media[0].path == str(copy)

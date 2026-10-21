@@ -9,8 +9,12 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
+import select
 import shutil
 import subprocess
+import tempfile
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -49,6 +53,8 @@ class Settings:
         s.ramp = s.ramp if s.ramp in RAMPS else "none"
         s.audio = s.audio if s.audio in AUDIO else "mute"
         s.ramp_seconds = max(0.0, min(3.0, s.ramp_seconds))
+        if s.method == "blend":
+            s.ramp = "none"  # la fusion moyenne des groupes réguliers d'images
         return s
 
     def ramp_frames(self, fps: int) -> tuple[int, int]:
@@ -57,18 +63,49 @@ class Settings:
                 r if self.ramp in ("out", "both") else 0)
 
 
-def frame_indices(source_frames: int, factor: float, ramp_in: int = 0,
-                  ramp_out: int = 0) -> list[int]:
-    """Images source retenues (relatives au début du segment), dans l'ordre.
+BLEND_SAMPLES = 8  # images moyennées par image produite (fusion)
 
-    Sans rampe : 0, N, 2N… (exactement une image sur N). Avec rampe, la vitesse passe
-    progressivement de ×1 à ×N au début et/ou de ×N à ×1 à la fin."""
+
+def _num(x: float) -> float:
+    """Valeur telle qu'écrite dans l'expression ffmpeg (calculs Python identiques)."""
+    return float(f"{x:.9f}")
+
+
+@dataclass(frozen=True)
+class _Steady:
+    """Images lo…hi retenues à pas régulier : n est retenue si un entier j vérifie
+    round(off + j·step) = n, soit ceil((n-off-½)/step) < ceil((n-off+½)/step)."""
+
+    lo: int
+    hi: int
+    off: float
+    step: float
+
+    def frames(self) -> list[int]:
+        off, step = self.off, self.step
+        return [n for n in range(self.lo, self.hi + 1)
+                if math.ceil((n - off - 0.5) / step) < math.ceil((n - off + 0.5) / step)]
+
+    def expression(self, shift: int = 0) -> str:
+        n = f"(n-{shift})" if shift else "n"
+        return (f"between(n\\,{self.lo + shift}\\,{self.hi + shift})*"
+                f"lt(ceil(({n}-{self.off:.9f}-0.5)/{self.step:.9f})\\,"
+                f"ceil(({n}-{self.off:.9f}+0.5)/{self.step:.9f}))")
+
+
+def _plan(source_frames: int, factor: float, ramp_in: int = 0,
+          ramp_out: int = 0) -> tuple[list[int], _Steady | None, list[int]]:
+    """Images retenues : début de rampe (liste), partie régulière, fin de rampe (liste).
+    La partie régulière est décrite par une formule : ffmpeg l'évalue en temps constant
+    par image, quelle que soit la longueur du segment."""
     s = max(1, int(source_frames))
     n = max(1.0, float(factor))
     if ramp_in == ramp_out == 0:
-        return [min(s - 1, round(j * n)) for j in range(max(1, math.ceil(s / n)))]
+        return [], _Steady(0, s - 1, 0.0, _num(n)), []
     while (ramp_in + ramp_out) * (1 + n) / 2 > s and (ramp_in or ramp_out):
         ramp_in, ramp_out = ramp_in // 2, ramp_out // 2  # segment trop court pour les rampes
+    if ramp_in == ramp_out == 0:
+        return [], _Steady(0, s - 1, 0.0, _num(n)), []
     steady = max(0, math.ceil((s - (ramp_in + ramp_out) * (1 + n) / 2) / n))
     total = ramp_in + steady + ramp_out
     positions, p = [], 0.0
@@ -81,17 +118,48 @@ def frame_indices(source_frames: int, factor: float, ramp_in: int = 0,
         else:
             p += n
     scale = (s - 1) / positions[-1] if positions and positions[-1] > s - 1 else 1.0
-    result, last = [], -1
+    explicit, last = [], -1
     for x in positions:
         i = min(s - 1, max(last + 1, round(x * scale)))
-        if i > s - 1:
+        if i > s - 1 or (explicit and i <= explicit[-1]):
             break
-        result.append(i)
+        explicit.append(i)
         last = i
-    return result or [0]
+    head = explicit[:ramp_in]
+    tail = explicit[len(explicit) - ramp_out:] if ramp_out else []
+    lo = head[-1] + 1 if head else 0
+    hi = tail[0] - 1 if tail else s - 1
+    middle = None
+    if steady and lo <= hi:
+        middle = _Steady(lo, hi, _num(positions[ramp_in] * scale), _num(n * scale))
+    return head, middle, tail
+
+
+def frame_indices(source_frames: int, factor: float, ramp_in: int = 0,
+                  ramp_out: int = 0) -> list[int]:
+    """Images source retenues (relatives au début du segment), dans l'ordre.
+
+    Sans rampe : 0, N, 2N… (une image sur N, arrondie). Avec rampe, la vitesse passe
+    progressivement de ×1 à ×N au début et/ou de ×N à ×1 à la fin."""
+    head, steady, tail = _plan(source_frames, factor, ramp_in, ramp_out)
+    return head + (steady.frames() if steady else []) + tail or [0]
+
+
+def _blend_samples(factor: float) -> int:
+    return max(2, min(BLEND_SAMPLES, int(factor)))
+
+
+def _blend_plan(source_frames: int, factor: float) -> tuple[_Steady, int, int]:
+    """Fusion : K images réparties sur chaque intervalle de N, moyennées par groupe de K.
+    Renvoie la sélection des échantillons, K et le nombre d'images produites."""
+    k = _blend_samples(factor)
+    samples = _Steady(0, max(1, int(source_frames)) - 1, 0.0, _num(factor / k))
+    return samples, k, max(1, len(samples.frames()) // k)
 
 
 def output_frames(source_frames: int, settings: Settings, fps: int) -> int:
+    if settings.method == "blend":
+        return _blend_plan(source_frames, settings.factor)[2]
     return len(frame_indices(source_frames, settings.factor, *settings.ramp_frames(fps)))
 
 
@@ -112,6 +180,7 @@ def apply(timeline, clip_id: str, start: int, end: int, settings: Settings):
 
     Sur un segment déjà accéléré, la plage [start, end[ désigne ce segment : il est d'abord
     rendu à sa durée d'origine, puis accéléré avec les nouveaux réglages."""
+    settings = Settings.from_dict(asdict(settings))  # réglages ramenés dans leurs bornes
     clip = timeline.clip(clip_id)
     existing = settings_of(clip)
     if existing is not None:
@@ -193,22 +262,23 @@ def ffmpeg_command(source: str, output: Path, source_in: int, data: dict,
     """Commande ffmpeg produisant le segment accéléré, et son nombre d'images."""
     settings = Settings.from_dict(data)
     source_frames = int(data["source_frames"])
-    indices = frame_indices(source_frames, settings.factor, *settings.ramp_frames(fps))
-    produced = len(indices)
     chain = [f"fps={fps}"]
     if settings.deflicker:
         chain.append("deflicker=size=5")
-    shift = 0
     if settings.method == "blend":
-        window = max(2, min(1024, round(settings.factor)))
-        chain.append(f"tmix=frames={window}")
-        shift = window - 1  # l'image n mélange les images n-window+1 … n
-    n = settings.factor
-    if settings.ramp == "none" and float(n).is_integer() and shift == 0:
-        chain.append(f"select='not(mod(n\\,{int(n)}))'")
+        samples, k, produced = _blend_plan(source_frames, settings.factor)
+        chain += [f"select='{samples.expression()}'", f"tmix=frames={k}",
+                  f"select='eq(mod(n\\,{k})\\,{k - 1})'"]
     else:
-        terms = "+".join(f"eq(n\\,{min(source_frames - 1, i + shift)})" for i in indices)
-        chain.append(f"select='{terms}'")
+        head, steady, tail = _plan(source_frames, settings.factor,
+                                   *settings.ramp_frames(fps))
+        terms = [f"eq(n\\,{i})" for i in head + tail]
+        if steady is not None:
+            terms.append(steady.expression())
+        expression = "+".join(terms) or "eq(n\\,0)"
+        chain.append(f"select='{expression}'")
+        produced = len(frame_indices(source_frames, settings.factor,
+                                     *settings.ramp_frames(fps)))
     chain.append(f"setpts=N/({fps}*TB)")
     cmd = [shutil.which("ffmpeg") or "ffmpeg", "-v", "error", "-nostats", "-progress", "pipe:1",
            "-y", "-ss", f"{source_in / fps:.6f}", "-i", source, "-t",
@@ -223,34 +293,68 @@ def ffmpeg_command(source: str, output: Path, source_in: int, data: dict,
     return cmd, produced
 
 
+STALL_SECONDS = 120  # sans aucun avancement de ffmpeg pendant ce délai : abandon
+
+
 def render(source: str, output: Path, source_in: int, data: dict, fps: int,
            progress=lambda ratio: None, cancelled=lambda: False) -> Path:
-    """Pré-calcule le segment ; écrit d'abord un fichier temporaire."""
+    """Pré-calcule le segment ; écrit d'abord un fichier temporaire.
+
+    L'annulation est vérifiée plusieurs fois par seconde, même si ffmpeg ne donne plus
+    de nouvelles ; un ffmpeg qui n'avance plus pendant STALL_SECONDS est arrêté."""
     output.parent.mkdir(parents=True, exist_ok=True)
     tmp = output.with_name(output.stem + ".part.mp4")
     cmd, produced = ffmpeg_command(source, tmp, source_in, data, fps)
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    # messages d'erreur dans un fichier : un tuyau plein bloquerait ffmpeg
+    errors = tempfile.TemporaryFile()
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errors)
     try:
         assert proc.stdout is not None
-        for line in proc.stdout:
+        fd = proc.stdout.fileno()
+        pending, last_change, last_state = b"", time.monotonic(), None
+        while True:
             if cancelled():
-                proc.terminate()
                 raise Cancelled()
-            if line.startswith("frame="):
-                try:
-                    progress(min(1.0, int(line[6:]) / produced))
-                except ValueError:
-                    pass
+            ready, _w, _x = select.select([fd], [], [], 0.25)
+            if ready:
+                chunk = os.read(fd, 65536)
+                if not chunk:
+                    break  # ffmpeg a terminé
+                pending += chunk
+                *lines, pending = pending.split(b"\n")
+                for line in lines:
+                    key, _sep, value = line.decode("ascii", "replace").strip().partition("=")
+                    if key in ("frame", "out_time_us") and (key, value) != last_state:
+                        last_state, last_change = (key, value), time.monotonic()
+                    if key == "frame":
+                        try:
+                            progress(min(1.0, int(value) / produced))
+                        except ValueError:
+                            pass
+            if time.monotonic() - last_change > STALL_SECONDS:
+                raise RuntimeError(_stalled_message())
         code = proc.wait()
         if code != 0:
-            error = (proc.stderr.read() if proc.stderr else "").strip().splitlines()
-            raise RuntimeError(error[-1] if error else f"ffmpeg a échoué (code {code})")
+            errors.seek(0)
+            lines = errors.read().decode("utf-8", "replace").strip().splitlines()
+            raise RuntimeError(lines[-1] if lines else f"ffmpeg a échoué (code {code})")
         tmp.replace(output)
         progress(1.0)
         return output
     except BaseException:
         if proc.poll() is None:
-            proc.kill()
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
         proc.wait()
         tmp.unlink(missing_ok=True)
         raise
+    finally:
+        errors.close()
+
+
+def _stalled_message() -> str:
+    return (f"ffmpeg n'avance plus depuis {STALL_SECONDS // 60} minutes ; le calcul a été "
+            "arrêté")

@@ -8,7 +8,7 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
 
 ## État d'avancement
 
-**Jalon J3 — modules et Timelapse** (version 0.4.3) :
+**Jalon J3 — modules et Timelapse** (version 0.4.4) :
 
 - **Timelapse** (module intégré) : sélectionnez une partie d'un clip (**Maj + glisser**
   sur le clip, outil « plage » de la barre de la timeline, ou touches **I** / **O**), puis onglet **Vitesse → Timelapse…** (ou clic droit sur le
@@ -27,7 +27,13 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
   panneaux correspondants ;
 - 0.4.3 : correction du placement des éléments déplacés ou redimensionnés sur un système
   en français (MLT lisait « 345.6 » avec la virgule décimale) ; `montar --diagnostic`
-  affiche les versions, la convention numérique et vérifie le placement dans l'aperçu.
+  affiche les versions, la convention numérique et vérifie le placement dans l'aperçu ;
+- 0.4.4 : chaque projet a son dossier `~/Vidéos/Montar/<nom>/` (fichier `.montar` et
+  sous-dossier `medias/`) ; **tous les médias importés y sont copiés**, vidéos comprises
+  (avancement dans l'en-tête). Les projets plus anciens sont rangés dans leur dossier et
+  leurs médias copiés à l'ouverture. Timelapse : calcul beaucoup plus rapide sur les longues
+  vidéos (facteur non entier, rampes, fusion), bouton **Annuler** et **Relancer** après un
+  échec ou une annulation, arrêt d'un ffmpeg qui ne progresse plus.
 
 **Jalon J2 — édition de base** (0.3) :
 
@@ -65,7 +71,7 @@ Pas encore disponible : export (J4).
 ## Installer le paquet
 
 ```sh
-sudo apt install ./montar_0.4.3_all.deb
+sudo apt install ./montar_0.4.4_all.deb
 ```
 
 Le paquet est produit par l'intégration continue (onglet *Actions* de GitHub, artefacts

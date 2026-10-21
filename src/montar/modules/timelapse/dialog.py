@@ -88,9 +88,11 @@ class TimelapseDialog(QDialog):
 
         layout.addWidget(label(_("Méthode")))
         self.method = Segmented([(k, _(v)) for k, v in METHODS.items()], settings.method)
+        self.method.changed.connect(lambda _k: self._update())
         layout.addWidget(self.method)
         hint = label(_("Échantillonnage : une image sur N, rendu net et saccadé. Fusion : "
-                       "moyenne de N images, rendu fluide avec traînées de mouvement."), "small")
+                       "moyenne d'images réparties sur chaque intervalle, rendu fluide avec "
+                       "traînées de mouvement."), "small")
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
@@ -154,11 +156,17 @@ class TimelapseDialog(QDialog):
             self._update()
 
     def settings(self) -> Settings:
-        return Settings(self.factor.value(), self.method.current(), self.ramp.current(),
-                        self.ramp_seconds.value(), self.audio.current(),
-                        self.deflicker.isChecked())
+        return Settings.from_dict({
+            "factor": self.factor.value(), "method": self.method.current(),
+            "ramp": self.ramp.current(), "ramp_seconds": self.ramp_seconds.value(),
+            "audio": self.audio.current(), "deflicker": self.deflicker.isChecked()})
 
     def _update(self) -> None:
+        blend = self.method.current() == "blend"
+        for w in (self.ramp, self.ramp_seconds):
+            w.setEnabled(not blend)
+            w.setToolTip(_("Les rampes ne sont possibles qu'en échantillonnage") if blend
+                         else "")
         produced = output_frames(self._source_frames, self.settings(), self._fps)
         if self.mode.current() == "factor":
             self.target.blockSignals(True)

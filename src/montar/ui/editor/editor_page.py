@@ -2,6 +2,7 @@
 """Écran de montage (maquette 02)."""
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from montar.engine.base import Engine, timeline_spec
 from montar.engine.geometry import offset_for_center, placement
 from montar.i18n import _
 from montar.media.probe import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, is_supported
+from montar.media.store import is_inside
 from montar.media.thumbnails import thumbnail_path
 from montar.media.waveform import waveform_path
 from montar.plugins import ModuleManager, default_manager
@@ -34,7 +36,7 @@ from montar.ui.editor.controller import EditorController
 from montar.ui.editor.importer import MediaImporter
 from montar.ui.editor.inspector import Inspector
 from montar.ui.editor.media_panel import MediaPanel
-from montar.ui.editor.modules import EditorModules
+from montar.ui.editor.modules import CANCELLED, EditorModules
 from montar.ui.editor.panels import EffectsPanel, FiltersPanel, TextPanel, TransitionsPanel
 from montar.ui.editor.player import Player
 from montar.ui.editor.preview import PreviewPanel
@@ -42,6 +44,8 @@ from montar.ui.text_render import image_path as text_image_path
 from montar.ui.text_render import preset_style, text_bounds
 from montar.ui.timeline.panel import TimelinePanel
 from montar.ui.widgets import LogoMark, Segmented, button, label, set_icon
+
+log = logging.getLogger(__name__)
 
 SOON = "Disponible dans une prochaine version"
 
@@ -139,6 +143,9 @@ class EditorPage(QWidget):
         self.importer.finished.connect(self._on_imported)
         self.importer.thumbnailReady.connect(self._on_thumbnail)
         self.importer.waveformReady.connect(self._on_waveform)
+        self.importer.copyProgress.connect(self._on_copy_progress)
+        self.importer.gathered.connect(self._on_gathered)
+        self._copies: dict[str, float] = {}  # fichier d'origine → avancement de la copie
         self.media_panel.importRequested.connect(self.choose_files)
         self.media_panel.mediaSelected.connect(self._on_media_selected)
         self.media_panel.removeRequested.connect(self.remove_media)
@@ -176,6 +183,7 @@ class EditorPage(QWidget):
 
         self._install_shortcuts()
         self._load_project_media()
+        self._gather_media()
         self._refresh_header()
         self._update_history_buttons()
         self.preview.set_canvas(*project.canvas_size)
@@ -226,10 +234,25 @@ class EditorPage(QWidget):
         self.jobs_bar.setFixedWidth(110)
         self.jobs_bar.setTextVisible(False)
         self.jobs_bar.setFixedHeight(6)
+        self.jobs_cancel = button("", "ghost", "x", tooltip=_("Annuler le calcul"))
+        self.jobs_cancel.clicked.connect(self.modules.jobs.cancel)
         jl.addWidget(self.jobs_label)
         jl.addWidget(self.jobs_bar)
+        jl.addWidget(self.jobs_cancel)
         self.jobs_box.setVisible(False)
         layout.addWidget(self.jobs_box)
+        self.failed_box = QWidget()
+        fl = QHBoxLayout(self.failed_box)
+        fl.setContentsMargins(12, 0, 0, 0)
+        fl.setSpacing(6)
+        self.failed_label = label("", "small")
+        self.failed_label.setStyleSheet("color: #B4452F;")
+        self.retry_button = button(_("Relancer"), "secondary", "rotate-cw")
+        self.retry_button.clicked.connect(self._retry_jobs)
+        fl.addWidget(self.failed_label)
+        fl.addWidget(self.retry_button)
+        self.failed_box.setVisible(False)
+        layout.addWidget(self.failed_box)
         layout.addSpacing(12)
         self.undo_button = button("", "ghost", "undo-2")
         self.redo_button = button("", "ghost", "redo-2")
@@ -323,6 +346,48 @@ class EditorPage(QWidget):
         self.media_panel.set_media(self.project.media, self.thumbnails)
         self._shown_media = [m.id for m in self.project.media]
 
+    def _gather_media(self) -> None:
+        """Projets d'avant la copie des médias : les fichiers encore hors du dossier du
+        projet y sont copiés en tâche de fond."""
+        folder = self.project.media_dir
+        if folder is None:
+            return
+        for m in self.project.media:
+            if m.exists and not is_inside(m.path, folder) and m.path not in self._copies:
+                self._copies[m.path] = 0.0
+                self.importer.gather(m.id, m.path, folder)
+        self._update_jobs()
+
+    def _on_gathered(self, media_id: str, copy: str | None, error: str) -> None:
+        media = self.project.find_media(media_id)
+        if media is not None:
+            self._copies.pop(media.path, None)
+        self._update_jobs()
+        if media is None or copy is None:
+            if error:
+                log.warning("copie de %s dans le projet impossible : %s",
+                            media.path if media else media_id, error)
+            return
+        original = media.path
+
+        def relocate(t, media_id=media_id, copy=copy, original=original):
+            m = t.project.find_media(media_id)
+            if m is not None:
+                m.path, m.original_path = copy, m.original_path or original
+
+        self.controller.edit(_("Copier {name} dans le projet").format(name=media.name),
+                             relocate)
+        moved = self.project.find_media(media_id)
+        if moved is not None:
+            if moved.kind != "audio":
+                self.importer.ensure_thumbnail(moved)
+            self._ensure_waveform(moved)
+
+    def _on_copy_progress(self, path: str, ratio: float) -> None:
+        if path in self._copies:
+            self._copies[path] = ratio
+            self._update_jobs()
+
     def _ensure_waveform(self, media: MediaItem) -> None:
         if not media.has_audio or not media.exists:
             return
@@ -415,14 +480,30 @@ class EditorPage(QWidget):
 
     def _update_jobs(self) -> None:
         summary = self.modules.jobs.summary()
+        copying = getattr(self, "_copies", None)
+        if copying:
+            ratio = sum(copying.values()) / len(copying)
+            summary = (_("Copie des médias ({n})").format(n=len(copying)) if len(copying) > 1
+                       else _("Copie des médias"), ratio)
+        self.jobs_cancel.setVisible(not copying)
         self.jobs_box.setVisible(summary is not None)
         if summary is not None:
             title, ratio = summary
             self.jobs_label.setText(_("{title} : {p} %").format(title=title, p=round(ratio * 100)))
             self.jobs_bar.setValue(round(ratio * 100))
+        failure = self.modules.jobs.failure_summary() if summary is None else None
+        self.failed_box.setVisible(failure is not None)
+        if failure is not None:
+            title, cancelled = failure
+            text = _("{title} annulé") if cancelled else _("{title} : échec")
+            self.failed_label.setText(text.format(title=title))
+
+    def _retry_jobs(self) -> None:
+        self.modules.jobs.retry()
+        self._reload_player()  # les sources des modules relancent leur calcul
 
     def _on_job_finished(self, _key: str, error: str) -> None:
-        if error and error != "annulé":
+        if error and error != CANCELLED:
             self.modules.error(_("Un calcul en arrière-plan a échoué :\n{e}").format(e=error))
         self._reload_player()  # le fichier pré-calculé remplace l'aperçu provisoire
         self.timeline.view.viewport().update()
@@ -549,10 +630,15 @@ class EditorPage(QWidget):
                     files="\n".join(skipped)))
         todo = [p for p in dict.fromkeys(todo) if p not in self._import_queue]
         self._import_queue.extend(todo)
-        self.importer.import_files(todo)
+        for p in todo:
+            self._copies[p] = 0.0
+        self._update_jobs()
+        self.importer.import_files(todo, self.project.media_dir)
 
     def _on_imported(self, path: str, item: MediaItem | None, thumb: str | None,
                      error: str) -> None:
+        self._copies.pop(path, None)
+        self._update_jobs()
         self._import_results[path] = (item, thumb, error)
         errors = []
         while self._import_queue and self._import_queue[0] in self._import_results:

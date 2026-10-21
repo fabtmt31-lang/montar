@@ -20,6 +20,8 @@ from montar.ui.editor.controller import EditorController
 
 log = logging.getLogger(__name__)
 
+CANCELLED = "annulé"
+
 
 class _JobSignals(QObject):
     progress = pyqtSignal(str, float)
@@ -38,7 +40,7 @@ class _Job(QRunnable):
             self.signals.done.emit(self.key, "")
         except Exception as exc:  # erreur du module : signalée, jamais fatale
             if self.cancel.is_set():
-                self.signals.done.emit(self.key, "annulé")
+                self.signals.done.emit(self.key, CANCELLED)
             else:
                 log.exception("tâche de fond %s", self.key)
                 self.signals.done.emit(self.key, f"{type(exc).__name__} : {exc}")
@@ -58,7 +60,7 @@ class JobRunner(QObject):
         self._signals.progress.connect(self._on_progress)
         self._signals.done.connect(self._on_done)
         self.jobs: dict[str, dict] = {}  # clé → {title, progress, cancel}
-        self.failed: dict[str, str] = {}
+        self.failed: dict[str, tuple[str, str]] = {}  # clé → (titre, erreur)
 
     def schedule(self, key: str, title: str, work) -> None:
         if key in self.jobs or key in self.failed:
@@ -75,10 +77,31 @@ class JobRunner(QObject):
 
     def _on_done(self, key: str, error: str) -> None:
         job = self.jobs.pop(key, None)
-        if error and job is not None and not job["cancel"].is_set():
-            self.failed[key] = error
+        if job is not None and job["cancel"].is_set():
+            error = CANCELLED
+        if error and job is not None:
+            # ni relancé automatiquement, ni oublié : « Relancer » le reprend
+            self.failed[key] = (job["title"], error)
         self.changed.emit()
         self.finished.emit(key, error)
+
+    def cancel(self) -> None:
+        """Interrompt les calculs en cours (ffmpeg est arrêté en moins d'une seconde)."""
+        for job in self.jobs.values():
+            job["cancel"].set()
+
+    def retry(self) -> None:
+        """Oublie les échecs et annulations : les calculs reprennent au prochain rendu."""
+        self.failed.clear()
+        self.changed.emit()
+
+    def failure_summary(self) -> tuple[str, bool] | None:
+        """(titre, annulé) des calculs interrompus, ou None."""
+        if not self.failed:
+            return None
+        titles = {title for title, _e in self.failed.values()}
+        cancelled = all(e == CANCELLED for _t, e in self.failed.values())
+        return (titles.pop() if len(titles) == 1 else _("Calculs")), cancelled
 
     def summary(self) -> tuple[str, float] | None:
         if not self.jobs:

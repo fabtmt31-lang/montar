@@ -2,13 +2,14 @@
 """Fenêtre principale : accueil ↔ montage."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from PyQt6.QtCore import QSize
 from PyQt6.QtWidgets import QDialog, QFileDialog, QMainWindow, QMessageBox, QStackedWidget
 
 from montar import __version__
-from montar.core.project import Project, ProjectError, unique_project_path
+from montar.core.project import Project, ProjectError, unique_project_folder
 from montar.core.recent import RecentProjects
 from montar.core.settings import Settings
 from montar.engine import get_engine
@@ -21,6 +22,8 @@ from montar.ui.editor.editor_page import EditorPage, media_file_filter
 from montar.ui.home.home_page import HomePage, HomeShell
 from montar.ui.home.preferences_page import PreferencesPage
 from montar.ui.theme import theme
+
+log = logging.getLogger(__name__)
 
 
 class MainWindow(QMainWindow):
@@ -82,7 +85,7 @@ class MainWindow(QMainWindow):
     def create_project(self, params: NewProjectParams) -> EditorPage | None:
         project = Project(name=params.name, aspect=params.aspect,
                           resolution=params.resolution, fps=params.fps)
-        target = unique_project_path(self.settings.projects_path, params.name)
+        target = unique_project_folder(self.settings.projects_path, params.name)
         try:
             project.save(target)
         except (OSError, ProjectError) as exc:
@@ -110,8 +113,27 @@ class MainWindow(QMainWindow):
             self.recent.remove(Path(path))
             self.refresh_recent()
             return None
+        project = self._move_into_own_folder(project)
         self.recent.add(project.path)
         return self._show_editor(project)
+
+    def _move_into_own_folder(self, project: Project) -> Project:
+        """Projets enregistrés directement dans le dossier des projets (avant la 0.5) :
+        le fichier est rangé dans un dossier à son nom, où ses médias seront copiés."""
+        path = project.path
+        root = self.settings.projects_path
+        try:
+            if path is None or path.parent.resolve() != root.resolve():
+                return project
+            target = unique_project_folder(root, path.stem)
+            target.parent.mkdir(parents=True)
+            project.save(target)  # chemins des médias réécrits pour le nouvel emplacement
+            path.unlink()
+        except OSError as exc:
+            log.warning("projet laissé à son emplacement (%s) : %s", path, exc)
+            return project
+        self.recent.remove(path)
+        return project
 
     def _show_editor(self, project: Project) -> EditorPage:
         self._close_editor()

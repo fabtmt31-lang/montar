@@ -63,7 +63,7 @@ La colonne « Écran » renvoie aux maquettes du §6.
 | F-PRJ-06 | Navigation latérale : Accueil, Mes projets, Modèles, Médiathèque, Kit de marque, Corbeille, Préférences. | P1 (Accueil, Mes projets, Médiathèque, Corbeille, Préférences) / P2 (Modèles) / P3 (Kit de marque) | 01 |
 | F-PRJ-07 | **Corbeille** : un projet supprimé y reste jusqu'à vidage manuel (ou après 30 jours, réglable). | P2 | 01 |
 | F-PRJ-08 | Indicateur d'**espace disque local** utilisé par montar (cache, proxys, sauvegardes) par rapport à l'espace libre du disque — et non un quota cloud. | P2 | 01 |
-| F-PRJ-09 | Les médias sont **référencés** (non copiés) ; option « Rassembler le projet » pour copier tous les médias dans un dossier (archivage / transfert). | P2 | — |
+| F-PRJ-09 | Chaque projet a son **dossier** (`~/Vidéos/Montar/<nom>/` : fichier `.montar` et sous-dossier `medias/`) ; **tous les médias importés y sont copiés** (vidéos comprises), le fichier d'origine n'est jamais modifié. Le dossier se déplace ou se sauvegarde d'un bloc. Les projets plus anciens sont rangés dans leur dossier et leurs médias copiés à l'ouverture (voir D8). | P1 | — |
 | F-PRJ-10 | Détection des médias manquants et outil de reliaison. | P1 | — |
 | F-PRJ-11 | Annuler / Rétablir illimité (dans la limite de la session), boutons dans l'en-tête de l'éditeur. | P1 | 02 |
 | F-PRJ-12 | **Modèles** : enregistrer un projet comme modèle et créer un projet à partir d'un modèle (« Partir d'un modèle »). Aucun modèle fourni n'est exigé ; quelques modèles minimaux de démonstration (intro titre, outro, story verticale) sont acceptés s'ils n'utilisent aucun média externe. | P2 | 01, 04 |
@@ -460,6 +460,7 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
 | D5 | Distributions Linux | **Debian, Ubuntu, Linux Mint** pour le moment (paquet `.deb`). |
 | D6 | Interface | Basée sur les maquettes `docs/maquettes/Montar.html` et leur charte « verts pastel ». |
 | D7 | Anciennes versions | Ubuntu 22.04 et Linux Mint 21 (sans PyQt6 packagé) ne sont pas ciblées par le `.deb` ; un Flatpak pourra les couvrir après J4. |
+| D8 | Médias du projet | Copiés dans le dossier du projet, vidéos comprises (choix de sûreté, au prix de l'espace disque). |
 
 ### Points restant ouverts
 1. Moteur sous Windows (bindings MLT ou moteur alternatif) : à trancher par prototype en début de phase 2.

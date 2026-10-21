@@ -130,3 +130,27 @@ def test_settings(tmp_path):
     f.write_text('{"theme": "fluo", "preview_quality": 3}')
     loaded = Settings.load(f)
     assert (loaded.theme, loaded.preview_quality) == ("light", "medium")
+
+
+def test_project_folder_and_copied_media(tmp_path):
+    from montar.core.project import MediaItem, unique_project_folder
+
+    first = unique_project_folder(tmp_path, "Mon film")
+    assert first == tmp_path / "Mon film" / "Mon film.montar"
+    first.parent.mkdir()
+    assert unique_project_folder(tmp_path, "Mon film") == \
+        tmp_path / "Mon film 2" / "Mon film 2.montar"
+    project = Project("Mon film")
+    project.save(first)
+    assert project.media_dir == tmp_path / "Mon film" / "medias"
+    copy = project.media_dir / "plage.mp4"
+    project.media.append(MediaItem(str(copy), "video", original_path="/ailleurs/plage.mp4"))
+    assert project.has_media_path("/ailleurs/plage.mp4") and project.has_media_path(copy)
+    project.save()
+    data = json.loads(first.read_text(encoding="utf-8"))
+    assert data["media"][0]["path"] == "medias/plage.mp4"  # dossier déplaçable d'un bloc
+    moved = tmp_path / "sauvegarde"
+    first.parent.rename(moved)
+    loaded = Project.load(moved / "Mon film.montar")
+    assert loaded.media[0].path == str(moved / "medias" / "plage.mp4")
+    assert loaded.media[0].original_path == "/ailleurs/plage.mp4"

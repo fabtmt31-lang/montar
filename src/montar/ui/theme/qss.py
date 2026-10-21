@@ -124,6 +124,9 @@ QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{ width: 0; border: 
 QComboBox QAbstractItemView {{ background: {surface}; border: 1px solid {border};
                                selection-background-color: {mist}; selection-color: {ink}; }}
 
+QProgressBar {{ background: {border}; border: none; border-radius: 3px; }}
+QProgressBar::chunk {{ background: {forest}; border-radius: 3px; }}
+
 QSlider::groove:horizontal {{ height: 4px; background: {border}; border-radius: 2px; }}
 QSlider::sub-page:horizontal {{ background: {forest}; border-radius: 2px; }}
 QSlider::handle:horizontal {{ background: {forest}; width: 16px; height: 16px;

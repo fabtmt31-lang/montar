@@ -14,6 +14,7 @@ from montar.core import formats
 
 FORMAT_VERSION = 4  # 2 : clips ; 3 : réglages, textes, transitions ; 4 : réglages de modules
 PROJECT_SUFFIX = ".montar"
+MEDIA_DIR = "medias"
 
 
 class ProjectError(Exception):
@@ -22,7 +23,8 @@ class ProjectError(Exception):
 
 @dataclass
 class MediaItem:
-    """Média importé dans le projet. Le fichier source n'est jamais copié ni modifié."""
+    """Média importé dans le projet : une copie du fichier, rangée dans le dossier « medias »
+    du projet (le fichier d'origine n'est jamais modifié)."""
 
     path: str  # chemin absolu en mémoire ; relatif au projet dans le fichier quand possible
     kind: str = "video"  # video | audio | image
@@ -34,6 +36,7 @@ class MediaItem:
     video_codec: str = ""
     audio_codec: str = ""
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    original_path: str = ""  # fichier d'origine de la copie (évite d'importer deux fois)
 
     @property
     def name(self) -> str:
@@ -228,9 +231,17 @@ class Project:
     def find_media(self, media_id: str) -> MediaItem | None:
         return next((m for m in self.media if m.id == media_id), None)
 
+    @property
+    def media_dir(self) -> Path | None:
+        """Dossier des copies des médias, à côté du fichier du projet."""
+        return self.path.parent / MEDIA_DIR if self.path is not None else None
+
     def has_media_path(self, path: str | os.PathLike[str]) -> bool:
+        """Le fichier (ou sa copie) est-il déjà dans le projet ?"""
         target = os.path.abspath(path)
-        return any(os.path.abspath(m.path) == target for m in self.media)
+        return any(target in (os.path.abspath(m.path),
+                              os.path.abspath(m.original_path) if m.original_path else "")
+                   for m in self.media)
 
     # --- sérialisation ---------------------------------------------------
 
@@ -340,12 +351,27 @@ def _resolve_path(path: str, base: Path | None) -> str:
     return str(p)
 
 
+def _safe_name(name: str) -> str:
+    return "".join(c for c in name if c not in '/\\:*?"<>|').strip() or "Sans titre"
+
+
 def unique_project_path(directory: Path, name: str) -> Path:
     """Chemin libre « <nom>.montar », « <nom> 2.montar »… dans le dossier donné."""
-    safe = "".join(c for c in name if c not in '/\\:*?"<>|').strip() or "Sans titre"
+    safe = _safe_name(name)
     candidate = directory / f"{safe}{PROJECT_SUFFIX}"
     n = 2
     while candidate.exists():
         candidate = directory / f"{safe} {n}{PROJECT_SUFFIX}"
         n += 1
     return candidate
+
+
+def unique_project_folder(directory: Path, name: str) -> Path:
+    """Fichier d'un nouveau projet dans son propre dossier : « <nom>/<nom>.montar »
+    (« <nom> 2/<nom> 2.montar »… si le dossier existe déjà)."""
+    safe = _safe_name(name)
+    label, n = safe, 2
+    while (directory / label).exists():
+        label = f"{safe} {n}"
+        n += 1
+    return directory / label / f"{label}{PROJECT_SUFFIX}"
