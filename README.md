@@ -8,17 +8,23 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
 
 ## État d'avancement
 
-**Jalon J3 — modules et Timelapse** (version 0.4.0) :
+**Jalon J3 — modules et Timelapse** (version 0.4.1) :
 
-- **Timelapse** (module intégré) : marquez une partie d'un clip avec **I** (début) et
-  **O** (fin) dans la timeline, puis onglet **Vitesse → Timelapse…** (ou clic droit sur le
+- **Timelapse** (module intégré) : sélectionnez une partie d'un clip (**Maj + glisser**
+  sur le clip, outil « plage » de la barre de la timeline, ou touches **I** / **O**), puis onglet **Vitesse → Timelapse…** (ou clic droit sur le
   clip). Facteur ×2 à ×1000 ou durée cible, échantillonnage (une image sur N) ou fusion
   d'images, rampes de vitesse, son coupé / supprimé / accéléré, stabilisation de
   l'exposition. Le segment est pré-calculé en arrière-plan (avancement dans l'en-tête) ;
   « Retirer le timelapse » rend au clip sa forme d'origine ;
 - **modules** en Python : effets, outils, sources de clip — voir
   [docs/MODULES.md](docs/MODULES.md) et l'exemple `examples/modules/negatif/` ;
-  **Préférences → Extensions** pour activer, installer (`.montar-module`) ou supprimer.
+  **Préférences → Extensions** pour activer, installer (`.montar-module`) ou supprimer ;
+- 0.4.1 : dans l'aperçu, redimensionnement par les coins avec le coin opposé fixe,
+  aimantation au centre et aux bords (Ctrl la désactive), cadre qui suit la rotation ;
+  **Isoler** coupe un clip aux bornes de la sélection ; déposer un clip entre deux pistes
+  (ou sur une place occupée) crée une nouvelle piste ; l'ordre des pistes se change en
+  glissant leur en-tête ; les modes **Couleur** et **Audio** de l'en-tête ouvrent les
+  panneaux correspondants.
 
 **Jalon J2 — édition de base** (0.3) :
 
@@ -56,7 +62,7 @@ Pas encore disponible : export (J4).
 ## Installer le paquet
 
 ```sh
-sudo apt install ./montar_0.4.0_all.deb
+sudo apt install ./montar_0.4.1_all.deb
 ```
 
 Le paquet est produit par l'intégration continue (onglet *Actions* de GitHub, artefacts

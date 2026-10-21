@@ -23,7 +23,7 @@ from PyQt6.QtGui import (
     QPixmap,
     QWheelEvent,
 )
-from PyQt6.QtWidgets import QAbstractScrollArea, QMenu
+from PyQt6.QtWidgets import QAbstractScrollArea, QApplication, QMenu
 
 from montar.core.project import Clip, MediaItem, Track
 from montar.i18n import _
@@ -40,6 +40,7 @@ RULER_H = 30
 ROW_H = {"video": 56, "audio": 46}
 EDGE_PX = 6  # zone de saisie des bords d'un clip
 SNAP_PX = 8
+INSERT_PX = 6  # près de la limite entre deux pistes : insertion d'une nouvelle piste
 MIN_PPS, MAX_PPS = 2.0, 400.0  # zoom : pixels par seconde
 _TICK_STEPS = (1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600)  # secondes
 
@@ -54,7 +55,7 @@ class _Row:
 
 @dataclass
 class _Drag:
-    mode: str  # playhead | move | start | end
+    mode: str  # playhead | move | start | end | range | track
     clip_id: str | None = None
     press: QPoint | None = None
     offset: int = 0  # écart entre le début du clip et l'image saisie
@@ -62,11 +63,13 @@ class _Drag:
     start: int = 0
     duration: int = 0
     moved: bool = False
+    insert_at: int | None = None  # nouvelle piste à cette position (déplacement)
 
 
 class TimelineView(QAbstractScrollArea):
     seekRequested = pyqtSignal(int)
     zoomChanged = pyqtSignal(float)
+    rangeChanged = pyqtSignal()
 
     def __init__(self, controller: EditorController,
                  thumbnail_for: Callable[[str], str | None],
@@ -84,6 +87,7 @@ class TimelineView(QAbstractScrollArea):
         self._junction: tuple[Clip, Clip] | None = None  # jonction visée par une transition
         # Plage marquée avec I / O sur un clip : (clip, début, fin) en images de timeline
         self.selection_range: tuple[str, int, int] | None = None
+        self.range_tool = False  # glisser sur un clip sélectionne une plage (comme Maj)
         # Fournis par la page de montage (modules) : badges d'un clip, actions d'outils
         self.badge_provider: Callable[[Clip], list[str]] = lambda clip: []
         self.tool_provider: Callable[[Clip], list[tuple[str, Callable[[], None]]]] = \
@@ -245,7 +249,8 @@ class TimelineView(QAbstractScrollArea):
         for row in rows:
             r = self._row_rect(row)
             painter.fillRect(QRect(HEADER_W, r.bottom(), w, 1), QColor(p.border))
-        dragged = self._drag.clip_id if self._drag and self._drag.mode != "playhead" else None
+        dragged = self._drag.clip_id if self._drag and self._drag.mode in (
+            "move", "start", "end") and self._drag.moved else None
         for clip in sorted(self.controller.project.clips, key=lambda c: c.start):
             if clip.id == dragged:
                 continue
@@ -258,7 +263,12 @@ class TimelineView(QAbstractScrollArea):
         if dragged:
             d = self._drag
             clip = self._find_clip(dragged)
-            if clip is not None:
+            if clip is not None and d.insert_at is not None:
+                y = self._boundary_y(rows, d.insert_at)
+                self._paint_insert_line(painter, y, HEADER_W, w)
+                rect = QRectF(self.frame_to_x(d.start), y - 20, d.duration * self.ppf, 40)
+                self._paint_clip(painter, clip, rect, True, ghost=True)
+            elif clip is not None:
                 rect = self.clip_rect(clip, d.start, d.duration, d.track_id)
                 if rect is not None:
                     self._paint_clip(painter, clip, rect, True, ghost=True)
@@ -279,8 +289,26 @@ class TimelineView(QAbstractScrollArea):
 
         self._paint_ruler(painter, w)
         self._paint_headers(painter, rows, h)
+        if self._drag is not None and self._drag.mode == "track" and \
+                self._drag.insert_at is not None:
+            self._paint_insert_line(painter, self._boundary_y(rows, self._drag.insert_at), 0, w)
         self._paint_playhead(painter, h)
         painter.end()
+
+    def _boundary_y(self, rows: list[_Row], index: int) -> int:
+        """Ordonnée (écran) de la limite au-dessus de la piste n° `index`."""
+        if not rows:
+            return RULER_H
+        if index < len(rows):
+            return self._row_rect(rows[index]).top()
+        return self._row_rect(rows[-1]).bottom() + 1
+
+    def _paint_insert_line(self, painter: QPainter, y: int, left: int, right: int) -> None:
+        painter.save()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(theme().palette.forest))
+        painter.drawRoundedRect(QRectF(left + 2, y - 2, right - left - 4, 4), 2, 2)
+        painter.restore()
 
     def _clip_color(self, clip: Clip, media: MediaItem | None) -> str:
         p = theme().palette
@@ -307,7 +335,8 @@ class TimelineView(QAbstractScrollArea):
         text_x = rect.left() + 10
         if media is not None and media.kind in ("video", "image") and not on_audio_track:
             text_x = self._paint_thumbnails(painter, media, rect)
-        if media is not None and media.has_audio and media.kind in ("audio", "video"):
+        if media is not None and media.has_audio and media.kind in ("audio", "video") \
+                and clip.volume > 0:  # son détaché ou coupé : plus de forme d'onde
             self._paint_waveform(painter, clip, media, rect, on_audio_track)
         f = QFont(FONT_UI)
         f.setPixelSize(12)
@@ -330,7 +359,8 @@ class TimelineView(QAbstractScrollArea):
             top_label = on_audio_track or (media is not None and media.kind == "audio")
             ty = rect.top() + (14 if top_label else rect.height() / 2 + 4)
             painter.drawText(int(text_x), int(ty), name)
-        x = rect.right() - 6
+        # badges à droite de la partie visible du clip (un long clip déborde de l'écran)
+        x = min(rect.right(), self.viewport().width()) - 6
         for badge in badges:
             x = self._paint_badge(painter, badge, x, rect.top() + 5)
         self._paint_fades(painter, clip, rect)
@@ -401,6 +431,7 @@ class TimelineView(QAbstractScrollArea):
         end = current[2] if current and current[0] == clip.id else clip.end
         start = min(self.playhead, end - 1)
         self.selection_range = (clip.id, max(clip.start, start), end)
+        self.rangeChanged.emit()
         self.viewport().update()
 
     def mark_out(self) -> None:
@@ -411,11 +442,37 @@ class TimelineView(QAbstractScrollArea):
         start = current[1] if current and current[0] == clip.id else clip.start
         end = max(self.playhead, start + 1)
         self.selection_range = (clip.id, start, min(clip.end, end))
+        self.rangeChanged.emit()
         self.viewport().update()
 
     def clear_range(self) -> None:
-        self.selection_range = None
+        if self.selection_range is not None:
+            self.selection_range = None
+            self.rangeChanged.emit()
         self.viewport().update()
+
+    def valid_range(self) -> tuple[Clip, int, int] | None:
+        """Plage sélectionnée, si son clip existe encore et la contient."""
+        if self.selection_range is None:
+            return None
+        clip_id, start, end = self.selection_range
+        clip = self._find_clip(clip_id)
+        if clip is None or not (clip.start <= start < end <= clip.end):
+            return None
+        return clip, start, end
+
+    def isolate_range(self) -> None:
+        """Coupe le clip aux bornes de la plage et sélectionne la partie du milieu."""
+        found = self.valid_range()
+        if found is None:
+            return
+        clip, start, end = found
+        clip_id = clip.id
+        middle = self.controller.edit(_("Isoler la sélection"),
+                                      lambda t: t.isolate(clip_id, start, end))
+        if middle is not None:
+            self.clear_range()
+            self.controller.select(middle.id)
 
     def _paint_range(self, painter: QPainter) -> None:
         if self.selection_range is None:
@@ -618,6 +675,8 @@ class TimelineView(QAbstractScrollArea):
         for row in rows:
             r = self._row_rect(row)
             painter.fillRect(QRect(0, r.bottom(), HEADER_W, 1), QColor(p.border))
+            painter.drawPixmap(0, int(r.center().y()) - 6,
+                               icon_pixmap("grip-vertical", p.text_muted, 12))
             badge = QRectF(12, r.center().y() - 11, 28, 22)
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(p.mist))
@@ -702,6 +761,11 @@ class TimelineView(QAbstractScrollArea):
             if hit is not None:
                 track, key = hit
                 self._toggle_track(track, key)
+                return
+            row = self.row_at(pos.y()) if pos.y() >= RULER_H else None
+            if row is not None:  # glisser l'en-tête : change l'ordre des pistes
+                self._drag = _Drag("track", press=pos, track_id=row.track.id)
+                self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
             return
         if pos.y() < RULER_H:
             self._drag = _Drag("playhead")
@@ -720,6 +784,15 @@ class TimelineView(QAbstractScrollArea):
             return
         clip, zone = hit
         self.controller.select(clip.id)
+        shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        if zone == "body" and (shift or self.range_tool):
+            # sélection d'une partie du clip (pour couper ou appliquer un module)
+            anchor = max(clip.start, min(clip.end, self.x_to_frame(pos.x())))
+            self._drag = _Drag("range", clip.id, pos, anchor)
+            self.viewport().setCursor(Qt.CursorShape.IBeamCursor)
+            return
+        if self.selection_range is not None and self.selection_range[0] != clip.id:
+            self.clear_range()
         mode = "move" if zone == "body" else zone
         self._drag = _Drag(mode, clip.id, pos, self.x_to_frame(pos.x()) - clip.start,
                            clip.track_id, clip.start, clip.duration)
@@ -743,19 +816,28 @@ class TimelineView(QAbstractScrollArea):
         if not d.moved and (pos - d.press).manhattanLength() < 3:
             return
         d.moved = True
+        timeline = self.controller.timeline
+        if d.mode == "track":
+            d.insert_at = self._track_insert_index(pos.y(), timeline.track(d.track_id).kind)
+            self.viewport().update()
+            return
         clip = self._find_clip(d.clip_id)
         if clip is None:
             return
-        timeline = self.controller.timeline
         frame = self.x_to_frame(pos.x())
+        if d.mode == "range":
+            frame = max(clip.start, min(clip.end, self._snap(frame, clip.id)))
+            low, high = sorted((d.offset, frame))
+            if high > low:
+                self.selection_range = (clip.id, low, high)
+                self.rangeChanged.emit()
+            self.viewport().update()
+            return
         if d.mode == "move":
-            start = self._snap(frame - d.offset, clip.id, (clip.duration,))
-            row = self.row_at(pos.y())
-            track_id = clip.track_id
-            if row is not None and timeline.accepts_clip(row.track, clip):
-                track_id = row.track.id
-            d.track_id = track_id
-            d.start = timeline.free_start(track_id, start, clip.duration, ignore=clip.id)
+            start = max(0, self._snap(frame - d.offset, clip.id, (clip.duration,)))
+            d.track_id, d.insert_at = self._move_target(pos.y(), clip, start)
+            d.start = start if d.insert_at is not None else \
+                timeline.free_start(d.track_id, start, clip.duration, ignore=clip.id)
             d.duration = clip.duration
         else:
             # le bord suit le déplacement du pointeur depuis le clic
@@ -772,11 +854,19 @@ class TimelineView(QAbstractScrollArea):
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         d, self._drag = self._drag, None
         self.viewport().unsetCursor()
-        if d is None or d.mode == "playhead" or not d.moved or d.clip_id is None:
+        if d is not None and d.mode == "track" and d.moved and d.insert_at is not None:
+            track_id, index = d.track_id, d.insert_at
+            self.controller.edit(_("Déplacer la piste"), lambda t: t.move_track(track_id, index))
+        if d is None or d.mode in ("playhead", "range", "track") or not d.moved \
+                or d.clip_id is None:
             self.viewport().update()
             return
         clip_id = d.clip_id
-        if d.mode == "move":
+        if d.mode == "move" and d.insert_at is not None:
+            index = d.insert_at
+            self.controller.edit(_("Déplacer vers une nouvelle piste"),
+                                 lambda t: t.move_clip_to_new_track(clip_id, index, d.start))
+        elif d.mode == "move":
             self.controller.edit(_("Déplacer le clip"),
                                  lambda t: t.move_clip(clip_id, d.track_id, d.start))
         elif d.mode == "start":
@@ -786,6 +876,34 @@ class TimelineView(QAbstractScrollArea):
                                  lambda t: t.trim(clip_id, "end", d.start + d.duration))
         self.viewport().update()
 
+    def _move_target(self, y: int, clip: Clip, start: int) -> tuple[str, int | None]:
+        """Piste visée par un clip déplacé, ou position d'une nouvelle piste à insérer :
+        entre deux pistes, hors des pistes du même type, ou sur une place déjà occupée."""
+        timeline = self.controller.timeline
+        kind = timeline.track(clip.track_id).kind
+        rows = self.rows()
+        low, high = timeline.track_block(kind)
+        for index in range(low, high + 1):
+            if abs(y - self._boundary_y(rows, index)) <= INSERT_PX:
+                return clip.track_id, index
+        row = self.row_at(y) if y >= RULER_H else None
+        if row is None:
+            return clip.track_id, low if y < RULER_H + INSERT_PX else high
+        index = next(i for i, r in enumerate(rows) if r.track.id == row.track.id)
+        if row.track.kind != kind:
+            return clip.track_id, low if index < low else high
+        if row.track.id != clip.track_id and timeline.free_start(
+                row.track.id, start, clip.duration, ignore=clip.id) != start:
+            # place occupée : nouvelle piste au-dessus (vidéo, texte) ou au-dessous (audio)
+            return clip.track_id, index + 1 if kind == "audio" else index
+        return row.track.id, None
+
+    def _track_insert_index(self, y: int, kind: str) -> int:
+        """Limite entre pistes du même type la plus proche du pointeur."""
+        rows = self.rows()
+        low, high = self.controller.timeline.track_block(kind)
+        return min(range(low, high + 1), key=lambda i: abs(y - self._boundary_y(rows, i)))
+
     def _update_hover(self, pos: QPoint) -> None:
         header = self._header_hit(pos)
         hover = (header[0].id, header[1]) if header else None
@@ -793,8 +911,14 @@ class TimelineView(QAbstractScrollArea):
             self._hover_header = hover
             self.viewport().update()
         hit = self.hit_test(pos) if pos.x() >= HEADER_W and pos.y() >= RULER_H else None
-        if hit is None:
+        if pos.x() < HEADER_W and header is None and pos.y() >= RULER_H \
+                and self.row_at(pos.y()) is not None:
+            self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
+        elif hit is None:
             self.viewport().unsetCursor()
+        elif hit[1] == "body" and (self.range_tool or QApplication.keyboardModifiers()
+                                   & Qt.KeyboardModifier.ShiftModifier):
+            self.viewport().setCursor(Qt.CursorShape.IBeamCursor)
         elif hit[1] == "body":
             self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
         else:
@@ -851,6 +975,11 @@ class TimelineView(QAbstractScrollArea):
                 _("Couper"), lambda t: t.split_at(self.playhead, clip_id)))
             menu.addAction(_("Dupliquer"), lambda: self.controller.edit(
                 _("Dupliquer"), lambda t: t.duplicate(clip_id)))
+            found = self.valid_range()
+            if found is not None and found[0].id == clip_id:
+                menu.addAction(_("Isoler la sélection (couper aux deux bornes)"),
+                               self.isolate_range)
+                menu.addAction(_("Effacer la sélection"), self.clear_range)
             timeline = self.controller.timeline
             right = timeline.neighbour(clip_id, "right")
             if right is not None and timeline.transition_after(clip_id) is None:
@@ -867,6 +996,9 @@ class TimelineView(QAbstractScrollArea):
             tools = self.tool_provider(hit[0])
             if tools:
                 menu.addSeparator()
+                if found is not None and found[0].id == clip_id:
+                    note = menu.addAction(_("Sur la plage sélectionnée :"))
+                    note.setEnabled(False)
                 for text, action in tools:
                     menu.addAction(text, action)
             menu.addSeparator()

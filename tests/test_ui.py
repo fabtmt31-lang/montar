@@ -7,7 +7,7 @@ import pytest
 pytest.importorskip("PyQt6.QtWidgets")
 pytest.importorskip("PyQt6.QtSvg")
 
-from PyQt6.QtCore import QEvent, QEventLoop, QPoint, QPointF, Qt, QTimer  # noqa: E402
+from PyQt6.QtCore import QEvent, QEventLoop, QPoint, QPointF, QRectF, Qt, QTimer  # noqa: E402
 from PyQt6.QtGui import QMouseEvent  # noqa: E402
 from PyQt6.QtTest import QTest  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QMessageBox  # noqa: E402
@@ -191,16 +191,16 @@ def test_remove_media_removes_its_clips(window, media_dir, monkeypatch):
     assert len(editor.project.media) == 1 and len(editor.project.clips) == 1
 
 
-def drag(widget, start: QPoint, end: QPoint) -> None:
-    QTest.mousePress(widget, Qt.MouseButton.LeftButton, pos=start)
+def drag(widget, start: QPoint, end: QPoint,
+         modifiers=Qt.KeyboardModifier.NoModifier) -> None:
+    QTest.mousePress(widget, Qt.MouseButton.LeftButton, modifiers, start)
     steps = 6
     for i in range(1, steps + 1):
         point = start + (end - start) * i / steps
         event = QMouseEvent(QEvent.Type.MouseMove, QPointF(point), QPointF(point),
-                            Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton,
-                            Qt.KeyboardModifier.NoModifier)
+                            Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, modifiers)
         QApplication.sendEvent(widget, event)
-    QTest.mouseRelease(widget, Qt.MouseButton.LeftButton, pos=end)
+    QTest.mouseRelease(widget, Qt.MouseButton.LeftButton, modifiers, end)
 
 
 # --- J2 ----------------------------------------------------------------------------------
@@ -271,7 +271,7 @@ def test_text_transition_filter_and_detach(window, media_dir):
 
     # déplacement du texte dans l'aperçu
     x0 = text.text.x
-    editor._on_preview_drag("move", QPointF(100, 100), QPointF(292, 100))
+    editor._on_preview_box("move", editor._selection_rect().translated(192, 0))
     editor.preview.canvas.dragFinished.emit()
     assert text.text.x == pytest.approx(x0 + 192 / editor.project.canvas_size[0])
 
@@ -338,8 +338,9 @@ def test_preview_follows_drag(window, media_dir):
     pump(300)
     frames = []
     editor.player.frameReady.connect(lambda img, f: frames.append(f))
+    start = editor._selection_rect()
     for i in range(1, 16):
-        editor._on_preview_drag("move", QPointF(600, 300), QPointF(600 + 10 * i, 300))
+        editor._on_preview_box("move", start.translated(10 * i, 0))
         pump(40)
     editor.preview.canvas.dragFinished.emit()
     assert len(frames) >= 5  # l'aperçu est mis à jour pendant le geste
@@ -410,3 +411,176 @@ def test_missing_module_keeps_settings(window, media_dir):
     assert "inconnu.effet" in editor.inspector.missing.text()
     assert editor.save()
     assert Project.load(editor.project.path).clips[0].modules == {"inconnu.effet": {"a": 1}}
+
+
+# --- 0.4.1 : manipulation dans l'aperçu ---------------------------------------------------
+
+
+def _canvas_drag(canvas, start, end, modifiers=Qt.KeyboardModifier.NoModifier, steps=10):
+    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, modifiers, start.toPoint())
+    for i in range(1, steps + 1):
+        p = start + (end - start) * (i / steps)
+        QApplication.sendEvent(canvas, QMouseEvent(
+            QEvent.Type.MouseMove, p, p, Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton,
+            modifiers))
+    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, modifiers, end.toPoint())
+
+
+@pytest.fixture
+def canvas(app):
+    from PyQt6.QtGui import QImage
+
+    from montar.ui.editor.preview import PreviewCanvas
+
+    c = PreviewCanvas()
+    c.resize(640, 360)  # 1 pixel écran = 2 pixels de la toile
+    c.set_canvas(1280, 720)
+    image = QImage(640, 360, QImage.Format.Format_RGB32)
+    image.fill(Qt.GlobalColor.darkGreen)
+    c.set_image(image)
+    c.show()
+    boxes = []
+    c.boxChanged.connect(lambda mode, rect: boxes.append((mode, rect)))
+    yield c, boxes
+    c.close()
+
+
+def test_corner_resize_keeps_opposite_corner(canvas):
+    c, boxes = canvas
+    c.set_selection(QRectF(200, 100, 400, 300))
+    # coin bas-droit (600, 400) → (450, 400) dans la toile, soit (300, 200) → (225, 200) écran
+    _canvas_drag(c, QPointF(300, 200), QPointF(225, 200),
+                 Qt.KeyboardModifier.ControlModifier)
+    mode, rect = boxes[-1]
+    assert mode == "scale"
+    assert (rect.left(), rect.top()) == pytest.approx((200, 100), abs=0.5)
+    # proportions conservées
+    assert rect.width() / rect.height() == pytest.approx(4 / 3, abs=1e-3)
+    assert rect.right() < 600
+
+
+def test_move_snaps_to_centre_with_guides(canvas):
+    c, boxes = canvas
+    c.set_selection(QRectF(100, 100, 400, 200))  # centre (300, 200)
+    # centre amené près du centre de la toile (640, 360) à 6 px près
+    _canvas_drag(c, QPointF(150, 100), QPointF(150 + 167, 100 + 77))
+    mode, rect = boxes[-1]
+    assert mode == "move" and (rect.center().x(), rect.center().y()) == (640, 360)
+    # avec Ctrl, pas d'aimantation
+    boxes.clear()
+    c.set_selection(QRectF(100, 100, 400, 200))
+    _canvas_drag(c, QPointF(150, 100), QPointF(150 + 167, 100 + 77),
+                 Qt.KeyboardModifier.ControlModifier)
+    assert boxes[-1][1].center() != QPointF(640, 360)
+
+
+def test_rotated_selection_hit_test(canvas):
+    c, _boxes = canvas
+    c.set_selection(QRectF(440, 310, 400, 100), 90)  # bande verticale une fois tournée
+    assert c._hit(QPointF(320, 180)) == ("move", -1)
+    assert c._hit(QPointF(320 + 90, 180)) is None  # dans le cadre non tourné, pas tourné
+    assert c._hit(QPointF(320, 180 + 90)) == ("move", -1)
+    # coin haut-gauche tourné de 90° : en haut à droite
+    assert c._hit(QPointF(320 + 25, 180 - 100)) == ("scale", 0)
+
+
+@needs_ffmpeg
+def test_preview_resize_matches_render(window, media_dir):
+    editor = imported_editor(window, media_dir, ["clip.mp4", "photo.png"])
+    clip_media, photo = editor.project.media
+    editor.add_to_timeline(clip_media)
+    v2 = editor.controller.edit("piste", lambda t: t.add_track("video"))
+    editor.timeline.view.add_media(photo, v2.id, 0)
+    image_clip = editor.controller.selected_clip()
+    image_clip.transform.crop_left = 0.2
+    editor.player.seek(5)
+    pump(200)
+    start = editor._selection_rect()
+    target = QRectF(start.left(), start.top(), start.width() * 0.5, start.height() * 0.5)
+    editor._on_preview_box("scale", target)
+    editor.preview.canvas.dragFinished.emit()
+    got = editor._selection_rect()
+    assert (got.left(), got.top(), got.width()) == pytest.approx(
+        (target.left(), target.top(), target.width()), abs=0.5)
+
+
+# --- 0.4.1 : timeline ----------------------------------------------------------------------
+
+
+@needs_ffmpeg
+def test_timeline_range_isolate_new_track_and_reorder(window, media_dir):
+    editor = imported_editor(window, media_dir, ["red.mp4", "blue.mp4"])
+    red, blue = editor.project.media
+    editor.add_to_timeline(red)
+    editor.add_to_timeline(blue)
+    first, second = editor.project.clips
+    view, panel = editor.timeline.view, editor.timeline
+    view.snap = False
+    vp = view.viewport()
+
+    # Maj + glisser sur un clip : sélection d'une plage, puis « Isoler »
+    r = view.clip_rect(first)
+    y = int(r.center().y())
+    a, b = QPoint(int(r.left() + r.width() * 0.25), y), QPoint(int(r.left() + r.width() * 0.75), y)
+    drag(vp, a, b, Qt.KeyboardModifier.ShiftModifier)
+    assert view.selection_range is not None and view.selection_range[0] == first.id
+    assert first.start == 0  # le clip n'a pas bougé
+    assert panel.isolate_button.isEnabled()
+    _cid, start, end = view.selection_range
+    panel.isolate_button.click()
+    middle = editor.controller.selected_clip()
+    assert (middle.start, middle.end) == (start, end)
+    assert len(editor.project.clips) == 4 and view.selection_range is None
+
+    # glisser un clip sur la limite haute de V1 : nouvelle piste vidéo au-dessus
+    v1 = editor.controller.timeline.first_track("video")
+    rect = view.clip_rect(second)
+    row_top = view._row_rect(next(r for r in view.rows() if r.track.id == v1.id)).top()
+    grab = QPoint(int(rect.center().x()), int(rect.center().y()))
+    drag(vp, grab, QPoint(grab.x(), row_top))
+    tracks = [t for t in editor.project.tracks if t.kind == "video"]
+    assert len(tracks) == 2 and second.track_id == tracks[0].id != v1.id
+
+    # glisser l'en-tête de la nouvelle piste sous V1 : l'ordre des pistes change
+    new_row = next(r for r in view.rows() if r.track.id == second.track_id)
+    v1_row = next(r for r in view.rows() if r.track.id == v1.id)
+    start_pt = QPoint(30, view._row_rect(new_row).center().y())
+    drag(vp, start_pt, QPoint(30, view._row_rect(v1_row).bottom() - 2))
+    videos = [t.id for t in editor.project.tracks if t.kind == "video"]
+    assert videos == [v1.id, second.track_id]
+    editor.controller.undo()
+    assert [t.id for t in editor.project.tracks if t.kind == "video"] == \
+        [second.track_id, v1.id]
+
+
+@needs_ffmpeg
+def test_header_modes_open_panels(window, media_dir):
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    editor.controller.select(editor.project.clips[0].id)
+    editor.modes.button("color").click()
+    assert editor.side.currentWidget() is editor.filters_panel
+    assert editor.inspector.clip_tabs.current() == "color"
+    editor.modes.button("audio").click()
+    assert editor.inspector.clip_tabs.current() == "audio"
+    assert editor.media_panel.isVisible() or editor.side.currentWidget() is editor.media_panel
+    editor.modes.button("edit").click()
+    assert editor.inspector.clip_tabs.current() == "image"
+    assert not editor.modes.button("subtitles").isEnabled()
+
+
+@needs_ffmpeg
+def test_detached_clip_hides_waveform(window, media_dir, monkeypatch):
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    clip = editor.project.clips[0]
+    view = editor.timeline.view
+    painted = []
+    monkeypatch.setattr(view, "_paint_waveform", lambda _p, c, *a: painted.append(c.id))
+    view.viewport().repaint()
+    assert clip.id in painted
+    editor.controller.edit("détacher", lambda t: t.detach_audio(clip.id))
+    painted.clear()
+    view.viewport().repaint()
+    assert clip.id not in painted and len(painted) == 1  # seul le clip audio détaché
+    assert "mute" in view._badges(clip, editor.project.media[0])

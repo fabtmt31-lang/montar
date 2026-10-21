@@ -1,3 +1,22 @@
+montar (0.4.1) unstable; urgency=medium
+
+  * Aperçu : le coin tiré suit la souris et le coin opposé reste fixe ;
+    l'image suit le pointeur sans attendre le rendu ; aimantation au centre
+    et aux bords de la toile avec repères (Ctrl pour la désactiver) ; le
+    cadre tourne avec l'élément.
+  * Timeline : un clip au son détaché n'affiche plus de forme
+    d'onde ; badges toujours visibles sur un clip qui dépasse de l'écran.
+  * Sélection d'une partie d'un clip à la souris (Maj + glisser ou outil
+    « plage ») ; « Isoler » coupe le clip aux bornes ; les modules comme le
+    Timelapse s'appliquent à la plage sélectionnée.
+  * Pistes : déposer un clip entre deux pistes, hors des pistes ou sur une
+    place occupée crée une nouvelle piste ; l'ordre des pistes se change en
+    glissant leur en-tête.
+  * En-tête : les modes Couleur et Audio ouvrent les panneaux et onglets
+    correspondants.
+
+ -- Fabien <admin@appsdoc.fr>  Thu, 22 Oct 2026 18:00:00 +0200
+
 montar (0.4.0) unstable; urgency=medium
 
   * Jalon J3 : système de modules et effet Timelapse.

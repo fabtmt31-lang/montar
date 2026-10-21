@@ -300,6 +300,21 @@ class Timeline:
         self.project.clips.insert(self.project.clips.index(clip) + 1, second)
         return second
 
+    def isolate(self, clip_id: str, start: int, end: int) -> Clip:
+        """Coupe le clip aux deux bornes de la plage et renvoie la partie du milieu."""
+        clip = self.clip(clip_id)
+        start, end = max(clip.start, start), min(clip.end, end)
+        if end <= start:
+            raise TimelineError("plage vide")
+        if self.timing_locked(clip) and (start, end) != (clip.start, clip.end):
+            raise TimelineError("ce clip ne peut pas être coupé")
+        middle = self.split(clip_id, start) if start > clip.start else clip
+        if middle is None:
+            raise TimelineError("impossible de couper ici (transition)")
+        if end < middle.end and self.split(middle.id, end) is None:
+            raise TimelineError("impossible de couper ici (transition)")
+        return middle
+
     def split_at(self, frame: int, clip_id: str | None = None) -> list[Clip]:
         """Coupe le clip indiqué, ou à défaut tous les clips sous la tête de lecture."""
         targets = [clip_id] if clip_id else [c.id for c in self.clips_at(frame)]
@@ -372,6 +387,38 @@ class Timeline:
         else:
             tracks.append(track)
         return track
+
+    def track_block(self, kind: str) -> tuple[int, int]:
+        """Indices (début, fin) où une piste du type peut se placer : textes, vidéos, audio."""
+        rank = TRACK_KINDS.index(kind)
+        low = sum(1 for t in self.project.tracks if TRACK_KINDS.index(t.kind) < rank)
+        return low, low + sum(1 for t in self.project.tracks if t.kind == kind)
+
+    def insert_track(self, kind: str, index: int) -> Track:
+        """Nouvelle piste à la position `index`, ramenée parmi les pistes du même type."""
+        if kind not in TRACK_KINDS:
+            raise TimelineError(f"type de piste inconnu : {kind}")
+        low, high = self.track_block(kind)
+        track = Track(kind, TRACK_NAMES[kind])
+        self.project.tracks.insert(max(low, min(high, index)), track)
+        return track
+
+    def move_track(self, track_id: str, index: int) -> None:
+        """Déplace une piste vers la position `index` (comptée avant le déplacement)."""
+        track = self.track(track_id)
+        tracks = self.project.tracks
+        old = tracks.index(track)
+        tracks.remove(track)
+        if index > old:
+            index -= 1
+        low, high = self.track_block(track.kind)
+        tracks.insert(max(low, min(high, index)), track)
+
+    def move_clip_to_new_track(self, clip_id: str, index: int, start: int) -> Clip:
+        """Déplace un clip sur une nouvelle piste insérée à la position `index`."""
+        clip = self.clip(clip_id)
+        track = self.insert_track(self.track(clip.track_id).kind, index)
+        return self.move_clip(clip_id, track.id, start)
 
     def remove_track(self, track_id: str) -> None:
         track = self.track(track_id)

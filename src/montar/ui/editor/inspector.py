@@ -56,6 +56,7 @@ class Inspector(QFrame):
         self.setFixedWidth(340)
         self.controller = controller
         self.clip_id: str | None = None
+        self.preferred_tab = "image"  # onglet mis en avant par le mode de l'en-tête
         self._refreshing = False
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -476,7 +477,15 @@ class Inspector(QFrame):
         else:
             tabs = ["image", "speed", "color"]
         self.clip_tabs.set_visible_tabs(tabs)
+        if not same and self.preferred_tab in tabs:
+            self.clip_tabs.show_tab(self.preferred_tab)
         self._refresh_clip(clip, media)
+
+    def set_preferred_tab(self, key: str) -> None:
+        """Mode Couleur ou Audio de l'en-tête : ouvre l'onglet correspondant."""
+        self.preferred_tab = key
+        if self.clip_id is not None and self.clip_tabs.bar.button(key).isVisible():
+            self.clip_tabs.show_tab(key)
 
     def _refresh_tools(self, clip: Clip) -> None:
         while self.speed_tools.count():

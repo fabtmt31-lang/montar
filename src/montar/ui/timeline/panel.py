@@ -41,6 +41,16 @@ class TimelinePanel(QFrame):
         for b in (self.split_button, self.delete_button, self.duplicate_button):
             bl.addWidget(b)
         bl.addSpacing(8)
+        self.range_button = button("", "ghost", "brackets", tooltip=_(
+            "Sélectionner une partie d'un clip en glissant (ou Maj + glisser, ou I / O)"))
+        self.range_button.setCheckable(True)
+        self.range_button.setProperty("variant", "toggle")
+        self.range_button.toggled.connect(self._set_range_tool)
+        self.isolate_button = button(_("Isoler"), "ghost", "square-split-horizontal",
+                                     tooltip=_("Couper le clip aux bornes de la sélection"))
+        bl.addWidget(self.range_button)
+        bl.addWidget(self.isolate_button)
+        bl.addSpacing(8)
         self.magnet = button("", "ghost", "magnet", tooltip=_("Magnétisme"))
         self.magnet.setCheckable(True)
         self.magnet.setChecked(True)
@@ -68,6 +78,8 @@ class TimelinePanel(QFrame):
 
         self.view = TimelineView(controller, thumbnail_for, peaks_for)
         layout.addWidget(self.view, 1)
+        self.isolate_button.clicked.connect(self.view.isolate_range)
+        self.view.rangeChanged.connect(self._update_buttons)
         zoom_out.clicked.connect(lambda: self.view.set_zoom(self.view.pps / 1.5))
         zoom_in.clicked.connect(lambda: self.view.set_zoom(self.view.pps * 1.5))
         fit.clicked.connect(self.view.zoom_to_fit)
@@ -92,12 +104,16 @@ class TimelinePanel(QFrame):
     def _set_snap(self, on: bool) -> None:
         self.view.snap = on
 
+    def _set_range_tool(self, on: bool) -> None:
+        self.view.range_tool = on
+
     def _update_buttons(self) -> None:
         has_selection = self.controller.selected_clip() is not None
         self.delete_button.setEnabled(has_selection)
         self.duplicate_button.setEnabled(has_selection)
         self.split_button.setEnabled(bool(self.controller.timeline.clips_at(self.view.playhead))
                                      or has_selection)
+        self.isolate_button.setEnabled(self.view.valid_range() is not None)
 
     def _add_track(self, kind: str) -> None:
         self.controller.edit(_("Ajouter une piste"), lambda t: t.add_track(kind))

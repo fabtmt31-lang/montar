@@ -7,7 +7,7 @@ image pleine toile : `affine_rect` calcule le rectangle qui donne le placement v
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from montar.core.project import Transform
 
@@ -75,3 +75,10 @@ def affine_rect(cw: int, ch: int, mw: int, mh: int,
 def crop_pixels(mw: int, mh: int, t: Transform) -> tuple[int, int, int, int]:
     left, right, top, bottom = _crops(t)
     return round(left * mw), round(right * mw), round(top * mh), round(bottom * mh)
+
+
+def offset_for_center(cw: int, ch: int, mw: int, mh: int, t: Transform,
+                      cx: float, cy: float) -> tuple[float, float]:
+    """Décalage (x, y) de `t` qui place le centre du contenu visible en (cx, cy)."""
+    p = placement(cw, ch, mw, mh, replace(t, x=0.0, y=0.0))
+    return (cx - p.cx) / cw, (cy - p.cy) / ch

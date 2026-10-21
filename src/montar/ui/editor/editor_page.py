@@ -2,11 +2,10 @@
 """Écran de montage (maquette 02)."""
 from __future__ import annotations
 
-import math
 from collections.abc import Callable
 from pathlib import Path
 
-from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QRectF, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QButtonGroup,
@@ -25,7 +24,7 @@ from PyQt6.QtWidgets import (
 
 from montar.core.project import MediaItem, Project, ProjectError
 from montar.engine.base import Engine, timeline_spec
-from montar.engine.geometry import placement
+from montar.engine.geometry import offset_for_center, placement
 from montar.i18n import _
 from montar.media.probe import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, is_supported
 from montar.media.thumbnails import thumbnail_path
@@ -150,7 +149,7 @@ class EditorPage(QWidget):
         self.controller.changed.connect(self._on_project_changed)
         self.controller.selectionChanged.connect(self._on_clip_selected)
         self.controller.transitionSelected.connect(self._on_transition_selected)
-        self.preview.canvas.dragged.connect(self._on_preview_drag)
+        self.preview.canvas.boxChanged.connect(self._on_preview_box)
         self.preview.canvas.dragFinished.connect(lambda: setattr(self, "_drag_origin", None))
         self._drag_origin: tuple | None = None
         self.controller.historyChanged.connect(self._update_history_buttons)
@@ -240,11 +239,16 @@ class EditorPage(QWidget):
         layout.addWidget(self.redo_button)
         layout.addStretch(1)
 
-        modes = Segmented([("edit", _("Montage")), ("color", _("Couleur")),
-                           ("audio", _("Audio")), ("subtitles", _("Sous-titres"))])
-        for key in ("color", "audio", "subtitles"):
-            modes.button(key).setEnabled(False)
-            modes.button(key).setToolTip(_(SOON))
+        # Modes de travail : chacun ouvre les panneaux et l'onglet de l'inspecteur utiles.
+        self.modes = modes = Segmented([("edit", _("Montage")), ("color", _("Couleur")),
+                                        ("audio", _("Audio")), ("subtitles", _("Sous-titres"))])
+        for key, tip in (("edit", "Médias et réglages d'image"),
+                         ("color", "Filtres et réglages de couleur du clip sélectionné"),
+                         ("audio", "Sons du projet et réglages audio du clip sélectionné"),
+                         ("subtitles", SOON)):
+            modes.button(key).setToolTip(_(tip))
+        modes.button("subtitles").setEnabled(False)
+        modes.changed.connect(self.set_mode)
         layout.addWidget(modes)
         layout.addStretch(1)
 
@@ -378,6 +382,13 @@ class EditorPage(QWidget):
         self.importer.wait(5000)
         return ok
 
+    def set_mode(self, mode: str) -> None:
+        side, tab = {"edit": ("media", "image"), "color": ("filters", "color"),
+                     "audio": ("audio", "audio")}.get(mode, ("media", "image"))
+        self.modes.set_current(mode)
+        self.show_side(side)
+        self.inspector.set_preferred_tab(tab)
+
     def show_side(self, key: str) -> None:
         """Affiche un panneau du rail ; « Audio » montre les sons du projet."""
         if key in self.rail_buttons:
@@ -442,39 +453,41 @@ class EditorPage(QWidget):
         return QRectF(p.left, p.top, p.width, p.height)
 
     def _update_preview_selection(self) -> None:
-        self.preview.canvas.set_selection(self._selection_rect())
+        clip = self.controller.selected_clip()
+        rotation = 0.0 if clip is None or clip.is_text else clip.transform.rotation
+        self.preview.canvas.set_selection(self._selection_rect(), rotation)
 
-    def _on_preview_drag(self, mode: str, start: QPointF, current: QPointF) -> None:
+    def _on_preview_box(self, mode: str, rect: QRectF) -> None:
+        """Le cadre de l'aperçu a été déplacé ou redimensionné : met à jour le clip."""
         clip = self.controller.selected_clip()
         if clip is None:
             return
-        cw, ch = self.project.canvas_size
         if self._drag_origin is None or self._drag_origin[0] != clip.id:
-            rect = self._selection_rect()
-            if rect is None:
+            start = self._selection_rect()
+            if start is None:
                 return
-            if clip.is_text:
-                values = (clip.text.x, clip.text.y, clip.text.size)
-            else:
-                values = (clip.transform.x, clip.transform.y, clip.transform.scale)
-            self._drag_origin = (clip.id, values, rect.center())
-        _cid, (x0, y0, s0), center = self._drag_origin
-        if mode == "move":
-            dx, dy = (current.x() - start.x()) / cw, (current.y() - start.y()) / ch
+            size = clip.text.size if clip.is_text else clip.transform.scale
+            self._drag_origin = (clip.id, size, start.width())
+        _cid, s0, w0 = self._drag_origin
+        ratio = rect.width() / max(1e-6, w0)
+        cw, ch = self.project.canvas_size
+        media = None if clip.is_text else self.project.find_media(clip.media_id)
+        center = rect.center()
 
-            def change(c, dx=dx, dy=dy):
-                target = c.text if c.is_text else c.transform
-                target.x, target.y = round(x0 + dx, 4), round(y0 + dy, 4)
-        else:
-            d0 = max(1.0, math.hypot(start.x() - center.x(), start.y() - center.y()))
-            d1 = math.hypot(current.x() - center.x(), current.y() - center.y())
-            ratio = max(0.05, d1 / d0)
-
-            def change(c, ratio=ratio):
-                if c.is_text:
+        def change(c):
+            if c.is_text:
+                if mode == "scale":
                     c.text.size = round(max(8.0, min(600.0, s0 * ratio)), 1)
-                else:
-                    c.transform.scale = round(max(0.05, min(8.0, s0 * ratio)), 4)
+                c.text.x = round(max(0.0, min(1.0, center.x() / cw)), 4)
+                c.text.y = round(max(0.0, min(1.0, center.y() / ch)), 4)
+                return
+            t = c.transform
+            if mode == "scale":
+                t.scale = round(max(0.05, min(8.0, s0 * ratio)), 4)
+            mw, mh = (media.width, media.height) if media is not None else (cw, ch)
+            x, y = offset_for_center(cw, ch, mw, mh, t, center.x(), center.y())
+            t.x, t.y = round(x, 4), round(y, 4)
+
         label_ = _("Déplacer") if mode == "move" else _("Redimensionner")
         self.controller.edit_clip(label_, clip.id, change, merge=(clip.id, f"preview:{mode}"))
 

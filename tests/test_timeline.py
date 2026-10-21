@@ -317,3 +317,42 @@ def test_clip_settings_survive_save(tmp_path, project):
     assert (c.preset, c.fade_in, c.effects.blur) == ("sepia", 12, 0.3)
     assert loaded.transitions[0].kind == "zoom"
     assert loaded.clips[2].text.content == "Fin" and loaded.clips[2].text.background == "#FFFFFF"
+
+
+# --- 0.4.1 : pistes et plages -------------------------------------------------------
+
+
+def test_insert_and_move_tracks_stay_grouped(tl):
+    tl.add_track("text")
+    v1, a1 = tl.first_track("video"), tl.first_track("audio")
+    v2 = tl.insert_track("video", 99)  # ramenée en bas du groupe vidéo, au-dessus de l'audio
+    kinds = [t.kind for t in tl.project.tracks]
+    assert kinds == ["text", "video", "video", "audio"]
+    assert tl.project.tracks.index(v2) == 2 and tl.track_labels()[v2.id] == "V1"
+    tl.move_track(v2.id, 0)  # ne passe pas au-dessus des textes
+    assert [t.kind for t in tl.project.tracks] == kinds
+    assert tl.project.tracks[1] is v2 and tl.project.tracks[2] is v1
+    tl.move_track(a1.id, 0)  # l'audio reste en bas
+    assert tl.project.tracks[-1] is a1
+
+
+def test_move_clip_to_new_track(tl):
+    a = tl.add_clip(media(tl, "video"))
+    b = tl.add_clip(media(tl, "image"))
+    v1 = tl.first_track("video")
+    index = tl.project.tracks.index(v1)
+    moved = tl.move_clip_to_new_track(b.id, index, 20)  # au-dessus de V1, par-dessus « a »
+    assert moved.track_id != v1.id and moved.start == 20
+    assert tl.project.tracks.index(tl.track(moved.track_id)) == index
+    assert a.track_id == v1.id
+
+
+def test_isolate_range(tl):
+    clip = tl.add_clip(media(tl, "video"))  # 0–100
+    middle = tl.isolate(clip.id, 30, 60)
+    assert (middle.start, middle.end) == (30, 60)
+    assert middle.source_in == 30
+    assert sorted((c.start, c.end) for c in tl.project.clips) == [(0, 30), (30, 60), (60, 100)]
+    assert tl.isolate(middle.id, 0, 200) is middle  # plage = clip entier : rien à couper
+    with pytest.raises(TimelineError):
+        tl.isolate(middle.id, 50, 50)
