@@ -17,8 +17,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Debian 12 couvre LMDE 6 ; Ubuntu 22.04 / 24.04 couvrent Linux Mint 21 / 22.
-        image: ["debian:12", "ubuntu:22.04", "ubuntu:24.04"]
+        # Debian 12 couvre LMDE 6 ; Ubuntu 24.04 couvre Linux Mint 22.
+        # Ubuntu 22.04 / Mint 21 : PyQt6 n'y est pas packagé (voir le cahier des charges, §4.1).
+        image: ["debian:12", "ubuntu:24.04"]
     container: ${{ matrix.image }}
     env:
       DEBIAN_FRONTEND: noninteractive
@@ -29,7 +30,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            python3 python3-pytest python3-pyqt6 python3-pyqt6.qtsvg python3-mlt libmlt7 \
+            python3 python3-pytest python3-pyqt6 python3-pyqt6.qtsvg python3-mlt libmlt7 libmlt-data \
             ffmpeg build-essential debhelper dh-python lintian
       - name: Tests
         run: python3 -m pytest -v

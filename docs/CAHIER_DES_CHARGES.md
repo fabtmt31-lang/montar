@@ -238,6 +238,8 @@ Les préférences s'organisent en rubriques : **Général**, **Lecture & aperçu
 
 Socle commun minimal imposé par ces distributions : **Python 3.10**, Qt 6.2, MLT 7.4, FFmpeg 4.4 (Ubuntu 22.04 / Mint 21). Le code ne doit utiliser aucune fonctionnalité plus récente sans repli.
 
+> **Constat (J0)** : Ubuntu 22.04, donc Linux Mint 21, ne fournit **pas** PyQt6 en paquet (il n'y arrive qu'à partir d'Ubuntu 22.10). Le paquet `.deb` actuel, qui s'appuie sur les paquets système, est donc validé sur **Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ / LMDE 6**. Le support d'Ubuntu 22.04 / Mint 21 est un point ouvert (§8).
+
 Le code doit être **multiplateforme dès le départ** : pas d'appel système spécifique à Linux hors du module `platform/`.
 
 ### 4.2 Configuration de référence
@@ -457,6 +459,7 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
 
 ### Points restant ouverts
 1. Moteur sous Windows (bindings MLT ou moteur alternatif) : à trancher par prototype en début de phase 2.
+1. Ubuntu 22.04 / Linux Mint 21 (sans PyQt6 packagé) : abandonner ces versions, ou fournir pour elles un paquet embarquant PyQt6 (plus lourd, ~100 Mo, hors règles Debian).
 2. Contenu exact des modèles de démonstration (s'il y en a) et du thème sombre.
 3. Mode de diffusion du `.deb` au-delà des versions GitHub (dépôt APT, PPA).
 
