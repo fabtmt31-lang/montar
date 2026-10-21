@@ -272,3 +272,10 @@ def test_placement_is_independent_of_preview_size(engine, media_dir):
         inside = pixel(data, w, int(p.cx * k), int(p.cy * k))[:3]
         outside = pixel(data, w, int((p.left - 10) * k), int(p.cy * k))[:3]
         assert near(inside, BLUE) and outside == BLACK, (w, h)
+
+
+def test_preview_scaling_self_check(engine):
+    from montar.engine.mlt_engine import preview_scaling_check
+
+    check = preview_scaling_check()
+    assert check["ok"], check

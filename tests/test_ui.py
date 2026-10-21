@@ -584,3 +584,24 @@ def test_detached_clip_hides_waveform(window, media_dir, monkeypatch):
     view.viewport().repaint()
     assert clip.id not in painted and len(painted) == 1  # seul le clip audio détaché
     assert "mute" in view._badges(clip, editor.project.media[0])
+
+
+@needs_ffmpeg
+def test_full_resolution_fallback(window, media_dir, monkeypatch):
+    """Si MLT place mal les éléments en taille réduite, l'aperçu est rendu à la taille de
+    la toile puis réduit : l'image affichée garde la taille demandée."""
+    from montar.engine import mlt_engine
+
+    sizes = []
+    original = mlt_engine.MltSource.render
+    monkeypatch.setattr(mlt_engine.MltSource, "scales_correctly", property(lambda s: False))
+    monkeypatch.setattr(mlt_engine.MltSource, "render",
+                        lambda self, f, w, h: sizes.append((w, h)) or original(self, f, w, h))
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    frames = []
+    editor.player.frameReady.connect(lambda img, f: frames.append(img))
+    editor.player.set_render_size(320, 180)
+    editor.player.seek(3)
+    assert wait_until(lambda: frames and frames[-1].width() == 320)
+    assert (1280, 720) in sizes and (320, 180) not in sizes

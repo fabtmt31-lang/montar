@@ -226,13 +226,21 @@ class PlaybackWorker(QObject):
         if self._source is None or self._spec is None:
             return
         w, h = self._fit(self._size)
+        canvas = self._spec.canvas
+        full = not self._source.scales_correctly and (w, h) != (canvas.width, canvas.height)
+        rw, rh = (canvas.width, canvas.height) if full else (w, h)
         try:
-            data = self._source.render(frame, w, h)
+            data = self._source.render(frame, rw, rh)
         except Exception as exc:
             self.failed.emit(str(exc))
             self._stop()
             return
-        image = QImage(data, w, h, w * 4, QImage.Format.Format_RGBA8888).copy()
+        image = QImage(data, rw, rh, rw * 4, QImage.Format.Format_RGBA8888)
+        if full:
+            image = image.scaled(w, h, Qt.AspectRatioMode.IgnoreAspectRatio,
+                                 Qt.TransformationMode.SmoothTransformation)
+        else:
+            image = image.copy()
         self.frameReady.emit(image, frame)
 
     def _fit(self, size: tuple[int, int]) -> tuple[int, int]:

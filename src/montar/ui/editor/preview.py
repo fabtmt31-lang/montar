@@ -300,7 +300,6 @@ class PreviewCanvas(QWidget):
                 clip = QPainterPath()
                 clip.addPolygon(polygon)
                 painter.setClipPath(clip.intersected(path))
-                painter.setOpacity(0.75)
                 painter.drawImage(self._to_widget(target), drag.ghost)
                 painter.restore()
             painter.setClipPath(path)

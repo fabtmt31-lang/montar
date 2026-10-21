@@ -7,7 +7,9 @@ import ctypes.util
 import logging
 import math
 import os
+import struct
 import threading
+import zlib
 from math import gcd
 
 from montar.engine.base import (
@@ -21,7 +23,7 @@ from montar.engine.base import (
     TimelineSpec,
     TrackSpec,
 )
-from montar.engine.geometry import affine_rect, crop_pixels
+from montar.engine.geometry import affine_rect, crop_pixels, placement
 from montar.engine.looks import color_filters, effect_filters, preset_filters
 
 try:
@@ -389,6 +391,10 @@ class MltSource(Source):
     def length(self) -> int:
         return self._graph.length
 
+    @property
+    def scales_correctly(self) -> bool:
+        return preview_scaling_ok()
+
     def render(self, frame: int, width: int, height: int) -> bytes:
         expected = width * height * 4
         if self.length == 0:
@@ -418,6 +424,96 @@ class MltSource(Source):
 
     def close(self) -> None:
         self._graph = None
+
+
+def _png(path: str, width: int, height: int, rgba: tuple[int, int, int, int]) -> None:
+    """Écrit une image PNG unie (sans dépendance)."""
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        return (struct.pack(">I", len(payload)) + kind + payload
+                + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF))
+    row = b"\x00" + bytes(rgba) * width
+    with open(path, "wb") as f:
+        f.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height,
+                                                                     8, 6, 0, 0, 0))
+                + chunk(b"IDAT", zlib.compress(row * height)) + chunk(b"IEND", b""))
+
+
+_scaling_lock = threading.Lock()
+_scaling_result: dict | None = None
+_CHECK_SIZES = ((1920, 1080), (640, 360), (960, 540))
+
+
+def preview_scaling_check() -> dict:
+    """Vérifie une fois par session que MLT place correctement un élément transformé
+    quand l'aperçu est rendu plus petit que la toile (ce n'est pas le cas sur certains
+    systèmes). Renvoie les rectangles attendus et obtenus pour chaque taille."""
+    global _scaling_result
+    with _scaling_lock:
+        if _scaling_result is not None:
+            return _scaling_result
+        forced = os.environ.get("MONTAR_PREVIEW_FULLRES")
+        result: dict = {"ok": forced != "1", "forced": forced in ("0", "1"), "sizes": {}}
+        if forced in ("0", "1"):
+            _scaling_result = result
+            return result
+        from montar.core.project import Transform
+        from montar.platform.paths import cache_dir
+
+        try:
+            folder = cache_dir() / "selftest"
+            folder.mkdir(parents=True, exist_ok=True)
+            image = str(folder / "magenta.png")
+            _png(image, 400, 300, (255, 0, 255, 255))
+            canvas = Canvas(1920, 1080, 25)
+            def spec(t: Transform) -> TimelineSpec:
+                return TimelineSpec(canvas, (
+                    TrackSpec("video", False, False, (ClipSpec("color:#0000ff", "image", 0, 5),)),
+                    TrackSpec("video", False, False, (
+                        ClipSpec(image, "image", 0, 5, media_size=(400, 300), transform=t),)),
+                ))
+
+            t = Transform(x=0.2, y=-0.1, scale=0.6)
+            p = placement(1920, 1080, 400, 300, t)
+            expected = (p.left, p.top, p.left + p.width, p.top + p.height)
+            result["expected"] = [round(v) for v in expected]
+            # comme dans l'éditeur : élément d'abord intact, puis déplacé (mise à jour rapide)
+            source = MltSource(spec(Transform()))
+            source.render(2, *_CHECK_SIZES[1])
+            if not source.update(spec(t)):
+                source = MltSource(spec(t))
+            for w, h in _CHECK_SIZES:
+                got = _magenta_box(source.render(2, w, h), w, h, canvas.width / w)
+                result["sizes"][f"{w}x{h}"] = got
+                tolerance = 4 * canvas.width / w + 2
+                if got is None or max(abs(a - b) for a, b in
+                                      zip(got, expected, strict=True)) > tolerance:
+                    result["ok"] = False
+        except Exception as exc:  # le test ne doit jamais empêcher l'aperçu
+            log.warning("vérification de l'aperçu impossible : %s", exc)
+            result["error"] = str(exc)
+        if not result["ok"]:
+            log.warning("aperçu rendu à la taille de la toile (placement MLT incorrect en "
+                        "taille réduite) : %s", result)
+        _scaling_result = result
+        return result
+
+
+def preview_scaling_ok() -> bool:
+    return preview_scaling_check()["ok"]
+
+
+def _magenta_box(data: bytes, w: int, h: int, k: float) -> list[int] | None:
+    xs, ys = [], []
+    for y in range(0, h, 2):
+        for x in range(0, w, 2):
+            i = (y * w + x) * 4
+            if data[i] > 200 and data[i + 2] > 200 and data[i + 1] < 60:
+                xs.append(x)
+                ys.append(y)
+    if not xs:
+        return None
+    return [round(min(xs) * k), round(min(ys) * k), round((max(xs) + 2) * k),
+            round((max(ys) + 2) * k)]
 
 
 class MltAudioOutput(AudioOutput):

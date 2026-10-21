@@ -1,3 +1,16 @@
+montar (0.4.2) unstable; urgency=medium
+
+  * Aperçu : sur certains systèmes, MLT plaçait mal un élément déplacé ou
+    redimensionné quand l'aperçu est plus petit que la toile (image réduite
+    et collée en haut à gauche). montar le vérifie au démarrage du moteur et,
+    si besoin, calcule l'aperçu à la taille de la toile puis le réduit.
+  * L'image qui suit la souris pendant un déplacement est opaque (elle
+    n'apparaît plus en double).
+  * Nouvelle option --diagnostic : versions du système, de Qt et de MLT, et
+    résultat de la vérification de l'aperçu.
+
+ -- Fabien <admin@appsdoc.fr>  Fri, 23 Oct 2026 10:00:00 +0200
+
 montar (0.4.1) unstable; urgency=medium
 
   * Aperçu : le coin tiré suit la souris et le coin opposé reste fixe ;

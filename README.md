@@ -8,7 +8,7 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
 
 ## État d'avancement
 
-**Jalon J3 — modules et Timelapse** (version 0.4.1) :
+**Jalon J3 — modules et Timelapse** (version 0.4.2) :
 
 - **Timelapse** (module intégré) : sélectionnez une partie d'un clip (**Maj + glisser**
   sur le clip, outil « plage » de la barre de la timeline, ou touches **I** / **O**), puis onglet **Vitesse → Timelapse…** (ou clic droit sur le
@@ -24,7 +24,11 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
   **Isoler** coupe un clip aux bornes de la sélection ; déposer un clip entre deux pistes
   (ou sur une place occupée) crée une nouvelle piste ; l'ordre des pistes se change en
   glissant leur en-tête ; les modes **Couleur** et **Audio** de l'en-tête ouvrent les
-  panneaux correspondants.
+  panneaux correspondants ;
+- 0.4.2 : si MLT place mal les éléments transformés quand l'aperçu est plus petit que la
+  toile (constaté sur certains systèmes), montar le détecte au démarrage et calcule
+  l'aperçu en pleine taille. `montar --diagnostic` affiche les versions et le résultat
+  de cette vérification.
 
 **Jalon J2 — édition de base** (0.3) :
 
@@ -62,7 +66,7 @@ Pas encore disponible : export (J4).
 ## Installer le paquet
 
 ```sh
-sudo apt install ./montar_0.4.1_all.deb
+sudo apt install ./montar_0.4.2_all.deb
 ```
 
 Le paquet est produit par l'intégration continue (onglet *Actions* de GitHub, artefacts

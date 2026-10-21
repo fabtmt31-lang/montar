@@ -38,11 +38,54 @@ def _enable_stack_dumps(file: Path) -> None:
         faulthandler.register(signal.SIGUSR1, stream, all_threads=True)
 
 
+def diagnostic() -> int:
+    """Informations à joindre à un signalement de problème."""
+    import platform
+
+    print(f"montar {__version__}")
+    print(f"Python {platform.python_version()}")
+    try:
+        release = Path("/etc/os-release").read_text(encoding="utf-8")
+        name = next((line.split("=", 1)[1].strip('"') for line in release.splitlines()
+                     if line.startswith("PRETTY_NAME=")), "?")
+        print(f"Système : {name}")
+    except OSError:
+        pass
+    try:
+        from PyQt6.QtCore import PYQT_VERSION_STR, QT_VERSION_STR
+
+        print(f"Qt {QT_VERSION_STR}, PyQt {PYQT_VERSION_STR}")
+    except ImportError as exc:
+        print(f"PyQt6 absent : {exc}")
+    try:
+        from montar.engine import get_engine
+        from montar.engine.mlt_engine import preview_scaling_check
+
+        engine = get_engine()
+        print(f"MLT {engine.version()}")
+        check = preview_scaling_check()
+        state = "correct" if check["ok"] else "INCORRECT (aperçu rendu en pleine taille)"
+        print(f"Placement en taille réduite : {state}")
+        print(f"  attendu {check.get('expected')}")
+        for size, box in check.get("sizes", {}).items():
+            print(f"  {size} : {box}")
+        if check.get("error"):
+            print(f"  erreur : {check['error']}")
+    except Exception as exc:
+        print(f"Moteur indisponible : {exc}")
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="montar", description="Montage vidéo simple et local")
     parser.add_argument("project", nargs="?", help="projet .montar à ouvrir")
     parser.add_argument("--version", action="version", version=f"montar {__version__}")
+    parser.add_argument("--diagnostic", action="store_true",
+                        help="affiche les versions et vérifie le moteur de rendu, puis quitte")
     args, qt_args = parser.parse_known_args(argv if argv is not None else sys.argv[1:])
+    if args.diagnostic:
+        return diagnostic()
 
     _setup_logging()
     from PyQt6.QtWidgets import QApplication
