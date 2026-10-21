@@ -9,6 +9,34 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")  # son joué sur un périphérique fictif
 
+# Diagnostic des plantages : PyQt arrête le processus quand une exception Python s'échappe
+# d'une méthode appelée par Qt, et la sortie capturée par pytest est alors perdue. Avec
+# MONTAR_TEST_LOG, ces exceptions et les messages de Qt sont aussi écrits dans ce fichier.
+_LOG = os.environ.get("MONTAR_TEST_LOG")
+if _LOG:
+    import faulthandler
+    import sys
+    import traceback
+
+    _log_file = open(_LOG, "a", encoding="utf-8", buffering=1)  # noqa: SIM115
+    faulthandler.enable(_log_file, all_threads=True)
+    _previous_hook = sys.excepthook
+
+    def _log_exception(kind, value, tb):
+        _log_file.write("".join(traceback.format_exception(kind, value, tb)))
+        _previous_hook(kind, value, tb)
+
+    sys.excepthook = _log_exception
+    try:
+        from PyQt6.QtCore import qInstallMessageHandler
+
+        def _log_qt(mode, context, message):
+            _log_file.write(f"Qt {mode.name}: {message}\n")
+
+        qInstallMessageHandler(_log_qt)
+    except ImportError:
+        pass
+
 needs_ffmpeg = pytest.mark.skipif(
     shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
     reason="ffmpeg/ffprobe absents",

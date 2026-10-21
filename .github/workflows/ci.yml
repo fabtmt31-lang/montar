@@ -36,7 +36,12 @@ jobs:
           # convention numérique française (virgule décimale) pour le test de régression
           localedef -i fr_FR -f UTF-8 fr_FR.UTF-8
       - name: Tests
+        env:
+          MONTAR_TEST_LOG: ${{ runner.temp }}/montar-tests.log
         run: python3 -m pytest -v
+      - name: Journal des tests (en cas d'échec)
+        if: failure()
+        run: cat "${{ runner.temp }}/montar-tests.log" || true
       - name: Paquet .deb
         run: ./scripts/build-deb.sh
       - name: Lintian
