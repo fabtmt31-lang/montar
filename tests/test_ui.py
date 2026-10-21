@@ -601,7 +601,9 @@ def test_full_resolution_fallback(window, media_dir, monkeypatch):
     editor.add_to_timeline(editor.project.media[0])
     frames = []
     editor.player.frameReady.connect(lambda img, f: frames.append(img))
-    editor.player.set_render_size(320, 180)
+    editor.preview.set_quality("low")  # aperçu plus petit que la toile (1280 × 720)
     editor.player.seek(3)
-    assert wait_until(lambda: frames and frames[-1].width() == 320)
-    assert (1280, 720) in sizes and (320, 180) not in sizes
+    assert wait_until(lambda: frames and frames[-1].width() < 1280)
+    pump(300)
+    assert sizes and set(sizes) == {(1280, 720)}  # rendu toujours à la taille de la toile
+    assert frames[-1].width() < 1280  # puis réduit pour l'affichage
