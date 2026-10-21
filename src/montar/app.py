@@ -19,10 +19,23 @@ def _setup_logging() -> None:
         log_dir.mkdir(parents=True, exist_ok=True)
         handlers.append(logging.handlers.RotatingFileHandler(
             log_dir / "montar.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8"))
+        _enable_stack_dumps(log_dir / "traces.log")
     except OSError:
         pass
     logging.basicConfig(level=logging.INFO, handlers=handlers,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+
+def _enable_stack_dumps(file: Path) -> None:
+    """Diagnostic des blocages : `pkill -USR1 -f montar` écrit la pile de chaque fil dans
+    ~/.cache/montar/logs/traces.log ; les plantages y sont aussi consignés."""
+    import faulthandler
+    import signal
+
+    stream = open(file, "a", encoding="utf-8")  # noqa: SIM115 - ouvert toute la session
+    faulthandler.enable(stream)
+    if hasattr(signal, "SIGUSR1"):
+        faulthandler.register(signal.SIGUSR1, stream, all_threads=True)
 
 
 def main(argv: list[str] | None = None) -> int:

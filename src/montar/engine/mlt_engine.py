@@ -2,6 +2,7 @@
 """Implémentation du moteur avec MLT 7 (bindings Python « mlt7 »)."""
 from __future__ import annotations
 
+import os
 import threading
 from math import gcd
 
@@ -22,6 +23,17 @@ except ImportError:  # pragma: no cover - dépend de l'installation
 _init_lock = threading.Lock()
 _factory_ready = False
 
+# Modules MLT liés à Qt 5 : chargés dans montar (Qt 6), ils font cohabiter deux versions
+# de Qt dans le même processus et peuvent figer l'interface. Les images passent alors par
+# le module « pixbuf ».
+_DENIED_MODULES = ("libmltqt", "libmltglaxnimate")
+
+
+def _deny_qt5_modules() -> None:
+    current = [m for m in os.environ.get("MLT_REPOSITORY_DENY", "").split(":") if m]
+    os.environ["MLT_REPOSITORY_DENY"] = ":".join(
+        current + [m for m in _DENIED_MODULES if m not in current])
+
 
 def _ensure_factory() -> None:
     global _factory_ready
@@ -29,6 +41,7 @@ def _ensure_factory() -> None:
         raise EngineUnavailable("bindings Python de MLT introuvables (paquet python3-mlt)")
     with _init_lock:
         if not _factory_ready:
+            _deny_qt5_modules()
             if mlt.Factory().init() is None:
                 raise EngineUnavailable("initialisation de MLT impossible")
             _factory_ready = True

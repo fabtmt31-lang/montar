@@ -47,3 +47,13 @@ def test_image_duration(engine, media_dir):
 def test_out_of_range_frame_is_clamped(engine, media_dir):
     src = engine.open(str(media_dir / "clip.mp4"), "video", Canvas(640, 360, 25))
     assert len(src.render(10_000, 64, 36)) == 64 * 36 * 4
+
+
+def test_qt5_is_never_loaded(engine, media_dir):
+    """Les modules MLT liés à Qt 5 figeaient l'interface (Qt 6) à l'ouverture d'une image."""
+    import os
+
+    src = engine.open(str(media_dir / "photo.png"), "image", Canvas(320, 180, 25))
+    src.render(0, 320, 180)
+    with open(f"/proc/{os.getpid()}/maps") as maps:
+        assert not any("libQt5Core" in line for line in maps)
