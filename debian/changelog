@@ -1,3 +1,15 @@
+montar (0.5.3) unstable; urgency=medium
+
+  * Enregistreur d'écran (rail « Enregistrer ») : écran entier, zone dessinée
+    à la souris ou fenêtre ; micro et son de l'ordinateur (PulseAudio ou
+    PipeWire), mixés si les deux sont choisis ; webcam en incrustation ;
+    compte à rebours, petite fenêtre « Arrêter » toujours visible ; fichier
+    écrit dans le dossier medias/ du projet et importé. Sessions X11 ; un
+    message explique que Wayland n'est pas encore pris en charge.
+  * Recommends: x11-utils (choix d'une fenêtre à filmer).
+
+ -- Fabien <admin@appsdoc.fr>  Tue, 27 Oct 2026 10:00:00 +0100
+
 montar (0.5.2) unstable; urgency=medium
 
   * « Modifier le média… » (panneau Médias, clic droit) : aperçu partagé

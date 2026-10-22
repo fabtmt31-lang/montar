@@ -838,3 +838,36 @@ def test_media_editor_dialog_preview(window, media_dir):
     assert dialog.edit.segment(editor.project.media[0]) == pytest.approx((0.4, 1.6))
     dialog.timelapse.setChecked(True)
     assert dialog.edit.timelapse["factor"] == 16
+
+
+@needs_ffmpeg
+def test_screen_recording_is_imported(window, media_dir, tmp_path, monkeypatch):
+    import shutil as _shutil
+    import subprocess as _subprocess
+
+    if _shutil.which("Xvfb") is None:
+        pytest.skip("Xvfb absent")
+    from montar.media.recorder import RecordOptions
+
+    xvfb = _subprocess.Popen(["Xvfb", ":96", "-screen", "0", "640x360x24"],
+                             stdout=_subprocess.DEVNULL, stderr=_subprocess.DEVNULL)
+    try:
+        pump(1000)
+        monkeypatch.setenv("DISPLAY", ":96")
+        editor = imported_editor(window, media_dir, ["clip.mp4"])
+        target = editor.project.media_dir / "Enregistrement test.mp4"
+        results = []
+        editor.recordingFinished.connect(results.append)
+        editor.start_recording(RecordOptions(geometry=(0, 0, 640, 360), microphone=False),
+                               target, countdown=0)
+        assert editor._record_bar is not None and editor._recorder.running
+        pump(2000)
+        editor.stop_recording()
+        assert results == [str(target)] and editor._record_bar is None
+        assert wait_until(lambda: len(editor.project.media) == 2)
+        recorded = editor.project.media[1]
+        assert recorded.path == str(target) and recorded.kind == "video"
+        assert (recorded.width, recorded.height) == (640, 360)
+    finally:
+        xvfb.terminate()
+        xvfb.wait(5)

@@ -22,7 +22,7 @@ Depends: ${misc:Depends},
          python3-numpy,
          python3-pyqt6,
          python3-pyqt6.qtsvg
-Recommends: xdg-user-dirs
+Recommends: xdg-user-dirs, x11-utils
 Description: simple and local video editor
  montar is a free video editor with the basic features of consumer editors:
  multi-track timeline, cutting and trimming, speed, titles and lower thirds,

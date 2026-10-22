@@ -41,12 +41,14 @@ from montar.media.probe import (
     is_supported,
     probe,
 )
+from montar.media.recorder import Recorder, pick_window, session_problem
 from montar.media.store import is_inside
 from montar.media.thumbnails import thumbnail_path
 from montar.media.waveform import waveform_path
 from montar.plugins import ModuleManager, default_manager
 from montar.ui.dialogs.export import ExportDialog
 from montar.ui.dialogs.media_editor import MediaEditorDialog
+from montar.ui.dialogs.recorder import COUNTDOWN, RecorderDialog, RecordingBar
 from montar.ui.editor.busy import BusyOverlay, remaining_text
 from montar.ui.editor.controller import EditorController
 from montar.ui.editor.importer import MediaImporter
@@ -94,6 +96,7 @@ class EditorPage(QWidget):
     backRequested = pyqtSignal()
     saved = pyqtSignal(object)  # Path
     exportFinished = pyqtSignal(str)  # erreur (vide si réussite)
+    recordingFinished = pyqtSignal(str)  # fichier enregistré (vide si échec)
 
     def __init__(self, project: Project, engine_factory: Callable[[], Engine], cache: Path,
                  preview_quality: str = "medium", modules: ModuleManager | None = None) -> None:
@@ -196,6 +199,11 @@ class EditorPage(QWidget):
         self._export_started = 0.0
         self._notify_export = True  # message de fin (désactivé par les tests)
         self._hardware = False  # accélération matérielle proposée par défaut
+        self._recorder: Recorder | None = None
+        self._record_bar: RecordingBar | None = None
+        self._record_timer = QTimer(self)
+        self._record_timer.setInterval(250)
+        self._record_timer.timeout.connect(self._poll_recording)
         self._export_timer = QTimer(self)
         self._export_timer.setInterval(250)
         self._export_timer.timeout.connect(self._poll_export)
@@ -314,9 +322,13 @@ class EditorPage(QWidget):
             b.setCheckable(True)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             set_icon(b, icon, "ink", 20)
-            if key in ("subtitles", "record"):
+            if key == "subtitles":
                 b.setEnabled(False)
                 b.setToolTip(_(SOON))
+            elif key == "record":
+                b.setCheckable(False)
+                b.setToolTip(_("Enregistrer l'écran"))
+                b.clicked.connect(self.open_recorder)
             else:
                 b.clicked.connect(lambda _=False, k=key: self.show_side(k))
             b.setChecked(key == "media")
@@ -462,6 +474,8 @@ class EditorPage(QWidget):
         if self._modules_listener in self.module_manager.listeners:
             self.module_manager.listeners.remove(self._modules_listener)
         self.modules.jobs.cancel_all()
+        if self._recorder is not None:
+            self.stop_recording()
         if self._export_job is not None:
             self._export_job.cancel()
             self._export_job.wait(10)
@@ -619,6 +633,72 @@ class EditorPage(QWidget):
         self.media_panel.set_media(self.project.media, self.thumbnails)
         self.media_panel.select(new.id)
         self._reload_player()
+
+    # --- enregistrement de l'écran -----------------------------------------------------
+
+    def open_recorder(self) -> None:
+        problem = session_problem()
+        if problem:
+            QMessageBox.information(self, _("Enregistrer l'écran"),
+                                    _("Enregistrement impossible : {why}.").format(why=_(problem)))
+            return
+        if self._recorder is not None or self.project.media_dir is None:
+            return
+        dialog = RecorderDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        stamp = time.strftime("%Y-%m-%d %H-%M-%S")
+        target = self.project.media_dir / f"{_('Enregistrement')} {stamp}.mp4"
+        self.start_recording(dialog.options(), target)
+
+    def start_recording(self, options, target: Path, countdown: int = COUNTDOWN) -> None:
+        self._recorder = Recorder(options, target)
+        self._record_bar = RecordingBar()
+        self._record_bar.stopRequested.connect(self.stop_recording)
+        self._record_bar.countdownFinished.connect(self._begin_recording)
+        self.window().showMinimized()
+        self._record_bar.start_countdown(countdown)
+
+    def _begin_recording(self) -> None:
+        recorder = self._recorder
+        if recorder is None:
+            return
+        if recorder.options.source == "window":
+            recorder.options.window_id = pick_window()
+        recorder.start()
+        self._record_timer.start()
+
+    def _poll_recording(self) -> None:
+        recorder = self._recorder
+        if recorder is None:
+            self._record_timer.stop()
+            return
+        if recorder.started and not recorder.running:  # ffmpeg s'est arrêté seul
+            self.stop_recording()
+            return
+        self._record_bar.set_elapsed(recorder.elapsed)
+
+    def stop_recording(self) -> None:
+        recorder, self._recorder = self._recorder, None
+        self._record_timer.stop()
+        if self._record_bar is not None:
+            self._record_bar.close()
+            self._record_bar.deleteLater()
+            self._record_bar = None
+        window = self.window()
+        window.showNormal()
+        window.raise_()
+        window.activateWindow()
+        if recorder is None or not recorder.started:
+            return
+        if recorder.stop():
+            self.import_files([str(recorder.target)])
+            self.recordingFinished.emit(str(recorder.target))
+        else:
+            self.recordingFinished.emit("")
+            QMessageBox.warning(self, _("Enregistrer l'écran"),
+                                _("L'enregistrement a échoué : {error}").format(
+                                    error=recorder.error))
 
     # --- export --------------------------------------------------------------------------
 
