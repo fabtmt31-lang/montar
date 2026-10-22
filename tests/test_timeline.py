@@ -367,3 +367,47 @@ def test_fit_to_media_after_replacement(tl):
     media(tl, "video").duration = 1.0
     tl.fit_to_media(clip.id)
     assert (clip.source_in, clip.duration) == (0, 10)
+
+
+# --- J5-E : marqueurs et voix off ---------------------------------------------------------------
+
+
+def test_markers(tmp_path, project, tl):
+    first = tl.toggle_marker(50)
+    second = tl.toggle_marker(10)
+    assert [m.frame for m in tl.markers()] == [10, 50]
+    assert first.name == "Marqueur 1"
+    tl.move_marker(second.id, 80)
+    tl.rename_marker(first.id, "  Intro  ")
+    assert [(m.frame, m.name) for m in tl.markers()] == [(50, "Intro"), (80, "Marqueur 2")]
+    assert tl.adjacent_marker(50, 1).id == second.id
+    assert tl.adjacent_marker(50, -1) is None
+    assert tl.adjacent_marker(100, -1).id == second.id
+    assert tl.toggle_marker(80) is None  # même endroit : retiré
+    project.save(tmp_path / "p.montar")
+    loaded = Project.load(tmp_path / "p.montar")
+    assert [(m.frame, m.name, m.id) for m in loaded.markers] == [(50, "Intro", first.id)]
+
+
+def test_markers_are_undoable(project, tl):
+    history = History()
+    before = snapshot(project)
+    tl.toggle_marker(5)
+    history.record("Marqueur", before)
+    history.undo(project)
+    assert project.markers == []
+
+
+def test_voice_over_placement(tl):
+    voice = MediaItem("/voix.wav", "audio", duration=2.0, has_audio=True, id="voice")
+    tl.project.media.append(voice)
+    first = tl.add_voice_over(voice, 30, trim=5)
+    track = tl.track(first.track_id)
+    assert track.name == "Voix off" and track.kind == "audio"
+    assert (first.start, first.source_in, first.duration) == (30, 5, 45)
+    # même endroit : la piste est occupée, une seconde piste « Voix off » est créée
+    second = tl.add_voice_over(voice, 40)
+    assert second.start == 40 and second.track_id != first.track_id
+    # plus loin : la première piste est libre
+    third = tl.add_voice_over(voice, 200)
+    assert third.track_id == first.track_id and third.start == 200

@@ -1094,3 +1094,82 @@ def test_preferences_storage_card(window, isolated_home, monkeypatch):
     assert window.settings.backup_minutes == 10
     prefs.autosave.click()
     assert window.settings.autosave is False
+
+
+# --- J5-E : marqueurs et voix off ---------------------------------------------------------------
+
+
+@needs_ffmpeg
+def test_markers_in_timeline(window, media_dir):
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    view = editor.timeline.view
+    assert wait_until(lambda: editor.player.length == 50)
+    editor.player.seek(20)
+    assert wait_until(lambda: view.playhead == 20)
+    QTest.keyClick(window, Qt.Key.Key_M)
+    assert [m.frame for m in editor.project.markers] == [20]
+    editor.player.seek(0)
+    assert wait_until(lambda: view.playhead == 0)
+    QTest.keyClick(window, Qt.Key.Key_Right, Qt.KeyboardModifier.ControlModifier)
+    assert wait_until(lambda: view.playhead == 20)
+
+    # glisser le fanion dans la règle
+    view.snap = False
+    vp = view.viewport()
+    x0 = int(view.frame_to_x(20))
+    assert view.marker_at(QPoint(x0, 20)) is not None
+    drag(vp, QPoint(x0, 20), QPoint(int(view.frame_to_x(35)), 20))
+    assert editor.project.markers[0].frame == 35
+    editor.controller.undo()
+    assert editor.project.markers[0].frame == 20
+
+
+class _FakeVoice:
+    """Enregistreur de test : un vrai fichier WAV, sans micro."""
+
+    def __init__(self, device, target):
+        self.target, self.error, self.started = target, "", 0.0
+        self.running = False
+
+    def start(self):
+        import subprocess
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                        "sine=frequency=300:duration=2", "-ac", "1", "-ar", "48000",
+                        str(self.target)], check=True)
+        self.running, self.started = True, time.monotonic()
+
+    @property
+    def elapsed(self):
+        return time.monotonic() - self.started
+
+    def captured(self):
+        return 0.2
+
+    def stop(self):
+        self.running = False
+        return True
+
+
+@needs_ffmpeg
+def test_voice_over_recording(window, media_dir, monkeypatch):
+    import montar.ui.dialogs.voice_over as vo
+
+    monkeypatch.setattr(vo, "VoiceRecorder", _FakeVoice)
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    assert wait_until(lambda: editor.player.length == 50)
+    editor.player.seek(10)
+    assert wait_until(lambda: editor.timeline.view.playhead == 10)
+    dialog = editor.open_voice_over(countdown=0)
+    dialog.record_button.click()
+    assert wait_until(lambda: dialog.recording and editor.player.playing)
+    dialog.record_button.click()  # Arrêter
+    assert wait_until(lambda: any(c.track_id != editor.project.clips[0].track_id
+                                  for c in editor.project.clips))
+    voice = editor.project.clips[-1]
+    track = editor.controller.timeline.track(voice.track_id)
+    assert track.name == "Voix off"
+    assert (voice.start, voice.source_in, voice.duration) == (10, 5, 45)
+    assert not editor.player.playing
+    assert Path(editor.project.find_media(voice.media_id).path).parent == editor.project.media_dir

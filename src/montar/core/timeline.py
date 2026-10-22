@@ -14,6 +14,7 @@ import copy
 
 from montar.core.project import (
     Clip,
+    Marker,
     MediaItem,
     Project,
     TextStyle,
@@ -28,6 +29,7 @@ MIN_SPEED, MAX_SPEED = 0.1, 16.0
 TRACK_KINDS = ("text", "video", "audio")
 TRACK_NAMES = {"text": "Texte", "video": "Vidéo", "audio": "Audio"}
 TRACK_PREFIX = {"text": "T", "video": "V", "audio": "A"}
+VOICE_OVER_TRACK = "Voix off"
 VIDEO_TRANSITIONS = ("dissolve", "dip_black", "dip_white", "wipe_right", "wipe_left",
                      "slide_left", "slide_right", "zoom")
 AUDIO_TRANSITIONS = ("dissolve",)
@@ -375,6 +377,64 @@ class Timeline:
         self.project.clips.append(audio)
         return audio
 
+    # --- marqueurs -------------------------------------------------------------------
+
+    def markers(self) -> list[Marker]:
+        return sorted(self.project.markers, key=lambda m: m.frame)
+
+    def marker(self, marker_id: str) -> Marker:
+        for m in self.project.markers:
+            if m.id == marker_id:
+                return m
+        raise TimelineError(f"marqueur inconnu : {marker_id}")
+
+    def toggle_marker(self, frame: int) -> Marker | None:
+        """Ajoute un marqueur à `frame`, ou retire celui qui s'y trouve déjà."""
+        existing = next((m for m in self.project.markers if m.frame == frame), None)
+        if existing is not None:
+            self.project.markers.remove(existing)
+            return None
+        number = len(self.project.markers) + 1
+        marker = Marker(max(0, frame), f"Marqueur {number}")
+        self.project.markers.append(marker)
+        return marker
+
+    def move_marker(self, marker_id: str, frame: int) -> None:
+        self.marker(marker_id).frame = max(0, frame)
+
+    def rename_marker(self, marker_id: str, name: str) -> None:
+        self.marker(marker_id).name = name.strip()
+
+    def remove_marker(self, marker_id: str) -> None:
+        self.project.markers.remove(self.marker(marker_id))
+
+    def adjacent_marker(self, frame: int, direction: int) -> Marker | None:
+        """Marqueur suivant (direction 1) ou précédent (-1) de `frame`."""
+        markers = self.markers()
+        if direction > 0:
+            return next((m for m in markers if m.frame > frame), None)
+        return next((m for m in reversed(markers) if m.frame < frame), None)
+
+    # --- voix off ----------------------------------------------------------------------
+
+    def add_voice_over(self, media: MediaItem, start: int, trim: int = 0) -> Clip:
+        """Place un enregistrement à `start` exactement, sur une piste « Voix off » libre à cet
+        endroit (créée au besoin) ; les `trim` premières images (son capté avant le début de
+        la lecture) sont retirées."""
+        trim = max(0, min(trim, self.default_duration(media) - 1))
+        duration = max(1, self.default_duration(media) - trim)
+        tracks = [t for t in self.project.tracks if t.kind == "audio"]
+        tracks.sort(key=lambda t: t.name != VOICE_OVER_TRACK)  # les pistes « Voix off » d'abord
+        track = next((t for t in tracks if t.name == VOICE_OVER_TRACK
+                      and self.free_start(t.id, start, duration) == start), None)
+        if track is None:
+            track = self.add_track("audio")
+            track.name = VOICE_OVER_TRACK
+        clip = Clip(media.id, track.id, max(0, start), duration)
+        clip.source_in = trim
+        self.project.clips.append(clip)
+        return clip
+
     def add_track(self, kind: str) -> Track:
         if kind not in TRACK_KINDS:
             raise TimelineError(f"type de piste inconnu : {kind}")
@@ -560,9 +620,11 @@ class Timeline:
 
 def snapshot(project: Project) -> tuple:
     """Copie de l'état modifiable du projet (pour annuler / rétablir)."""
-    return copy.deepcopy((project.media, project.tracks, project.clips, project.transitions))
+    return copy.deepcopy((project.media, project.tracks, project.clips, project.transitions,
+                          project.markers))
 
 
 def restore(project: Project, state: tuple) -> None:
-    project.media, project.tracks, project.clips, project.transitions = copy.deepcopy(state)
+    (project.media, project.tracks, project.clips, project.transitions,
+     project.markers) = copy.deepcopy(state)
 

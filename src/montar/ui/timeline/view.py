@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from PyQt6.QtCore import QPoint, QRect, QRectF, Qt, pyqtSignal
+from PyQt6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QContextMenuEvent,
@@ -21,11 +21,12 @@ from PyQt6.QtGui import (
     QPainterPath,
     QPen,
     QPixmap,
+    QPolygonF,
     QWheelEvent,
 )
-from PyQt6.QtWidgets import QAbstractScrollArea, QApplication, QMenu
+from PyQt6.QtWidgets import QAbstractScrollArea, QApplication, QInputDialog, QMenu, QToolTip
 
-from montar.core.project import Clip, MediaItem, Track
+from montar.core.project import Clip, Marker, MediaItem, Track
 from montar.i18n import _
 from montar.media.waveform import PEAKS_PER_SECOND
 from montar.ui.editor.controller import EditorController
@@ -55,7 +56,7 @@ class _Row:
 
 @dataclass
 class _Drag:
-    mode: str  # playhead | move | start | end | range | track
+    mode: str  # playhead | move | start | end | range | track | marker
     clip_id: str | None = None
     press: QPoint | None = None
     offset: int = 0  # écart entre le début du clip et l'image saisie
@@ -224,6 +225,7 @@ class TimelineView(QAbstractScrollArea):
         for c in self.controller.project.clips:
             if c.id != ignore:
                 points.update((c.start, c.end))
+        points.update(m.frame for m in self.controller.project.markers if m.id != ignore)
         return sorted(points)
 
     def _snap(self, frame: int, ignore: str | None, extra: tuple[int, ...] = ()) -> int:
@@ -292,6 +294,7 @@ class TimelineView(QAbstractScrollArea):
         painter.restore()
 
         self._paint_ruler(painter, w)
+        self._paint_markers(painter, h)
         self._paint_headers(painter, rows, h)
         if self._drag is not None and self._drag.mode == "track" and \
                 self._drag.insert_at is not None:
@@ -714,6 +717,54 @@ class TimelineView(QAbstractScrollArea):
         painter.fillRect(0, 0, HEADER_W, RULER_H, QColor(p.surface))
         painter.fillRect(0, RULER_H - 1, HEADER_W, 1, QColor(p.border))
 
+    def _marker_frame(self, marker: Marker) -> int:
+        d = self._drag
+        if d is not None and d.mode == "marker" and d.clip_id == marker.id and d.moved:
+            return d.start
+        return marker.frame
+
+    def _paint_markers(self, painter: QPainter, h: int) -> None:
+        """Fanion dans la règle et trait discret à travers les pistes."""
+        w = self.viewport().width()
+        painter.save()
+        painter.setClipRect(QRect(HEADER_W, 0, w - HEADER_W, h))
+        for marker in self.controller.project.markers:
+            x = self.frame_to_x(self._marker_frame(marker))
+            if x < HEADER_W - 8 or x > w + 8:
+                continue
+            color = QColor(marker.color)
+            line = QColor(color)
+            line.setAlpha(110)
+            painter.setPen(QPen(line, 1, Qt.PenStyle.DashLine))
+            painter.drawLine(int(x), RULER_H, int(x), h)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            top = RULER_H - 15
+            painter.drawPolygon(QPolygonF([QPointF(x - 5, top), QPointF(x + 5, top),
+                                           QPointF(x + 5, top + 9), QPointF(x, top + 13),
+                                           QPointF(x - 5, top + 9)]))
+        painter.restore()
+
+    def marker_at(self, pos: QPoint) -> Marker | None:
+        if pos.y() >= RULER_H or pos.x() < HEADER_W:
+            return None
+        best, best_dist = None, 7.0
+        for marker in self.controller.project.markers:
+            dist = abs(self.frame_to_x(marker.frame) - pos.x())
+            if dist <= best_dist:
+                best, best_dist = marker, dist
+        return best
+
+    def rename_marker(self, marker_id: str) -> None:
+        marker = next((m for m in self.controller.project.markers if m.id == marker_id), None)
+        if marker is None:
+            return
+        name, ok = QInputDialog.getText(self, _("Renommer le marqueur"), _("Nom :"),
+                                        text=marker.name)
+        if ok:
+            self.controller.edit(_("Renommer le marqueur"),
+                                 lambda t: t.rename_marker(marker_id, name))
+
     def _paint_playhead(self, painter: QPainter, h: int) -> None:
         x = self.frame_to_x(self.playhead)
         if x < HEADER_W - 1 or x > self.viewport().width() + 1:
@@ -773,6 +824,10 @@ class TimelineView(QAbstractScrollArea):
                 self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
             return
         if pos.y() < RULER_H:
+            marker = self.marker_at(pos)
+            if marker is not None:  # glisser pour déplacer, clic pour s'y rendre
+                self._drag = _Drag("marker", marker.id, pos, start=marker.frame)
+                return
             self._drag = _Drag("playhead")
             self._seek_to(pos.x())
             return
@@ -822,6 +877,10 @@ class TimelineView(QAbstractScrollArea):
             return
         d.moved = True
         timeline = self.controller.timeline
+        if d.mode == "marker":
+            d.start = max(0, self._snap(self.x_to_frame(pos.x()), d.clip_id))
+            self.viewport().update()
+            return
         if d.mode == "track":
             d.insert_at = self._track_insert_index(pos.y(), timeline.track(d.track_id).kind)
             self.viewport().update()
@@ -859,6 +918,16 @@ class TimelineView(QAbstractScrollArea):
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         d, self._drag = self._drag, None
         self.viewport().unsetCursor()
+        if d is not None and d.mode == "marker":
+            marker_id, frame = d.clip_id, d.start
+            if d.moved:
+                self.controller.edit(_("Déplacer le marqueur"),
+                                     lambda t: t.move_marker(marker_id, frame))
+            else:
+                self.set_playhead(frame)
+                self.seekRequested.emit(frame)
+            self.viewport().update()
+            return
         if d is not None and d.mode == "track" and d.moved and d.insert_at is not None:
             track_id, index = d.track_id, d.insert_at
             self.controller.edit(_("Déplacer la piste"), lambda t: t.move_track(track_id, index))
@@ -909,7 +978,21 @@ class TimelineView(QAbstractScrollArea):
         low, high = self.controller.timeline.track_block(kind)
         return min(range(low, high + 1), key=lambda i: abs(y - self._boundary_y(rows, i)))
 
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        marker = self.marker_at(event.position().toPoint())
+        if marker is not None:
+            self._drag = None
+            self.rename_marker(marker.id)
+            return
+        super().mouseDoubleClickEvent(event)
+
     def _update_hover(self, pos: QPoint) -> None:
+        marker = self.marker_at(pos)
+        if marker is not None:
+            self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
+            QToolTip.showText(self.viewport().mapToGlobal(pos), marker.name or _("Marqueur"),
+                              self.viewport())
+            return
         header = self._header_hit(pos)
         hover = (header[0].id, header[1]) if header else None
         if hover != self._hover_header:
@@ -960,6 +1043,20 @@ class TimelineView(QAbstractScrollArea):
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:  # noqa: N802
         pos = event.pos()
         menu = QMenu(self)
+        if pos.y() < RULER_H and pos.x() >= HEADER_W:
+            marker = self.marker_at(pos)
+            if marker is not None:
+                marker_id = marker.id
+                menu.addAction(_("Renommer le marqueur…"),
+                               lambda: self.rename_marker(marker_id))
+                menu.addAction(_("Supprimer le marqueur"), lambda: self.controller.edit(
+                    _("Supprimer le marqueur"), lambda t: t.remove_marker(marker_id)))
+            else:
+                frame = self.x_to_frame(pos.x())
+                menu.addAction(_("Ajouter un marqueur ici"), lambda: self.controller.edit(
+                    _("Ajouter un marqueur"), lambda t: t.toggle_marker(frame)))
+            menu.exec(event.globalPos())
+            return
         if pos.x() < HEADER_W:
             row = self.row_at(pos.y())
             if row is None:

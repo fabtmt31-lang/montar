@@ -114,10 +114,13 @@ class Recorder:
     def start(self) -> None:
         self.target.parent.mkdir(parents=True, exist_ok=True)
         self._log = open(self.target.with_suffix(".log"), "w+b")  # noqa: SIM115
-        self._proc = subprocess.Popen(command(self.options, str(self.target)),
+        self._proc = subprocess.Popen(self._command(),
                                       stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                                       stderr=self._log)
         self.started = time.monotonic()
+
+    def _command(self) -> list[str]:
+        return command(self.options, str(self.target))
 
     @property
     def running(self) -> bool:

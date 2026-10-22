@@ -77,3 +77,14 @@ def test_failed_recording_reports_error(xvfb, tmp_path, monkeypatch):
     rec.start()
     time.sleep(1)
     assert not rec.running and not rec.stop() and rec.error
+
+
+def test_voice_over_command(monkeypatch):
+    from montar.media import voiceover
+
+    cmd = voiceover.command("alsa_input.usb", "/tmp/v.wav")
+    assert cmd[cmd.index("-f") + 1] == "pulse"
+    assert cmd[cmd.index("-i") + 1] == "alsa_input.usb"
+    assert "pcm_s16le" in cmd and cmd[-1] == "/tmp/v.wav"
+    monkeypatch.setattr(voiceover.shutil, "which", lambda _n: None)
+    assert voiceover.microphones() == [("default", "Micro par défaut")]

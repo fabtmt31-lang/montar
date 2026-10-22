@@ -488,7 +488,7 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
 **Reste à faire pour la v1.0 Linux (J5)**, d'après les exigences P1 :
 - projets : « Enregistrer sous » / dupliquer un projet (F-PRJ-01) ; récupération après plantage (F-PRJ-03) ; pages **Médiathèque** et **Corbeille** (F-PRJ-06) ; **reliaison** des médias manquants (F-PRJ-10) ;
 - médias : aperçu au survol dans le panneau Médias (F-MED-03) ;
-- timeline : **marqueurs** et **enregistrement de voix off** (F-TL-03) ;
+- ✅ timeline : **marqueurs** et **enregistrement de voix off** (F-TL-03) ;
 - ✅ aperçu : volume, **plein écran**, raccourcis J / K / L, bouton « Ajuster » (F-PRV-02, F-PRV-03) ;
 - ✅ préférences : sauvegarde automatique réglable (F-UX-04), **Stockage & cache** avec « Vider le cache » (F-UX-08) ;
 - préférences : interface en **anglais** (F-UX-02) ;

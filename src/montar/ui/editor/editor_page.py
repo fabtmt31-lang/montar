@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import shutil
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -54,6 +55,7 @@ from montar.ui.dialogs.apply_effect import ApplyEffectDialog
 from montar.ui.dialogs.export import ExportDialog
 from montar.ui.dialogs.media_editor import MediaEditorDialog
 from montar.ui.dialogs.recorder import COUNTDOWN, RecorderDialog, RecordingBar
+from montar.ui.dialogs.voice_over import VoiceOverDialog
 from montar.ui.editor.apply import ApplyAction, actions_for, apply_change
 from montar.ui.editor.busy import BusyOverlay, remaining_text
 from montar.ui.editor.controller import EditorController
@@ -158,6 +160,7 @@ class EditorPage(QWidget):
         self.timeline = TimelinePanel(self.controller, self.thumbnails.get, self.waveforms.get)
         self.timeline.view.badge_provider = self.modules.badges
         self.timeline.view.applyRequested.connect(self.open_apply)
+        self.timeline.voiceOverRequested.connect(self._voice_over_clicked)
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.setChildrenCollapsible(False)
         splitter.setHandleWidth(1)
@@ -225,6 +228,7 @@ class EditorPage(QWidget):
         self.autosave = True  # sinon : enregistrement par Ctrl+S, question à la fermeture
         self.backup_every = 120.0  # secondes entre deux copies de sauvegarde
         self._dirty = False
+        self._voice_pending: dict[str, tuple[int, int]] = {}  # fichier → (début, rognage)
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
         self._save_timer.setInterval(800)
@@ -382,6 +386,9 @@ class EditorPage(QWidget):
             ("I", tl.view.mark_in),
             ("O", tl.view.mark_out),
             ("Escape", tl.view.clear_range),
+            ("M", tl.toggle_marker),
+            ("Ctrl+Left", lambda: tl.go_to_marker(-1)),
+            ("Ctrl+Right", lambda: tl.go_to_marker(1)),
         ):
             sc = QShortcut(QKeySequence(keys), self)
             sc.setContext(Qt.ShortcutContext.WindowShortcut)
@@ -878,6 +885,46 @@ class EditorPage(QWidget):
                                 _("L'enregistrement a échoué : {error}").format(
                                     error=recorder.error))
 
+    # --- voix off -------------------------------------------------------------------------
+
+    def _voice_over_clicked(self) -> None:
+        self.open_voice_over()
+
+    def open_voice_over(self, countdown: int = COUNTDOWN) -> VoiceOverDialog | None:
+        if shutil.which("ffmpeg") is None:
+            QMessageBox.information(self, _("Voix off"), _("ffmpeg est introuvable."))
+            return None
+        if self.project.media_dir is None:
+            return None
+        stamp = time.strftime("%Y-%m-%d %H-%M-%S")
+        target = self.project.media_dir / f"{_('Voix off')} {stamp}.wav"
+        start = self.timeline.view.playhead
+        dialog = VoiceOverDialog(self.player, start, self.project.fps, target, self, countdown)
+        dialog.recorded.connect(lambda path, lead: self._voice_recorded(path, start, lead))
+        dialog.failed.connect(self._voice_failed)
+        dialog.open()
+        return dialog
+
+    def _voice_recorded(self, path: str, start: int, lead: float) -> None:
+        self._voice_pending[path] = (start, round(lead * self.project.fps))
+        self.import_files([path])
+
+    def _voice_failed(self, error: str) -> None:
+        QMessageBox.warning(self, _("Voix off"),
+                            _("L'enregistrement a échoué : {error}").format(error=error))
+
+    def _add_voice_over(self, item: MediaItem, thumb: str | None, start: int,
+                        trim: int) -> None:
+        self._ensure_waveform(item)
+
+        def add(t):
+            t.project.media.append(item)
+            return t.add_voice_over(item, start, trim)
+
+        clip = self.controller.edit(_("Enregistrer une voix off"), add)
+        if clip is not None:
+            self.controller.select(clip.id)
+
     # --- export --------------------------------------------------------------------------
 
     def open_export(self) -> None:
@@ -1114,6 +1161,8 @@ class EditorPage(QWidget):
             item, thumb, error = self._import_results.pop(queued)
             if item is None:
                 errors.append(f"{Path(queued).name} : {error}")
+            elif queued in self._voice_pending:
+                self._add_voice_over(item, thumb, *self._voice_pending.pop(queued))
             elif not self.project.has_media_path(item.path):
                 self._add_media(item, thumb)
         if errors:

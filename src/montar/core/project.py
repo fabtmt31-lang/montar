@@ -69,6 +69,16 @@ class Track:
 
 
 @dataclass
+class Marker:
+    """Repère sur la timeline (F-TL-03) ; sans effet sur le rendu."""
+
+    frame: int
+    name: str = ""
+    color: str = "#E8A33D"
+    id: str = field(default_factory=new_id)
+
+
+@dataclass
 class Transform:
     """Taille, position et orientation d'un clip dans la toile."""
 
@@ -216,6 +226,7 @@ class Project:
     tracks: list[Track] = field(default_factory=list)  # de haut en bas, comme affiché
     clips: list[Clip] = field(default_factory=list)
     transitions: list[Transition] = field(default_factory=list)
+    markers: list[Marker] = field(default_factory=list)
     path: Path | None = None  # emplacement du fichier .montar, non sérialisé
 
     def __post_init__(self) -> None:
@@ -263,6 +274,7 @@ class Project:
             "tracks": [asdict(t) for t in self.tracks],
             "clips": [asdict(c) for c in self.clips],
             "transitions": [asdict(t) for t in self.transitions],
+            "markers": [asdict(m) for m in self.markers],
         }
 
     @classmethod
@@ -283,6 +295,7 @@ class Project:
             tracks = [_build(Track, t) for t in data.get("tracks", [])]
             clips = [_build(Clip, c) for c in data.get("clips", [])]
             transitions = [_build(Transition, t) for t in data.get("transitions", [])]
+            markers = [_build(Marker, m) for m in data.get("markers", [])]
         except (TypeError, AttributeError) as exc:
             raise ProjectError(f"projet invalide : {exc}") from exc
         try:
@@ -295,6 +308,7 @@ class Project:
                 tracks=tracks,
                 clips=clips,
                 transitions=transitions,
+                markers=markers,
                 path=path,
             )
         except (KeyError, ValueError, TypeError) as exc:

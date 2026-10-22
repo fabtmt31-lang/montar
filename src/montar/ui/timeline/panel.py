@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QMenu, QSlider, QVBoxLayout
 
 from montar.i18n import _
@@ -17,6 +17,8 @@ _SLIDER_STEPS = 1000
 
 
 class TimelinePanel(QFrame):
+    voiceOverRequested = pyqtSignal()
+
     def __init__(self, controller: EditorController,
                  thumbnail_for: Callable[[str], str | None],
                  peaks_for: Callable[[str], bytes | None]) -> None:
@@ -57,6 +59,14 @@ class TimelinePanel(QFrame):
         self.magnet.setProperty("variant", "toggle")
         self.magnet.toggled.connect(self._set_snap)
         bl.addWidget(self.magnet)
+        self.marker_button = button("", "ghost", "bookmark",
+                                    tooltip=_("Ajouter / retirer un marqueur (M) — Ctrl+← / "
+                                              "Ctrl+→ : marqueur précédent / suivant"))
+        self.marker_button.clicked.connect(self.toggle_marker)
+        self.voice_button = button("", "ghost", "mic", tooltip=_("Enregistrer une voix off"))
+        self.voice_button.clicked.connect(self.voiceOverRequested)
+        bl.addWidget(self.marker_button)
+        bl.addWidget(self.voice_button)
         add_track = button(_("Piste"), "ghost", "list-plus", tooltip=_("Ajouter une piste"))
         menu = QMenu(add_track)
         menu.addAction(_("Piste vidéo"), lambda: self._add_track("video"))
@@ -141,6 +151,16 @@ class TimelinePanel(QFrame):
         copy_ = self.controller.edit(_("Dupliquer"), lambda t: t.duplicate(clip_id))
         if copy_ is not None:
             self.controller.select(copy_.id)
+
+    def toggle_marker(self) -> None:
+        frame = self.view.playhead
+        self.controller.edit(_("Marqueur"), lambda t: t.toggle_marker(frame))
+
+    def go_to_marker(self, direction: int) -> None:
+        marker = self.controller.timeline.adjacent_marker(self.view.playhead, direction)
+        if marker is not None:
+            self.view.set_playhead(marker.frame, follow=True)
+            self.view.seekRequested.emit(marker.frame)
 
     def set_playhead(self, frame: int, follow: bool = False) -> None:
         self.view.set_playhead(frame, follow)
