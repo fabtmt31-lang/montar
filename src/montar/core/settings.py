@@ -10,6 +10,7 @@ from montar.platform import paths
 
 THEMES = ("light", "dark", "system")
 PREVIEW_QUALITIES = {"low": 0.25, "medium": 0.5, "full": 1.0}
+BACKUP_INTERVALS = (1, 2, 5, 10)  # minutes entre deux copies de sauvegarde
 
 
 @dataclass
@@ -22,6 +23,8 @@ class Settings:
     video_waveforms: bool = True  # forme d'onde sous les vignettes des clips vidéo
     snap: bool = True  # magnétisme de la timeline à l'ouverture d'un projet
     preview_volume: float = 1.0  # volume d'écoute de l'aperçu (0 à 1)
+    autosave: bool = True  # enregistrement à chaque modification (sinon Ctrl+S)
+    backup_minutes: int = 2  # intervalle des copies datées dans « sauvegardes/ »
 
     @property
     def projects_path(self) -> Path:
@@ -48,6 +51,8 @@ class Settings:
         if settings.preview_quality not in PREVIEW_QUALITIES:
             settings.preview_quality = "medium"
         settings.preview_volume = max(0.0, min(1.0, settings.preview_volume))
+        if settings.backup_minutes not in BACKUP_INTERVALS:
+            settings.backup_minutes = 2
         return settings
 
     def save(self, file: Path) -> None:

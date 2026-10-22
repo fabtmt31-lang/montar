@@ -2,22 +2,29 @@
 """Préférences (maquette 06)."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from collections.abc import Callable
+from pathlib import Path
+
+from PyQt6.QtCore import Qt, QUrl, pyqtSignal
+from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QComboBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
-from montar.core.settings import Settings
+from montar.core import storage
+from montar.core.settings import BACKUP_INTERVALS, Settings
+from montar.engine.export import human_size
 from montar.i18n import _
-from montar.ui.widgets import Segmented, Switch, button, label
+from montar.ui.widgets import Segmented, Switch, button, label, shrink
 
 _THEME_PREVIEW = {
     "light": ("#F4F8F5", "#FFFFFF", "#D8E4DC"),
@@ -64,6 +71,8 @@ def _row(title: str, subtitle: str, control: QWidget) -> QWidget:
     t.setStyleSheet("font-weight: 700;")
     texts.addWidget(t)
     sub = label(subtitle, "small")
+    sub.setWordWrap(True)
+    shrink(sub)  # un long chemin ne doit pas élargir la page
     texts.addWidget(sub)
     layout.addLayout(texts, 1)
     layout.addWidget(control)
@@ -74,11 +83,15 @@ def _row(title: str, subtitle: str, control: QWidget) -> QWidget:
 class PreferencesPage(QWidget):
     themeChanged = pyqtSignal(str)
     settingsChanged = pyqtSignal()
+    cacheCleared = pyqtSignal()
 
-    def __init__(self, settings: Settings, modules=None) -> None:
+    def __init__(self, settings: Settings, modules=None, cache: Path | None = None,
+                 project_paths: Callable[[], list[Path]] | None = None) -> None:
         super().__init__()
         self.setObjectName("Page")
         self.settings = settings
+        self.cache = cache
+        self._project_paths = project_paths or (lambda: [])
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea()
@@ -146,6 +159,9 @@ class PreferencesPage(QWidget):
             self.switches[key] = switch
             gl.addWidget(_row(title, subtitle, switch))
         layout.addWidget(general)
+        layout.addWidget(self._saving_card(settings))
+        if cache is not None:
+            layout.addWidget(self._storage_card(cache))
         if modules is not None:
             from montar.ui.home.extensions import ExtensionsCard
 
@@ -153,6 +169,86 @@ class PreferencesPage(QWidget):
             self.extensions.disabledChanged.connect(self._set_disabled)
             layout.addWidget(self.extensions)
         layout.addStretch()
+
+    def _saving_card(self, settings: Settings) -> QFrame:
+        card = QFrame()
+        card.setProperty("card", True)
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(24, 18, 24, 8)
+        cl.addWidget(label(_("Projets & sauvegarde"), "h3"))
+        self.autosave = Switch(settings.autosave)
+        self.autosave.toggled.connect(lambda on: self._set_flag("autosave", on))
+        cl.addWidget(_row(_("Sauvegarde automatique"),
+                          _("Le projet est enregistré à chaque modification ; sinon avec "
+                            "Ctrl+S, et montar le propose à la fermeture"), self.autosave))
+        self.backup_interval = Segmented(
+            [(str(m), _("{n} min").format(n=m)) for m in BACKUP_INTERVALS],
+            str(settings.backup_minutes))
+        self.backup_interval.changed.connect(self._set_backup_interval)
+        cl.addWidget(_row(_("Copies de sauvegarde"),
+                          _("Intervalle entre deux copies datées du projet, gardées dans "
+                            "son dossier « sauvegardes » (les 10 dernières)"),
+                          self.backup_interval))
+        return card
+
+    def _storage_card(self, cache: Path) -> QFrame:
+        card = QFrame()
+        card.setProperty("card", True)
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(24, 18, 24, 8)
+        cl.addWidget(label(_("Stockage & cache"), "h3"))
+        buttons = QWidget()
+        bl = QHBoxLayout(buttons)
+        bl.setContentsMargins(0, 0, 0, 0)
+        open_button = button(_("Ouvrir"), "secondary", "folder-open", tooltip=str(cache))
+        open_button.clicked.connect(lambda: QDesktopServices.openUrl(
+            QUrl.fromLocalFile(str(cache))))
+        self.clear_cache_button = button(_("Vider le cache"), "secondary", "trash-2")
+        self.clear_cache_button.clicked.connect(self._clear_cache)
+        bl.addWidget(open_button)
+        bl.addWidget(self.clear_cache_button)
+        self._cache_row = _row(_("Cache"), "", buttons)
+        cl.addWidget(self._cache_row)
+        self._backups_row = _row(_("Sauvegardes des projets"), "", QWidget())
+        cl.addWidget(self._backups_row)
+        self._disk_row = _row(_("Espace libre"), "", QWidget())
+        cl.addWidget(self._disk_row)
+        self.refresh_storage()
+        return card
+
+    def refresh_storage(self) -> None:
+        """Tailles recalculées à chaque affichage de la page."""
+        if self.cache is None:
+            return
+        size = storage.cache_size(self.cache)
+        self._cache_row.subtitle_label.setText(  # type: ignore[attr-defined]
+            _("{size} — vignettes, formes d'onde, textes, calculs des modules").format(
+                size=_size(size)))
+        self._cache_row.subtitle_label.setToolTip(str(self.cache))  # type: ignore[attr-defined]
+        self.clear_cache_button.setEnabled(size > 0)
+        count, used = storage.backups_usage(self._project_paths())
+        self._backups_row.subtitle_label.setText(  # type: ignore[attr-defined]
+            _("{n} copies · {size}, dans le dossier « sauvegardes » de chaque projet").format(
+                n=count, size=_size(used)) if count else _("Aucune copie pour l'instant"))
+        free = storage.free_space(self.settings.projects_path)
+        self._disk_row.subtitle_label.setText(  # type: ignore[attr-defined]
+            _("{size} sur le disque du dossier des projets").format(size=_size(free))
+            if free is not None else _("inconnu"))
+
+    def _clear_cache(self) -> None:
+        answer = QMessageBox.question(
+            self, _("Vider le cache"),
+            _("Supprimer le cache ? Vignettes, formes d'onde et calculs des modules (Timelapse…) "
+              "seront refaits quand ils seront nécessaires. Les projets et leurs médias ne sont "
+              "pas touchés."))
+        if answer == QMessageBox.StandardButton.Yes:
+            storage.clear_cache(self.cache)
+            self.refresh_storage()
+            self.cacheCleared.emit()
+
+    def _set_backup_interval(self, key: str) -> None:
+        self.settings.backup_minutes = int(key)
+        self.settingsChanged.emit()
 
     def _set_theme(self, key: str) -> None:
         self.settings.theme = key
@@ -178,3 +274,7 @@ class PreferencesPage(QWidget):
             self.settings.projects_dir = folder
             self._folder_row.subtitle_label.setText(folder)  # type: ignore[attr-defined]
             self.settingsChanged.emit()
+
+
+def _size(size: int) -> str:
+    return human_size(size).lstrip("≈ ") if size else _("vide")

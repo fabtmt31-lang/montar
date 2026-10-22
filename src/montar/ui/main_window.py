@@ -47,7 +47,8 @@ class MainWindow(QMainWindow):
         self.home = HomePage()
         self.projects = HomePage(compact=True)
         self.modules = default_manager(settings.disabled_modules)
-        self.preferences = PreferencesPage(settings, self.modules)
+        self.preferences = PreferencesPage(settings, self.modules, self.cache,
+                                           self.recent.paths)
         self.trash = Trash(paths.data_dir() / "corbeille")
         self.trash.purge()
         self.library_page = LibraryPage(self._thumbnail_for)
@@ -69,6 +70,7 @@ class MainWindow(QMainWindow):
         self.home.showAllRequested.connect(lambda: self.shell.show_page("projects"))
         self.preferences.themeChanged.connect(theme().apply)
         self.preferences.settingsChanged.connect(self._save_settings)
+        self.preferences.cacheCleared.connect(self.refresh_recent)
         self.editor: EditorPage | None = None
         self.refresh_recent()
 
@@ -227,6 +229,8 @@ class MainWindow(QMainWindow):
             self.library_page.set_items(self.library_items())
         elif key == "trash":
             self.trash_page.refresh()
+        elif key == "preferences":
+            self.preferences.refresh_storage()
 
     def check_interrupted(self) -> None:
         """Au démarrage : montar s'est-il arrêté brutalement la fois précédente ?"""
@@ -243,22 +247,30 @@ class MainWindow(QMainWindow):
         if answer == QMessageBox.StandardButton.Yes:
             self.open_project(project)
 
-    def _close_editor(self) -> None:
+    def _close_editor(self) -> bool:
+        """Ferme le projet ouvert ; False si l'utilisateur a annulé (modifications non
+        enregistrées)."""
         if self.editor is not None:
+            if not self.editor.confirm_close():
+                return False
             self.session.close()
             self.editor.close_project()
             self.stack.removeWidget(self.editor)
             self.editor.deleteLater()
             self.editor = None
+        return True
 
     def show_home(self) -> None:
-        self._close_editor()
+        if not self._close_editor():
+            return
         self.refresh_recent()
         self.stack.setCurrentWidget(self.shell)
         self.setWindowTitle("montar")
 
     def closeEvent(self, event) -> None:  # noqa: N802
-        self._close_editor()
+        if not self._close_editor():
+            event.ignore()
+            return
         super().closeEvent(event)
 
 

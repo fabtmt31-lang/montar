@@ -1053,3 +1053,44 @@ def test_preview_shuttle_zoom_volume_fullscreen(window, media_dir):
     QTest.qWaitForWindowActive(full)
     QTest.keyClick(full, Qt.Key.Key_Escape)
     assert wait_until(lambda: preview.fullscreen is None)
+
+
+# --- J5-D : sauvegarde et stockage --------------------------------------------------------------
+
+
+def test_manual_save_asks_before_closing(window, monkeypatch):
+    editor = window.create_project(NewProjectParams("Manuel", "16:9", "720p", 25))
+    window.settings.autosave = False
+    window.settings.backup_minutes = 5
+    editor.apply_preferences(window.settings)
+    assert editor.backup_every == 300
+    editor.controller.edit("piste", lambda t: t.add_track("video"))
+    assert editor.dirty and not editor._save_timer.isActive()
+    saved_tracks = len(Project.load(editor.project.path).tracks)
+
+    answers = [QMessageBox.StandardButton.Cancel]
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: answers.pop()))
+    window.show_home()
+    assert window.editor is editor  # annulé : le projet reste ouvert
+    answers.append(QMessageBox.StandardButton.Discard)
+    window.show_home()
+    assert window.editor is None
+    assert len(Project.load(editor.project.path).tracks) == saved_tracks
+
+
+def test_preferences_storage_card(window, isolated_home, monkeypatch):
+    prefs = window.preferences
+    thumbs = window.cache / "thumbnails"
+    thumbs.mkdir(parents=True, exist_ok=True)
+    (thumbs / "x.jpg").write_bytes(b"0" * 2_000_000)
+    prefs.refresh_storage()
+    assert "2 Mo" in prefs._cache_row.subtitle_label.text()
+    assert prefs.clear_cache_button.isEnabled()
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    prefs.clear_cache_button.click()
+    assert not thumbs.exists() and not prefs.clear_cache_button.isEnabled()
+    prefs.backup_interval.button("10").click()
+    assert window.settings.backup_minutes == 10
+    prefs.autosave.click()
+    assert window.settings.autosave is False

@@ -222,6 +222,9 @@ class EditorPage(QWidget):
         self._export_timer.setInterval(250)
         self._export_timer.timeout.connect(self._poll_export)
 
+        self.autosave = True  # sinon : enregistrement par Ctrl+S, question à la fermeture
+        self.backup_every = 120.0  # secondes entre deux copies de sauvegarde
+        self._dirty = False
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
         self._save_timer.setInterval(800)
@@ -548,7 +551,9 @@ class EditorPage(QWidget):
     def mark_dirty(self) -> None:
         self.status_label.setText(self.status_label.text().replace(
             _("Enregistré"), _("Modifié"), 1))
-        self._save_timer.start()
+        self._dirty = True
+        if self.autosave:
+            self._save_timer.start()
 
     def save_as(self) -> None:
         name, ok = QInputDialog.getText(self, _("Enregistrer sous"),
@@ -565,13 +570,36 @@ class EditorPage(QWidget):
         self._save_timer.stop()
         try:
             path = self.project.save()
-            backup(self.project)
+            backup(self.project, every=self.backup_every)
         except (OSError, ProjectError) as exc:
             QMessageBox.warning(self, _("Enregistrement impossible"), str(exc))
             return False
+        self._dirty = False
         self._refresh_header()
         self.saved.emit(path)
         return True
+
+    @property
+    def dirty(self) -> bool:
+        return self._dirty
+
+    def confirm_close(self) -> bool:
+        """Sans sauvegarde automatique, propose d'enregistrer les modifications ; False si
+        l'utilisateur annule la fermeture."""
+        if self.autosave or not self._dirty:
+            return True
+        answer = QMessageBox.question(
+            self, _("Modifications non enregistrées"),
+            _("Enregistrer les modifications de « {name} » ?").format(name=self.project.name),
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Save)
+        if answer == QMessageBox.StandardButton.Save:
+            return self.save()
+        if answer == QMessageBox.StandardButton.Discard:
+            self._save_timer.stop()
+            self._dirty = False
+            return True
+        return False
 
     def close_project(self) -> bool:
         """Enregistre si nécessaire et arrête la lecture ; False si l'enregistrement a échoué."""
@@ -1168,6 +1196,10 @@ class EditorPage(QWidget):
         """Préférences de l'utilisateur ; le magnétisme n'est réglé qu'à l'ouverture (il se
         change ensuite dans la barre de la timeline)."""
         self._hardware = settings.hardware_export
+        self.autosave = settings.autosave
+        self.backup_every = settings.backup_minutes * 60.0
+        if self.autosave and self._dirty:
+            self._save_timer.start()
         view = self.timeline.view
         view.video_waveforms = settings.video_waveforms
         view.viewport().update()
