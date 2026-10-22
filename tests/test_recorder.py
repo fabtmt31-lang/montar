@@ -66,7 +66,8 @@ def test_record_screen(xvfb, tmp_path, monkeypatch):
     rec.start()
     time.sleep(2)
     assert rec.running
-    assert rec.stop() and _duration(target) == pytest.approx(2.0, abs=0.8)
+    assert rec.stop(), rec.error  # message de ffmpeg en cas d'échec
+    assert _duration(target) == pytest.approx(2.0, abs=0.8)
     assert not list(tmp_path.glob("*.log"))
 
 

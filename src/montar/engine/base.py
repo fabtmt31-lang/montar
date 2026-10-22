@@ -45,6 +45,7 @@ class ClipSpec:
     animation_in: str = "none"  # textes : none | fade | slide
     animation_out: str = "none"
     extra_filters: tuple[tuple[str, dict], ...] = ()  # filtres ajoutés par des modules
+    audio_filters: tuple[tuple[str, dict], ...] = ()  # filtres audio des modules
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,8 @@ class TransitionSpec:
     left: int  # indice du clip de gauche dans TrackSpec.clips
     kind: str
     duration: int
+    service: str = ""  # transition d'un module : service MLT et propriétés
+    properties: tuple[tuple[str, object], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -90,9 +93,12 @@ class ClipOverride:
     source_in: int | None = None
     speed: float | None = None
     extra_filters: tuple[tuple[str, dict], ...] = ()
+    audio_filters: tuple[tuple[str, dict], ...] = ()
 
 
 ClipHook = Callable[[Clip, MediaItem], ClipOverride | None]
+# transition d'un module : (type, durée) -> (service MLT, propriétés) ou None si inconnue
+TransitionHook = Callable[[str, int], tuple[str, dict] | None]
 
 
 def _clip_spec(clip: Clip, path: str, kind: str, size: tuple[int, int],
@@ -106,14 +112,16 @@ def _clip_spec(clip: Clip, path: str, kind: str, size: tuple[int, int],
         clip.fade_in, clip.fade_out, size, copy.deepcopy(clip.transform),
         copy.deepcopy(clip.color), clip.preset, clip.preset_amount, copy.deepcopy(clip.effects),
         text.animation_in if text else "none", text.animation_out if text else "none",
-        tuple(o.extra_filters))
+        tuple(o.extra_filters), tuple(o.audio_filters))
 
 
 def timeline_spec(project: Project, text_image: TextImage | None = None,
                   hook: ClipHook | None = None,
-                  size: tuple[int, int] | None = None) -> TimelineSpec:
+                  size: tuple[int, int] | None = None,
+                  transition_hook: TransitionHook | None = None) -> TimelineSpec:
     """Description de la timeline pour le moteur. Sans `text_image`, les textes sont ignorés.
-    `size` remplace la taille de la toile (export à une autre résolution)."""
+    `size` remplace la taille de la toile (export à une autre résolution). Une transition
+    d'un module absent devient un fondu enchaîné."""
     w, h = size or project.canvas_size
     media = {m.id: m for m in project.media}
     by_kind = {k: [t for t in project.tracks if t.kind == k] for k in ("video", "text", "audio")}
@@ -138,7 +146,7 @@ def timeline_spec(project: Project, text_image: TextImage | None = None,
             clips.append(spec)
             ids.append(c.id)
         transitions = tuple(
-            TransitionSpec(ids.index(t.left_id), t.kind, t.duration)
+            _transition_spec(ids.index(t.left_id), t.kind, t.duration, transition_hook)
             for t in project.transitions
             if t.track_id == track.id and t.left_id in ids and t.right_id in ids
             and ids.index(t.right_id) == ids.index(t.left_id) + 1
@@ -147,6 +155,18 @@ def timeline_spec(project: Project, text_image: TextImage | None = None,
                                 track.hidden, tuple(clips), track.volume,
                                 tuple(sorted(transitions, key=lambda t: t.left))))
     return TimelineSpec(Canvas(w, h, project.fps), tuple(tracks))
+
+
+def _transition_spec(left: int, kind: str, duration: int,
+                     hook: TransitionHook | None) -> TransitionSpec:
+    if "." not in kind:  # transition intégrée
+        return TransitionSpec(left, kind, duration)
+    found = hook(kind, duration) if hook is not None else None
+    if found is None:
+        return TransitionSpec(left, "dissolve", duration)
+    service, props = found
+    return TransitionSpec(left, kind, duration, service,
+                          tuple(sorted((str(k), v) for k, v in props.items())))
 
 
 class Source(ABC):

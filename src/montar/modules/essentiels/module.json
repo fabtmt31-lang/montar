@@ -1,0 +1,10 @@
+{
+  "id": "essentiels",
+  "name": "Essentiels",
+  "version": "1.0.0",
+  "api_version": "1.2",
+  "author": "montar",
+  "license": "GPL-3.0-or-later",
+  "description": "Effets audio (écho, graves et aigus, volume égalisé), transitions (cercle, volets), fonds unis et dégradés, exports MKV et ProRes. Sert aussi d'exemple pour l'API des modules.",
+  "permissions": []
+}

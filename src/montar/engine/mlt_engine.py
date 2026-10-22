@@ -262,6 +262,14 @@ class _TimelineGraph:
         length = t.duration
         if track_kind == "audio":
             transition = mlt.Transition(self.profile, "mix")
+        elif t.service:  # transition d'un module
+            transition = mlt.Transition(self.profile, t.service)
+            if transition is None or not transition.is_valid():
+                log.warning("transition MLT indisponible : %s", t.service)
+                transition = mlt.Transition(self.profile, "luma")
+            else:
+                for key, value in t.properties:
+                    transition.set(key, value)
         elif t.kind in ("slide_left", "slide_right", "zoom"):
             transition = mlt.Transition(self.profile, "affine")
             start = {"slide_left": "100% 0% 100% 100% 1", "slide_right": "-100% 0% 100% 100% 1",
@@ -386,6 +394,8 @@ class _TimelineGraph:
     def _audio_filters(self, producer, clip: ClipSpec, span: tuple[int, int]) -> None:
         if clip.kind in ("image", "text"):
             return
+        for name, props in clip.audio_filters:
+            self._attach(producer, name, props)
         if clip.volume <= 0.001:
             self._attach(producer, "volume", {"gain": 0})
             return

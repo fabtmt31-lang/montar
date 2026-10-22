@@ -557,19 +557,28 @@ class Inspector(QFrame):
         self.text_y.set_value(t.y * 100)
         self._refreshing = False
 
+    def module_transitions(self) -> list:
+        return self.modules.manager.transitions() if self.modules else []
+
     def show_transition(self, transition: Transition) -> None:
         self.clip_id = None
         self.missing.setVisible(False)
         self._transition_id = transition.id
-        name = _(TRANSITIONS.get(transition.kind, (transition.kind, ""))[0])
+        module_kinds = {t.id: _(t.name) for _m, t in self.module_transitions()}
+        name = module_kinds.get(transition.kind) or _(
+            TRANSITIONS.get(transition.kind, (transition.kind, ""))[0])
         self.title.setText(name)
         self.subtitle.setText(_("Transition"))
         self._refreshing = True
-        kinds = AUDIO_TRANSITIONS if self.controller.timeline.track(
-            transition.track_id).kind == "audio" else VIDEO_TRANSITIONS
+        audio = self.controller.timeline.track(transition.track_id).kind == "audio"
+        kinds = list(AUDIO_TRANSITIONS if audio else VIDEO_TRANSITIONS)
         self.transition_kind.clear()
         for k in kinds:
             self.transition_kind.addItem(_(TRANSITIONS[k][0]), k)
+        if not audio:
+            for k, text in module_kinds.items():
+                self.transition_kind.addItem(text, k)
+                kinds.append(k)
         self.transition_kind.setCurrentIndex(kinds.index(transition.kind)
                                              if transition.kind in kinds else 0)
         fps = self.controller.project.fps

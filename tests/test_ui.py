@@ -1173,3 +1173,49 @@ def test_voice_over_recording(window, media_dir, monkeypatch):
     assert (voice.start, voice.source_in, voice.duration) == (10, 5, 45)
     assert not editor.player.playing
     assert Path(editor.project.find_media(voice.media_id).path).parent == editor.project.media_dir
+
+
+# --- J5-F : types de modules ---------------------------------------------------------------------
+
+
+@needs_ffmpeg
+def test_module_types_in_editor(window, media_dir):
+    from montar.ui.dialogs.export import ExportDialog
+
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    clip = editor.project.clips[0]
+    editor.controller.select(clip.id)
+
+    # effet audio : réglé dans le panneau Effets, stocké dans clip.modules
+    panel = editor.effects_panel
+    control = next(c for e, c, audio in panel._module_controls
+                   if audio and e.id == "essentiels.egaliseur" and c.param.key == "graves")
+    assert control.widget.isEnabled()
+    control.widget.slider.setValue(1000)
+    assert abs(clip.modules["essentiels.egaliseur"]["graves"] - 12) < 0.01
+    assert editor.modules.hook(clip, editor.project.media[0]).audio_filters
+
+    # fenêtre « Appliquer… » : les effets audio y figurent
+    from montar.ui.editor.apply import actions_for
+    kinds = {a.kind for a in actions_for(clip, True, editor.modules, True)}
+    assert "audio_effect" in kinds
+
+    # transitions des modules dans le panneau
+    assert editor.transitions_panel._module_grid.count() == 3
+
+    # générateur : image créée dans medias/ puis importée
+    _m, gen = next((m, g) for m, g in editor.module_manager.generators()
+                   if g.id == "essentiels.fond")
+    path = editor.generate("essentiels", gen, {"couleur": "#123456"})
+    assert path.parent == editor.project.media_dir
+    assert wait_until(lambda: len(editor.project.media) == 2)
+    assert editor.project.media[1].kind == "image"
+
+    # format d'export d'un module
+    dialog = ExportDialog(editor.project, 50, None, Path("/tmp"), parent=editor,
+                          extra_formats=[f for _m, f in editor.module_manager.export_formats()])
+    dialog.video_formats.buttons["essentiels.mkv"].click()
+    assert dialog.target().suffix == ".mkv" and dialog.settings().format == "essentiels.mkv"
+    assert "MKV" in dialog.summary_output.text()
+    dialog.close()

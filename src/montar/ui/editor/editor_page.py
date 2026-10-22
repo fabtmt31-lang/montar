@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import logging
 import shutil
 import time
@@ -53,6 +54,7 @@ from montar.media.waveform import waveform_path
 from montar.plugins import ModuleManager, default_manager
 from montar.ui.dialogs.apply_effect import ApplyEffectDialog
 from montar.ui.dialogs.export import ExportDialog
+from montar.ui.dialogs.generator import GeneratorDialog
 from montar.ui.dialogs.media_editor import MediaEditorDialog
 from montar.ui.dialogs.recorder import COUNTDOWN, RecorderDialog, RecordingBar
 from montar.ui.dialogs.voice_over import VoiceOverDialog
@@ -156,6 +158,7 @@ class EditorPage(QWidget):
         self.inspector = Inspector(self.controller, self.modules)
         body.addWidget(self.inspector)
         self.effects_panel.set_modules(self.modules)
+        self.transitions_panel.set_module_transitions(self.module_manager.transitions())
 
         self.timeline = TimelinePanel(self.controller, self.thumbnails.get, self.waveforms.get)
         self.timeline.view.badge_provider = self.modules.badges
@@ -187,6 +190,7 @@ class EditorPage(QWidget):
         self.media_panel.relinkRequested.connect(self.relink)
         self.media_panel.relinkAllRequested.connect(self.relink_first_missing)
         self.media_panel.libraryRequested.connect(self.open_library)
+        self.media_panel.generateRequested.connect(self.open_generator)
         self.library_provider = lambda: []  # fourni par la fenêtre principale
         self.thumbnail_provider = lambda path: None
         self._media_edits: dict[str, tuple[str, str, Path]] = {}  # clé → (média, mode, fichier)
@@ -640,7 +644,8 @@ class EditorPage(QWidget):
 
     def _reload_player(self) -> None:
         self._load_timer.stop()
-        self.player.load(timeline_spec(self.project, self._text_image, self.modules.hook))
+        self.player.load(timeline_spec(self.project, self._text_image, self.modules.hook,
+                                       transition_hook=self.modules.transition_hook))
 
     # --- modules -------------------------------------------------------------------------
 
@@ -649,10 +654,14 @@ class EditorPage(QWidget):
         return (media is not None and media.kind in ("video", "image")
                 and self.controller.timeline.track(clip.track_id).kind == "video")
 
+    def _has_sound(self, clip) -> bool:
+        media = self.project.find_media(clip.media_id) if clip.media_id else None
+        return media is not None and media.kind in ("video", "audio") and media.has_audio
+
     def open_apply(self, clip_id: str) -> None:
         """« Appliquer un effet ou un module… » sur le clip (ou sa plage sélectionnée)."""
         clip = self.controller.timeline.clip(clip_id)
-        actions = actions_for(clip, self._is_visual(clip), self.modules)
+        actions = actions_for(clip, self._is_visual(clip), self.modules, self._has_sound(clip))
         view = self.timeline.view
         found = view.valid_range()
         on_range = found is not None and found[0].id == clip_id
@@ -686,9 +695,10 @@ class EditorPage(QWidget):
             view.isolate_range()  # l'effet ne porte que sur la plage
             clip = self.controller.selected_clip() or clip
         defaults = None
-        if action.kind == "module_effect":
-            found_effect = self.module_manager.effect(action.key)
-            defaults = found_effect[1].defaults() if found_effect else {}
+        if action.kind in ("module_effect", "audio_effect"):
+            effects = self.module_manager.effects() + self.module_manager.audio_effects()
+            found_effect = next((e for _m, e in effects if e.id == action.key), None)
+            defaults = found_effect.defaults() if found_effect else {}
         self.controller.edit_clip(action.title, clip.id, apply_change(action, defaults))
         self.controller.select(clip.id)
         self.show_side("filters" if action.kind == "preset" else "effects")
@@ -885,6 +895,37 @@ class EditorPage(QWidget):
                                 _("L'enregistrement a échoué : {error}").format(
                                     error=recorder.error))
 
+    # --- générateurs des modules ---------------------------------------------------------
+
+    def open_generator(self) -> None:
+        generators = self.module_manager.generators()
+        if not generators:
+            QMessageBox.information(self, _("Créer un média"),
+                                    _("Aucun module actif ne propose de générateur."))
+            return
+        dialog = GeneratorDialog(generators, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.chosen is not None:
+            self.generate(*dialog.chosen, dialog.values)
+
+    def generate(self, module_id: str, generator, values: dict) -> Path | None:
+        """Écrit le média du générateur dans le dossier du projet, puis l'importe."""
+        if self.project.media_dir is None:
+            return None
+        stamp = time.strftime("%Y-%m-%d %H-%M-%S")
+        suffix = generator.suffix if generator.suffix.startswith(".") else f".{generator.suffix}"
+        target = self.project.media_dir / f"{_(generator.name)} {stamp}{suffix}"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        merged = {**generator.defaults(), **values}
+        ok = self.module_manager.guarded(
+            module_id, lambda: generator.generate(self.modules, merged, target) or True, False)
+        if not ok or not target.exists():
+            QMessageBox.warning(self, _("Créer un média"),
+                                _("Le module « {m} » n'a pas pu créer le média.").format(
+                                    m=module_id))
+            return None
+        self.import_files([str(target)])
+        return target
+
     # --- voix off -------------------------------------------------------------------------
 
     def _voice_over_clicked(self) -> None:
@@ -948,14 +989,28 @@ class EditorPage(QWidget):
             return
         folder = self.project.path.parent / EXPORT_DIR if self.project.path else Path.home()
         dialog = ExportDialog(self.project, length, self.preview.canvas.image, folder,
-                              self._hardware, self)
+                              self._hardware, self,
+                              [f for _m, f in self.module_manager.export_formats()])
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         self.start_export(dialog.settings())
 
     def start_export(self, settings: ExportSettings) -> None:
+        found = self.module_manager.export_format(settings.format)
+        if found is not None:  # format d'un module : il fournit les réglages de l'encodeur
+            module_id, fmt = found
+            props = self.module_manager.guarded(
+                module_id, lambda: dict(fmt.properties(settings)), None)
+            if not props:
+                QMessageBox.warning(self, _("Exporter la vidéo"),
+                                    _("Le module « {m} » n'a pas pu préparer l'export.").format(
+                                        m=module_id))
+                return
+            settings = dataclasses.replace(settings, custom=tuple(props.items()),
+                                           hardware=False)
         size = None if settings.audio_only else (settings.width, settings.height)
-        spec = timeline_spec(self.project, self._text_image, self.modules.hook, size)
+        spec = timeline_spec(self.project, self._text_image, self.modules.hook, size,
+                             self.modules.transition_hook)
         spec = retime(spec, settings.fps)
         Path(settings.path).parent.mkdir(parents=True, exist_ok=True)
         self._export_job = self._engine_factory().export(spec, settings)
@@ -1019,6 +1074,7 @@ class EditorPage(QWidget):
         self._reload_player()
         self.timeline.view.viewport().update()
         self.effects_panel.rebuild_modules()
+        self.transitions_panel.set_module_transitions(self.module_manager.transitions())
         self._on_clip_selected(self.controller.selected)
 
     def _on_frame(self, _image, frame: int) -> None:

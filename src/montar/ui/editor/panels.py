@@ -22,6 +22,7 @@ from montar.engine.looks import PRESETS
 from montar.i18n import _
 from montar.ui.editor.controller import EditorController
 from montar.ui.editor.controls import SliderRow, section
+from montar.ui.editor.params import ParamControl
 from montar.ui.labels import PRESET_SWATCHES, TRANSITIONS
 from montar.ui.text_render import PRESETS as TEXT_PRESETS
 from montar.ui.text_render import render
@@ -165,10 +166,27 @@ class TransitionsPanel(_Panel):
             grid.addWidget(tile, i // 2, i % 2)
             self._tiles.append(tile)
         self.body.addLayout(grid)
+        # transitions apportées par les modules
+        self._module_grid = QGridLayout()
+        self._module_grid.setSpacing(8)
+        self.body.addLayout(self._module_grid)
         self.body.addStretch()
         controller.selectionChanged.connect(lambda _id: self.refresh())
         controller.changed.connect(self.refresh)
         self.refresh()
+
+    def set_module_transitions(self, transitions) -> None:
+        """`transitions` : liste de (module, montar.api.Transition)."""
+        while self._module_grid.count():
+            item = self._module_grid.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        for i, (_module_id, t) in enumerate(transitions):
+            tile = _tile(self._icon_tile(t.icon), _(t.name), _DragTile(TRANSITION_MIME, t.id))
+            tile.setCheckable(False)
+            tile.setToolTip(_(t.description) or _(t.name))
+            tile.clicked.connect(lambda _=False, k=t.id: self.applyRequested.emit(k))
+            self._module_grid.addWidget(tile, i // 2, i % 2)
 
     @staticmethod
     def _icon_tile(icon: str) -> QPixmap:
@@ -296,7 +314,8 @@ class EffectsPanel(_Panel):
         self._modules_box = QVBoxLayout()
         self._modules_box.setSpacing(6)
         self.body.addLayout(self._modules_box)
-        self._module_controls: list[tuple[str, object, object]] = []  # (effet, param, widget)
+        self._module_controls: list = []  # (effet, ParamControl, effet audio ?)
+        self.audio_info = None
         self.modules = None
         self.body.addStretch()
         controller.selectionChanged.connect(lambda _id: self.refresh())
@@ -315,46 +334,45 @@ class EffectsPanel(_Panel):
             if item.widget() is not None:
                 item.widget().deleteLater()
         self._module_controls = []
-        effects = self.modules.manager.effects() if self.modules else []
-        for _module_id, effect in effects:
-            self._modules_box.addWidget(section(_(effect.name).upper()))
-            for param in effect.params:
-                widget = self._param_widget(effect, param)
-                self._modules_box.addWidget(widget)
-                self._module_controls.append((effect, param, widget))
+        self.audio_info = None
+        manager = self.modules.manager if self.modules else None
+        groups = (((False, manager.effects()), (True, manager.audio_effects()))
+                  if manager else ())
+        for audio, effects in groups:
+            if audio and effects:
+                self._modules_box.addWidget(section(_("Effets audio").upper()))
+                self.audio_info = self.hint(_("Sélectionnez un clip avec du son."))
+                self._modules_box.addWidget(self.audio_info)
+            for _module_id, effect in effects:
+                self._modules_box.addWidget(label(_(effect.name), "section"))
+                for param in effect.params:
+                    control = ParamControl(
+                        param, lambda v, merge, e=effect, k=param.key, a=audio:
+                        self._store(e, k, v, merge, a))
+                    self._modules_box.addWidget(control.widget)
+                    self._module_controls.append((effect, control, audio))
         self.refresh()
 
-    def _param_widget(self, effect, param):
-        from PyQt6.QtWidgets import QCheckBox, QComboBox
+    def _audio_clip(self) -> Clip | None:
+        clip = self.controller.selected_clip()
+        if clip is None or clip.is_text:
+            return None
+        media = self.controller.project.find_media(clip.media_id)
+        return clip if media is not None and media.kind in ("video", "audio") \
+            and media.has_audio else None
 
-        def store(value, merge=True):
-            clip = self._visual_clip()
-            if clip is None:
-                return
+    def _store(self, effect, key: str, value, merge: bool, audio: bool) -> None:
+        clip = self._audio_clip() if audio else self._visual_clip()
+        if clip is None:
+            return
 
-            def change(c):
-                values = dict(c.modules.get(effect.id) or effect.defaults())
-                values[param.key] = value
-                c.modules[effect.id] = values
+        def change(c):
+            values = dict(c.modules.get(effect.id) or effect.defaults())
+            values[key] = value
+            c.modules[effect.id] = values
 
-            self.controller.edit_clip(_(effect.name), clip.id, change,
-                                      merge=(clip.id, effect.id, param.key) if merge else None)
-
-        if param.kind == "bool":
-            w = QCheckBox(_(param.label))
-            w.toggled.connect(lambda on: store(bool(on), merge=False))
-        elif param.kind == "choice":
-            w = QComboBox()
-            for value, text in param.choices:
-                w.addItem(_(text), value)
-            w.currentIndexChanged.connect(lambda _i: store(w.currentData(), merge=False))
-        else:
-            unit = f" {param.unit}" if param.unit else ""
-            decimals = 0 if param.kind == "int" else 2
-            w = SliderRow(_(param.label), param.minimum, param.maximum,
-                          lambda v, d=decimals, u=unit: f"{v:.{d}f}{u}")
-            w.moved.connect(lambda v: store(round(v) if param.kind == "int" else round(v, 4)))
-        return w
+        self.controller.edit_clip(_(effect.name), clip.id, change,
+                                  merge=(clip.id, effect.id, key) if merge else None)
 
     def refresh(self) -> None:
         clip = self._visual_clip()
@@ -363,21 +381,17 @@ class EffectsPanel(_Panel):
             row.setEnabled(clip is not None)
             if clip is not None:
                 row.set_value(getattr(clip.effects, key) * 100)
-        for effect, param, widget in self._module_controls:
-            widget.setEnabled(clip is not None)
-            if clip is None:
+        audio_clip = self._audio_clip()
+        if self.audio_info is not None:
+            self.audio_info.setVisible(audio_clip is None)
+        for effect, control, audio in self._module_controls:
+            target = audio_clip if audio else clip
+            control.widget.setEnabled(target is not None)
+            if target is None:
                 continue
-            values = {**effect.defaults(), **(clip.modules.get(effect.id) or {})}
-            value = values.get(param.key, param.default)
-            widget.blockSignals(True)
-            if param.kind == "bool":
-                widget.setChecked(bool(value))
-            elif param.kind == "choice":
-                widget.setCurrentIndex(max(0, widget.findData(value)))
-            else:
-                widget.set_value(float(value))
-            widget.blockSignals(False)
-        self._reset_button.setEnabled(clip is not None)
+            values = {**effect.defaults(), **(target.modules.get(effect.id) or {})}
+            control.set_value(values.get(control.param.key, control.param.default))
+        self._reset_button.setEnabled(clip is not None or audio_clip is not None)
 
     def _set(self, key: str, title: str, value: float) -> None:
         clip = self._visual_clip()
@@ -387,10 +401,11 @@ class EffectsPanel(_Panel):
                                       merge=(clip.id, f"effect:{key}"))
 
     def _reset(self) -> None:
-        clip = self._visual_clip()
+        clip = self._visual_clip() or self._audio_clip()
         if clip is not None:
-            effect_ids = {e.id for _m, e in self.modules.manager.effects()} if self.modules \
-                else set()
+            manager = self.modules.manager if self.modules else None
+            effect_ids = {e.id for _m, e in manager.effects() + manager.audio_effects()} \
+                if manager else set()
 
             def change(c):
                 c.effects = Effects()

@@ -155,6 +155,14 @@ class EditorModules:
         return self.project.fps
 
     @property
+    def width(self) -> int:  # GeneratorContext : taille de la toile
+        return self.project.canvas_size[0]
+
+    @property
+    def height(self) -> int:
+        return self.project.canvas_size[1]
+
+    @property
     def playhead(self) -> int:
         return self._playhead()
 
@@ -186,16 +194,33 @@ class EditorModules:
                                          lambda s=source: s.resolve(self, clip, media), None)
             if found is not None:
                 path, source_in, speed = found.path, found.source_in, found.speed
+        filters = self._effect_filters(clip, self.manager.effects())
+        audio = self._effect_filters(clip, self.manager.audio_effects())
+        if path is None and not filters and not audio:
+            return None
+        return ClipOverride(path, source_in, speed, tuple(filters), tuple(audio))
+
+    def _effect_filters(self, clip: Clip, effects) -> list:
         filters = []
-        for module_id, effect in self.manager.effects():
+        for module_id, effect in effects:
             values = clip.modules.get(effect.id)
             if isinstance(values, dict):
                 filters += self.manager.guarded(
                     module_id, lambda e=effect, v=values: list(e.filters({**e.defaults(), **v})),
                     [])
-        if path is None and not filters:
+        return filters
+
+    def transition_hook(self, kind: str, duration: int):
+        """Crochet de `timeline_spec` : service MLT d'une transition de module."""
+        found = self.manager.transition(kind)
+        if found is None:
             return None
-        return ClipOverride(path, source_in, speed, tuple(filters))
+        module_id, transition = found
+        result = self.manager.guarded(
+            module_id, lambda: transition.transition(self, duration), None)
+        if not isinstance(result, tuple) or len(result) != 2:
+            return None
+        return str(result[0]), dict(result[1])
 
     def pending_sources(self) -> list[Clip]:
         """Clips dont la source de remplacement (ex. timelapse) n'est pas encore calculée."""
@@ -224,7 +249,7 @@ class EditorModules:
     def missing(self, clip: Clip) -> list[str]:
         """Modules dont le clip porte des réglages mais qui ne sont pas actifs."""
         known = {mid for mid, _s in self.manager.sources()} | {
-            e.id for _m, e in self.manager.effects()}
+            e.id for _m, e in self.manager.effects() + self.manager.audio_effects()}
         return [k for k in clip.modules if k not in known]
 
     # --- outils ---------------------------------------------------------------------------

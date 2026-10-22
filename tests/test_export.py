@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Export (cahier des charges §3.10)."""
+import dataclasses
 import json
 import shutil
 import subprocess
@@ -166,3 +167,20 @@ def test_hardware_falls_back_to_software(engine, media_dir, tmp_path, monkeypatc
     assert calls == ["h264_nvenc", "libx264"]  # carte graphique refusée : logiciel
     assert job.error == "" and job.used_encoder == "libx264"
     assert probe(target)["streams"]["video"]["codec_name"] == "h264"
+
+
+@needs_ffmpeg
+def test_export_module_format(engine, media_dir, tmp_path):
+    from montar.plugins import ModuleManager, builtin_modules_dir
+
+    manager = ModuleManager(builtin_modules_dir(), tmp_path / "user")
+    manager.load_all()
+    _m, fmt = manager.export_format("essentiels.mkv")
+    target = tmp_path / "film.mkv"
+    base = ExportSettings(str(target), fmt.id, "h264", 320, 180, 25)
+    settings = dataclasses.replace(base, custom=tuple(fmt.properties(base).items()))
+    job = _run(engine, _spec(media_dir), settings)
+    assert job.error == ""
+    info = probe(target)
+    assert info["streams"]["video"]["codec_name"] == "h264"
+    assert info["streams"]["audio"]["codec_name"] == "aac"

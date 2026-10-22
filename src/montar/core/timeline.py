@@ -35,6 +35,13 @@ VIDEO_TRANSITIONS = ("dissolve", "dip_black", "dip_white", "wipe_right", "wipe_l
 AUDIO_TRANSITIONS = ("dissolve",)
 
 
+def transition_allowed(kind: str, track_kind: str) -> bool:
+    """Les transitions des modules (identifiant avec un point) sont des transitions vidéo."""
+    if track_kind == "audio":
+        return kind in AUDIO_TRANSITIONS
+    return kind in VIDEO_TRANSITIONS or "." in kind
+
+
 class TimelineError(ValueError):
     pass
 
@@ -503,9 +510,8 @@ class Timeline:
         track = self.track(left.track_id)
         if right.track_id != track.id or right.start != left.end:
             raise TimelineError("une transition relie deux clips qui se suivent sur une piste")
-        allowed = AUDIO_TRANSITIONS if track.kind == "audio" else VIDEO_TRANSITIONS
-        if kind not in allowed:
-            kind = allowed[0]
+        if not transition_allowed(kind, track.kind):
+            kind = "dissolve"
         if self.transition_after(left_id) or self.transition_before(right_id):
             raise TimelineError("ces clips sont déjà reliés par une transition")
         limit = self.max_transition(left, right)
@@ -521,9 +527,7 @@ class Timeline:
                        duration: int | None = None) -> Transition:
         t = self.transition(transition_id)
         if kind is not None:
-            allowed = AUDIO_TRANSITIONS if self.track(t.track_id).kind == "audio" \
-                else VIDEO_TRANSITIONS
-            if kind in allowed:
+            if transition_allowed(kind, self.track(t.track_id).kind):
                 t.kind = kind
         if duration is not None:
             left, right = self.clip(t.left_id), self.clip(t.right_id)

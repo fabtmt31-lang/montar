@@ -65,6 +65,7 @@ class MediaPanel(QFrame):
     relinkRequested = pyqtSignal(object)  # MediaItem introuvable
     relinkAllRequested = pyqtSignal()
     libraryRequested = pyqtSignal()
+    generateRequested = pyqtSignal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -100,7 +101,14 @@ class MediaPanel(QFrame):
         lib = button(_("Médiathèque…"), "ghost", "library",
                      tooltip=_("Réutiliser un média d'un autre projet"))
         lib.clicked.connect(self.libraryRequested)
-        layout.addWidget(lib)
+        self.generate_button = button(_("Créer…"), "ghost", "sparkles",
+                                      tooltip=_("Créer un fond ou un motif (modules)"))
+        self.generate_button.clicked.connect(self.generateRequested)
+        row = QHBoxLayout()
+        row.setSpacing(4)
+        row.addWidget(lib, 1)
+        row.addWidget(self.generate_button, 1)
+        layout.addLayout(row)
 
         chips = QHBoxLayout()
         chips.setSpacing(4)

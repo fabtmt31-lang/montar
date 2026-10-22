@@ -15,7 +15,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar
 
-from montar.api import API_VERSION, ClipSource, ModuleAPI, Tool, VideoEffect
+from montar.api import (
+    API_VERSION,
+    AudioEffect,
+    ClipSource,
+    ExportFormat,
+    Generator,
+    ModuleAPI,
+    Tool,
+    Transition,
+    VideoEffect,
+)
 
 log = logging.getLogger(__name__)
 
@@ -199,6 +209,24 @@ class ModuleManager:
 
     def effect(self, effect_id: str) -> tuple[str, VideoEffect] | None:
         return next(((mid, e) for mid, e in self.effects() if e.id == effect_id), None)
+
+    def audio_effects(self) -> list[tuple[str, AudioEffect]]:
+        return [(m.id, e) for m in self.active() for e in m.loaded.audio_effects]
+
+    def transitions(self) -> list[tuple[str, Transition]]:
+        return [(m.id, t) for m in self.active() for t in m.loaded.transitions]
+
+    def transition(self, kind: str) -> tuple[str, Transition] | None:
+        return next(((mid, t) for mid, t in self.transitions() if t.id == kind), None)
+
+    def generators(self) -> list[tuple[str, Generator]]:
+        return [(m.id, g) for m in self.active() for g in m.loaded.generators]
+
+    def export_formats(self) -> list[tuple[str, ExportFormat]]:
+        return [(m.id, f) for m in self.active() for f in m.loaded.export_formats]
+
+    def export_format(self, format_id: str) -> tuple[str, ExportFormat] | None:
+        return next(((mid, f) for mid, f in self.export_formats() if f.id == format_id), None)
 
     # --- installation -------------------------------------------------------------------
 

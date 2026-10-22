@@ -1,8 +1,9 @@
 # Écrire un module montar
 
-Un module ajoute à montar des **effets**, des **outils** (actions sur un clip) ou des
-**sources de clip** (rendu de remplacement, comme le Timelapse). Il est écrit en Python et
-utilise l'API publique `montar.api` (version 1).
+Un module ajoute à montar des **effets vidéo** ou **audio**, des **transitions**, des
+**générateurs** (fonds, motifs), des **formats d'export**, des **outils** (actions sur un
+clip) ou des **sources de clip** (rendu de remplacement, comme le Timelapse). Il est écrit en
+Python et utilise l'API publique `montar.api` (version 1.2).
 
 > Un module s'exécute avec les droits de l'utilisateur : montar affiche un avertissement
 > avant d'installer un module tiers. Les modules chargés dans montar sont des œuvres
@@ -67,6 +68,35 @@ Les effets et les outils des modules apparaissent aussi dans la fenêtre **Appli
 ou un module…** (clic droit sur un clip de la timeline), avec leur `name`, leur
 `description` et leur `icon` (nom d'une icône Lucide) — `description` et `icon` des effets
 sont apparus avec l'API 1.1 et restent facultatifs.
+
+## Effets audio, transitions, générateurs, formats d'export (API 1.2)
+
+Ces quatre types sont apparus avec l'API **1.2** (`"api_version": "1.2"` dans le manifeste).
+
+- `AudioEffect` : comme `VideoEffect`, mais `filters(valeurs)` renvoie des filtres **audio**
+  MLT (`volume`, `avfilter.aecho`, `avfilter.bass`…). Il est réglé dans le panneau
+  **Effets** (rubrique « Effets audio ») pour un clip qui a du son, et proposé dans
+  **Appliquer un effet ou un module…**.
+- `Transition` (`id` avec un point, ex. `monmodule.cercle`, `name`, `icon`, `description`) :
+  `transition(context, durée)` renvoie `(service MLT, propriétés)`, par exemple
+  `("luma", {"resource": motif.pgm, "softness": 0.1})`. La transition apparaît dans le
+  panneau **Transitions** et dans l'inspecteur. Préférez des propriétés sans images clés :
+  la durée change si l'export se fait à une autre fréquence. Si le module est absent, la
+  transition est rendue comme un fondu enchaîné.
+- `Generator` (`id`, `name`, `icon`, `description`, `suffix`, `params`) :
+  `generate(context, valeurs, cible)` écrit un fichier (image ou vidéo) à `cible` ;
+  `context.width` et `context.height` donnent la taille de la toile. Le média est ajouté au
+  projet par le bouton **Créer…** du panneau Médias. `Param.color(clé, libellé, "#RRGGBB")`
+  donne un choix de couleur.
+- `ExportFormat` (`id`, `name`, `extension`, `description`, `audio_only`) :
+  `properties(réglages)` renvoie les propriétés du consommateur MLT `avformat` (`f`,
+  `vcodec`, `acodec`, `crf`…) ; `réglages.level` vaut 0, 1 ou 2 selon la qualité choisie,
+  `réglages.fps` la fréquence. Le format est proposé dans la fenêtre d'export.
+
+On les enregistre avec `api.add_audio_effect`, `api.add_transition`, `api.add_generator` et
+`api.add_export_format`. Le module intégré **Essentiels** (`src/montar/modules/essentiels/`)
+en donne un exemple de chaque : écho, graves et aigus, volume égalisé ; transitions cercle,
+volet et diagonale ; fond uni et dégradé ; exports MKV et ProRes.
 
 ## Outils et sources de clip
 

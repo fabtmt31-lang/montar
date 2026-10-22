@@ -90,9 +90,12 @@ class _Chips(QWidget):
 
 class ExportDialog(QDialog):
     def __init__(self, project: Project, frames: int, preview: QImage | None,
-                 folder: Path, hardware: bool = False, parent: QWidget | None = None) -> None:
+                 folder: Path, hardware: bool = False, parent: QWidget | None = None,
+                 extra_formats=()) -> None:
         super().__init__(parent)
         self.project, self.frames = project, frames
+        # formats des modules (montar.api.ExportFormat), par identifiant
+        self.extra = {f.id: f for f in extra_formats}
         self.setObjectName("ExportDialog")
         self.setWindowTitle(_("Exporter la vidéo"))
         self.setModal(True)
@@ -168,8 +171,15 @@ class ExportDialog(QDialog):
         ml.addSpacing(8)
 
         ml.addWidget(label(_("Format")))
-        self.video_formats = _Chips([(k, FORMAT_LABELS[k]) for k in VIDEO_FORMATS], "mp4")
-        self.audio_formats = _Chips([(k, FORMAT_LABELS[k]) for k in AUDIO_FORMATS], "mp3")
+        extra_video = [(f.id, _(f.name)) for f in self.extra.values() if not f.audio_only]
+        extra_audio = [(f.id, _(f.name)) for f in self.extra.values() if f.audio_only]
+        self.video_formats = _Chips([(k, FORMAT_LABELS[k]) for k in VIDEO_FORMATS]
+                                    + extra_video, "mp4")
+        self.audio_formats = _Chips([(k, FORMAT_LABELS[k]) for k in AUDIO_FORMATS]
+                                    + extra_audio, "mp3")
+        for key, fmt in self.extra.items():
+            chips = self.audio_formats if fmt.audio_only else self.video_formats
+            chips.buttons[key].setToolTip(_(fmt.description))
         self.audio_formats.setVisible(False)
         for chips in (self.video_formats, self.audio_formats):
             chips.group.buttonClicked.connect(self._format_changed)
@@ -267,6 +277,7 @@ class ExportDialog(QDialog):
         self.video_box.setVisible(video)
         self.codec_box.setVisible(video)
         self.hardware.setVisible(video and fmt in ("mp4", "mov"))
+        custom = self.extra.get(fmt)
         if video:
             gif = fmt == "gif"
             for key, b in self.resolutions.buttons.items():
@@ -275,7 +286,9 @@ class ExportDialog(QDialog):
                 self.resolutions.set_current("480p")
             self.codec.blockSignals(True)
             self.codec.clear()
-            for codec in VIDEO_FORMATS[fmt][1]:
+            if custom is not None:
+                self.codec.addItem(_("Défini par le module"), "")
+            for codec in VIDEO_FORMATS.get(fmt, ("", ()))[1]:
                 self.codec.addItem(CODEC_LABELS[codec], codec)
             self.codec.blockSignals(False)
             self.codec.setEnabled(self.codec.count() > 1)
@@ -283,7 +296,12 @@ class ExportDialog(QDialog):
 
     def _extension(self) -> str:
         fmt = self._format()
+        if fmt in self.extra:
+            return self.extra[fmt].extension
         return AUDIO_FORMATS[fmt] if self.audio_only else VIDEO_FORMATS[fmt][0]
+
+    def _label(self, fmt: str) -> str:
+        return _(self.extra[fmt].name) if fmt in self.extra else FORMAT_LABELS[fmt]
 
     def target(self) -> Path:
         return Path(self.folder_edit.text()) / (_safe_filename(self.name_edit.text())
@@ -293,7 +311,8 @@ class ExportDialog(QDialog):
         fmt = self._format()
         quality = QUALITIES[self.quality.value()]
         if self.audio_only:
-            return ExportSettings(str(self.target()), fmt, "", 0, 0, self.project.fps, quality)
+            return ExportSettings(str(self.target()), fmt, "", 0, 0, self.project.fps, quality,
+                                  custom_audio_only=fmt in self.extra)
         w, h = export_size(self.project.canvas_size, self.resolutions.current())
         return ExportSettings(str(self.target()), fmt, self.codec.currentData() or "h264",
                               w, h, self.fps.currentData(), quality,
@@ -303,9 +322,9 @@ class ExportDialog(QDialog):
         s = self.settings()
         self.recommended.setVisible(s.quality == RECOMMENDED_QUALITY)
         if s.audio_only:
-            output = FORMAT_LABELS[s.format]
+            output = self._label(s.format)
         else:
-            output = f"{FORMAT_LABELS[s.format]} · {self.resolutions.current()}"
+            output = f"{self._label(s.format)} · {self.resolutions.current()}"
         self.summary_output.setText(output)
         self.summary_size.setText(human_size(estimated_bytes(s, self.frames, self.project.fps)))
         self.export_button.setEnabled(bool(self.name_edit.text().strip()) and self.frames > 0)

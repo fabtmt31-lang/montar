@@ -48,10 +48,13 @@ class ExportSettings:
     fps: int = 25
     quality: str = RECOMMENDED_QUALITY
     hardware: bool = False
+    # format d'un module : propriétés du consommateur fournies par le module
+    custom: tuple[tuple[str, object], ...] = ()
+    custom_audio_only: bool = False
 
     @property
     def audio_only(self) -> bool:
-        return self.format in AUDIO_FORMATS
+        return self.format in AUDIO_FORMATS or self.custom_audio_only
 
     @property
     def level(self) -> int:
@@ -101,6 +104,11 @@ def consumer_properties(settings: ExportSettings, encoder: str | None = None) ->
     logiciel (accélération matérielle)."""
     level = settings.level
     props: dict = {"ar": 48000, "channels": 2, "threads": 0}
+    if settings.custom:
+        props.update(dict(settings.custom))
+        if settings.audio_only:
+            props.update(vn=1, video_off=1)
+        return props
     if settings.audio_only:
         props.update(vn=1, video_off=1)
         if settings.format == "mp3":
