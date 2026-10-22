@@ -546,6 +546,9 @@ class MltAudioOutput(AudioOutput):
     def position(self) -> int:
         return self._consumer.position()
 
+    def set_volume(self, volume: float) -> None:
+        self._consumer.set("volume", max(0.0, min(1.0, volume)))
+
     def close(self) -> None:
         self.stop()
         self._consumer = None

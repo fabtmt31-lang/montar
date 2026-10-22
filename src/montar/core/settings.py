@@ -21,6 +21,7 @@ class Settings:
     hardware_export: bool = False  # accélération matérielle proposée à l'export
     video_waveforms: bool = True  # forme d'onde sous les vignettes des clips vidéo
     snap: bool = True  # magnétisme de la timeline à l'ouverture d'un projet
+    preview_volume: float = 1.0  # volume d'écoute de l'aperçu (0 à 1)
 
     @property
     def projects_path(self) -> Path:
@@ -46,6 +47,7 @@ class Settings:
             settings.theme = "light"
         if settings.preview_quality not in PREVIEW_QUALITIES:
             settings.preview_quality = "medium"
+        settings.preview_volume = max(0.0, min(1.0, settings.preview_volume))
         return settings
 
     def save(self, file: Path) -> None:

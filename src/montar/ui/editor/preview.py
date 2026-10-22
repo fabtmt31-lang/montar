@@ -16,7 +16,16 @@ from PyQt6.QtGui import (
     QPolygonF,
     QShortcut,
 )
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QMenu, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QMenu,
+    QSlider,
+    QVBoxLayout,
+    QWidget,
+    QWidgetAction,
+)
 
 from montar.core.settings import PREVIEW_QUALITIES
 from montar.core.timecode import frames_to_timecode
@@ -72,6 +81,7 @@ class PreviewCanvas(QWidget):
     (Ctrl désactive l'aimantation)."""
 
     resized = pyqtSignal(QSize)
+    viewChanged = pyqtSignal()  # zoom ou défilement : la taille de rendu peut changer
     # (mode « move » ou « scale », cadre voulu non tourné, en pixels de la toile)
     boxChanged = pyqtSignal(str, QRectF)
     dragFinished = pyqtSignal()
@@ -87,6 +97,10 @@ class PreviewCanvas(QWidget):
         self.rotation = 0.0
         self._drag: _Drag | None = None
         self._guides: list[tuple[str, float]] = []  # (« v » ou « h », position dans la toile)
+        self.zoom: float | None = None  # None : ajusté à la zone ; sinon 1.0 = 100 %
+        self._pan = QPointF(0, 0)  # décalage du cadre zoomé (pixels écran)
+        self._panning: QPointF | None = None
+        self.background = ""  # couleur de fond (plein écran) ; vide : transparent
         theme().changed.connect(self.update)
 
     def set_selection(self, rect: QRectF | None, rotation: float = 0.0) -> None:
@@ -155,7 +169,41 @@ class PreviewCanvas(QWidget):
         return self._image.copy(round(b.left() * k), round(b.top() * k),
                                 max(1, round(b.width() * k)), max(1, round(b.height() * k)))
 
+    def set_zoom(self, zoom: float | None) -> None:
+        self.zoom = zoom
+        self._pan = QPointF(0, 0)
+        self.update()
+        self.viewChanged.emit()
+
+    def _clamp_pan(self) -> None:
+        """Le cadre zoomé couvre toujours la zone dans le sens où il la dépasse."""
+        rect = self._frame_rect(QPointF(0, 0))
+        mx = max(0.0, (rect.width() - self.width()) / 2)
+        my = max(0.0, (rect.height() - self.height()) / 2)
+        self._pan = QPointF(max(-mx, min(mx, self._pan.x())), max(-my, min(my, self._pan.y())))
+
+    def pan_by(self, dx: float, dy: float) -> None:
+        if self.zoom is None:
+            return
+        self._pan += QPointF(dx, dy)
+        self._clamp_pan()
+        self.update()
+
+    def wheelEvent(self, event) -> None:  # noqa: N802
+        if self.zoom is None:
+            return super().wheelEvent(event)
+        delta = event.angleDelta()
+        if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            self.pan_by(delta.y() / 2, 0)
+        else:
+            self.pan_by(delta.x() / 2, delta.y() / 2)
+        event.accept()
+
     def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.MiddleButton and self.zoom is not None:
+            self._panning = event.position()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            return
         hit = self._hit(event.position())
         if hit and event.button() == Qt.MouseButton.LeftButton:
             rect = QRectF(self.selection)
@@ -163,6 +211,11 @@ class PreviewCanvas(QWidget):
                                self._grab_ghost(rect), QRectF(rect))
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if self._panning is not None:
+            delta = event.position() - self._panning
+            self._panning = event.position()
+            self.pan_by(delta.x(), delta.y())
+            return
         drag = self._drag
         if drag is None:
             self.setCursor(self._cursor_for(self._hit(event.position())))
@@ -242,6 +295,10 @@ class PreviewCanvas(QWidget):
         return snapped
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if self._panning is not None:
+            self._panning = None
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            return
         if self._drag is not None:
             self._drag = None
             self._guides = []
@@ -267,16 +324,24 @@ class PreviewCanvas(QWidget):
         self.update()
 
     def frame_rect(self) -> QRectF:
+        return self._frame_rect(self._pan)
+
+    def _frame_rect(self, pan: QPointF) -> QRectF:
         cw, ch = self.canvas_size
-        scale = min(self.width() / cw, self.height() / ch)
+        if self.zoom is None:
+            scale = min(self.width() / cw, self.height() / ch)
+        else:  # 100 % : un pixel de la toile par pixel physique de l'écran
+            scale = self.zoom / self.devicePixelRatioF()
         w, h = cw * scale, ch * scale
-        return QRectF((self.width() - w) / 2, (self.height() - h) / 2, w, h)
+        return QRectF((self.width() - w) / 2 + pan.x(), (self.height() - h) / 2 + pan.y(), w, h)
 
     def paintEvent(self, event) -> None:  # noqa: N802
         p = theme().palette
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        if self.background:
+            painter.fillRect(self.rect(), QColor(self.background))
         rect = self.frame_rect()
         path = QPainterPath()
         path.addRoundedRect(rect, 6, 6)
@@ -330,15 +395,65 @@ class PreviewCanvas(QWidget):
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
+        self._clamp_pan()
         self.resized.emit(self.size())
 
 
+class FullscreenPreview(QWidget):
+    """Aperçu en plein écran, sur fond noir ; Échap, F ou un double-clic le referment."""
+
+    closed = pyqtSignal()
+
+    def __init__(self, panel: PreviewPanel) -> None:
+        super().__init__(None, Qt.WindowType.Window)
+        self.setWindowTitle(_("Aperçu — montar"))
+        self.setStyleSheet("background: #000000;")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.canvas = PreviewCanvas()
+        self.canvas.background = "#000000"
+        self.canvas.set_canvas(*panel.canvas.canvas_size)
+        if panel.canvas.image is not None:
+            self.canvas.set_image(panel.canvas.image)
+        self.canvas.mouseDoubleClickEvent = lambda _e: self.close()
+        layout.addWidget(self.canvas, 1)
+        self.hint = label(_("Échap pour quitter le plein écran"), "muted")
+        self.hint.setStyleSheet("color: #C8D6CE; padding: 10px; background: transparent;")
+        self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.hint)
+        QTimer.singleShot(2500, self.hint.hide)
+        for keys, slot in panel.transport_keys():
+            sc = QShortcut(QKeySequence(keys), self)
+            sc.activated.connect(slot)
+        panel.player.frameReady.connect(self._on_frame)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        if event.key() in (Qt.Key.Key_Escape, Qt.Key.Key_F, Qt.Key.Key_F11):
+            self.close()
+        else:
+            super().keyPressEvent(event)
+
+    def _on_frame(self, image: QImage, _frame: int) -> None:
+        self.canvas.set_image(image)
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        super().closeEvent(event)
+        self.closed.emit()
+
+
+ZOOMS = ((None, "Ajuster"), (0.5, "50 %"), (1.0, "100 %"), (2.0, "200 %"))
+
+
 class PreviewPanel(QFrame):
+    volumeChanged = pyqtSignal(float)  # niveau d'écoute choisi (0 à 1)
+
     def __init__(self, player: Player, quality: str = "medium") -> None:
         super().__init__()
         self.setObjectName("PreviewArea")
         self.player = player
         self.quality = quality
+        self.fullscreen: FullscreenPreview | None = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 14, 20, 16)
         layout.setSpacing(10)
@@ -346,6 +461,15 @@ class PreviewPanel(QFrame):
         head = QHBoxLayout()
         head.addWidget(label(_("Aperçu"), "muted"))
         head.addStretch()
+        self.zoom_button = button("", "secondary")
+        self.zoom_button.setStyleSheet("padding: 5px 10px; font-weight: 500;")
+        self.zoom_button.setToolTip(_("Zoom de l'aperçu (la molette ou le bouton du milieu "
+                                      "font défiler l'image agrandie)"))
+        menu = QMenu(self.zoom_button)
+        for zoom, text in ZOOMS:
+            menu.addAction(_(text), lambda z=zoom: self.set_zoom(z))
+        self.zoom_button.setMenu(menu)
+        head.addWidget(self.zoom_button)
         self.quality_button = button("", "secondary")
         self.quality_button.setStyleSheet("padding: 5px 10px; font-weight: 500;")
         menu = QMenu(self.quality_button)
@@ -364,26 +488,67 @@ class PreviewPanel(QFrame):
         fl.addWidget(self.canvas)
         layout.addWidget(frame, 1)
 
-        transport = QHBoxLayout()
+        transport = QGridLayout()
+        transport.setColumnStretch(0, 1)
+        transport.setColumnStretch(2, 1)
+        left = QHBoxLayout()
         self.timecode = label("00:00:00:00", "mono")
         self.timecode.setStyleSheet("font-size: 15px; font-weight: 500;")
         self.duration = label("/  00:00:00:00", "mono")
         self.duration.setProperty("role", "mono")
         self.duration.setStyleSheet("font-size: 14px;")
-        transport.addWidget(self.timecode)
-        transport.addSpacing(8)
-        transport.addWidget(self.duration)
-        transport.addStretch()
+        self.speed_label = label("", "mono")
+        self.speed_label.setStyleSheet("font-size: 13px; font-weight: 700;")
+        self.speed_label.hide()
+        left.addWidget(self.timecode)
+        left.addSpacing(8)
+        left.addWidget(self.duration)
+        left.addSpacing(10)
+        left.addWidget(self.speed_label)
+        left.addStretch()
+        transport.addLayout(left, 0, 0)
+        center = QHBoxLayout()
         self.to_start = button("", "ghost", "skip-back", tooltip=_("Aller au début (Origine)"))
-        self.play_button = button("", "round", "play", tooltip=_("Lecture / pause (Espace)"))
+        self.play_button = button("", "round", "play",
+                                  tooltip=_("Lecture / pause (Espace) — J / K / L : arrière, "
+                                            "pause, avant (appuyer plusieurs fois accélère)"))
         self.to_end = button("", "ghost", "skip-forward", tooltip=_("Aller à la fin (Fin)"))
         self.to_start.clicked.connect(lambda: self.player.seek(0))
         self.to_end.clicked.connect(lambda: self.player.seek(self.player.length - 1))
         self.play_button.clicked.connect(self.player.toggle)
         for b in (self.to_start, self.play_button, self.to_end):
-            transport.addWidget(b)
-        transport.addStretch()
-        transport.addSpacing(self.timecode.sizeHint().width() + self.duration.sizeHint().width())
+            center.addWidget(b)
+        transport.addLayout(center, 0, 1)
+        right = QHBoxLayout()
+        right.addStretch()
+        self.volume_button = button("", "ghost", "volume-2", tooltip=_("Volume de l'aperçu"))
+        self.volume_menu = QMenu(self.volume_button)
+        self.volume_slider = QSlider(Qt.Orientation.Horizontal)
+        self.volume_slider.setRange(0, 100)
+        self.volume_slider.setValue(100)
+        self.volume_slider.setMinimumWidth(160)
+        self.volume_slider.valueChanged.connect(self._volume_moved)
+        holder = QWidget()
+        hl = QHBoxLayout(holder)
+        hl.setContentsMargins(12, 8, 12, 8)
+        hl.addWidget(self.volume_slider)
+        self.volume_value = label("100 %", "mono")
+        self.volume_value.setMinimumWidth(44)
+        hl.addWidget(self.volume_value)
+        action = QWidgetAction(self.volume_menu)
+        action.setDefaultWidget(holder)
+        self.volume_menu.addAction(action)
+        self.mute_action = self.volume_menu.addAction(_("Couper le son"))
+        self.mute_action.setCheckable(True)
+        self.mute_action.toggled.connect(lambda _m: self._apply_volume())
+        self.volume_button.setMenu(self.volume_menu)
+        self.volume_button.setStyleSheet("QPushButton::menu-indicator { width: 0; }")
+        self.fullscreen_button = button("", "ghost", "maximize",
+                                        tooltip=_("Plein écran (F)"))
+        self.fullscreen_button.clicked.connect(self.toggle_fullscreen)
+        right.addWidget(self.volume_button)
+        right.addWidget(self.fullscreen_button)
+        transport.addLayout(right, 0, 2)
         layout.addLayout(transport)
         self._set_controls_enabled(False)
 
@@ -393,31 +558,96 @@ class PreviewPanel(QFrame):
         self._resize_timer.setInterval(120)
         self._resize_timer.timeout.connect(self._push_render_size)
         self.canvas.resized.connect(lambda _s: self._resize_timer.start())
+        self.canvas.viewChanged.connect(self._resize_timer.start)
 
         player.frameReady.connect(self._on_frame)
         player.loaded.connect(self._on_loaded)
         player.failed.connect(self._on_failed)
         player.playingChanged.connect(self._on_playing)
+        player.speedChanged.connect(self._on_speed)
         self.set_quality(quality)
+        self.set_zoom(None)
 
-        for key, slot in (
+        for key, slot in self.transport_keys() + [("F", self.toggle_fullscreen),
+                                                  ("F11", self.toggle_fullscreen)]:
+            sc = QShortcut(QKeySequence(key), self)
+            sc.setContext(Qt.ShortcutContext.WindowShortcut)
+            sc.activated.connect(slot)
+
+    def transport_keys(self) -> list:
+        return [
             (Qt.Key.Key_Space, self.player.toggle),
             (Qt.Key.Key_Home, lambda: self.player.seek(0)),
             (Qt.Key.Key_End, lambda: self.player.seek(self.player.length - 1)),
             (Qt.Key.Key_Left, lambda: self.step(-1)),
             (Qt.Key.Key_Right, lambda: self.step(1)),
-        ):
-            sc = QShortcut(QKeySequence(key), self)
-            sc.setContext(Qt.ShortcutContext.WindowShortcut)
-            sc.activated.connect(slot)
+            ("J", lambda: self._shuttle(-1)),
+            ("K", self.player.pause),
+            ("L", lambda: self._shuttle(1)),
+        ]
+
+    def _shuttle(self, direction: int) -> None:
+        if self.player.length:
+            self.player.shuttle(direction)
 
     def set_canvas(self, width: int, height: int) -> None:
         self.canvas.set_canvas(width, height)
+        if self.fullscreen is not None:
+            self.fullscreen.canvas.set_canvas(width, height)
         self._push_render_size()
 
     def set_quality(self, key: str) -> None:
         self.quality = key
         self.quality_button.setText(_("Qualité : {q}").format(q=_(QUALITY_LABELS[key]).lower()))
+        self._push_render_size()
+
+    def set_zoom(self, zoom: float | None) -> None:
+        self.canvas.set_zoom(zoom)
+        self.zoom_button.setText(_(dict(ZOOMS)[zoom]))
+
+    def set_volume(self, volume: float, muted: bool = False) -> None:
+        self.volume_slider.blockSignals(True)
+        self.volume_slider.setValue(round(max(0.0, min(1.0, volume)) * 100))
+        self.volume_slider.blockSignals(False)
+        self.mute_action.blockSignals(True)
+        self.mute_action.setChecked(muted)
+        self.mute_action.blockSignals(False)
+        self._apply_volume(notify=False)
+
+    def _volume_moved(self, _value: int) -> None:
+        if self.mute_action.isChecked() and self.volume_slider.value() > 0:
+            self.mute_action.blockSignals(True)
+            self.mute_action.setChecked(False)
+            self.mute_action.blockSignals(False)
+        self._apply_volume()
+
+    def _apply_volume(self, notify: bool = True) -> None:
+        level = self.volume_slider.value() / 100
+        silent = self.mute_action.isChecked() or level == 0
+        self.volume_value.setText(f"{self.volume_slider.value()} %")
+        set_icon(self.volume_button, "volume-x" if silent else "volume-2")
+        self.player.set_volume(0.0 if silent else level)
+        if notify:
+            self.volumeChanged.emit(level)
+
+    def toggle_fullscreen(self) -> None:
+        if self.fullscreen is not None:
+            self.fullscreen.close()
+            return
+        self.fullscreen = FullscreenPreview(self)
+        self.fullscreen.closed.connect(self._fullscreen_closed)
+        self.fullscreen.canvas.resized.connect(lambda _s: self._resize_timer.start())
+        screen = self.window().screen() if self.window() is not None else None
+        if screen is not None:
+            self.fullscreen.setGeometry(screen.geometry())
+        self.fullscreen.showFullScreen()
+        self._push_render_size()
+
+    def _fullscreen_closed(self) -> None:
+        full, self.fullscreen = self.fullscreen, None
+        if full is not None:
+            self.player.frameReady.disconnect(full._on_frame)
+            full.deleteLater()
         self._push_render_size()
 
     def step(self, delta: int) -> None:
@@ -427,15 +657,16 @@ class PreviewPanel(QFrame):
 
     def _push_render_size(self) -> None:
         # Qualité = fraction de la résolution de la toile, sans dépasser la taille affichée.
-        rect = self.canvas.frame_rect()
-        cw, ch = self.canvas.canvas_size
+        canvas = self.fullscreen.canvas if self.fullscreen is not None else self.canvas
+        rect = canvas.frame_rect()
+        cw, ch = canvas.canvas_size
         factor = PREVIEW_QUALITIES[self.quality]
-        dpr = self.devicePixelRatioF()
+        dpr = canvas.devicePixelRatioF()
         scale = min(factor, rect.width() * dpr / cw, rect.height() * dpr / ch)
         self.player.set_render_size(int(cw * scale), int(ch * scale))
 
     def _set_controls_enabled(self, enabled: bool) -> None:
-        for w in (self.to_start, self.play_button, self.to_end):
+        for w in (self.to_start, self.play_button, self.to_end, self.fullscreen_button):
             w.setEnabled(enabled)
 
     def _on_loaded(self, length: int, fps: float) -> None:
@@ -444,6 +675,8 @@ class PreviewPanel(QFrame):
         self._set_controls_enabled(length > 0)
         if length == 0:
             self.canvas.set_message(_(EMPTY_MESSAGE))
+            if self.fullscreen is not None:
+                self.fullscreen.close()
         self._push_render_size()
 
     def _on_frame(self, image: QImage, frame: int) -> None:
@@ -458,3 +691,7 @@ class PreviewPanel(QFrame):
 
     def _on_playing(self, playing: bool) -> None:
         set_icon(self.play_button, "pause" if playing else "play", "on_forest", 20)
+
+    def _on_speed(self, speed: int) -> None:
+        self.speed_label.setVisible(speed != 1)
+        self.speed_label.setText(("◀◀ " if speed < 0 else "▶▶ ") + f"×{abs(speed)}")

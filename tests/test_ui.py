@@ -991,3 +991,65 @@ def test_trash_and_library_pages(window, media_dir, monkeypatch):
     assert window.trash_page.rows.count() == 1
     window.trash_page._restore(window.trash.entries()[0])
     assert first.exists() and "Montage" in [e.name for e in window.recent.entries()]
+
+
+# --- J5-C : aperçu ---------------------------------------------------------------------------
+
+
+def test_shuttle_speeds():
+    from montar.ui.editor.player import shuttle
+
+    assert shuttle(1, False, 1) == 1  # L à l'arrêt : lecture
+    assert [shuttle(s, True, 1) for s in (1, 2, 4, 8)] == [2, 4, 8, 8]
+    assert shuttle(4, True, -1) == -1  # changement de sens : ×1
+    assert shuttle(-2, True, -1) == -4
+
+
+@needs_ffmpeg
+def test_preview_shuttle_zoom_volume_fullscreen(window, media_dir):
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    player, preview = editor.player, editor.preview
+    assert wait_until(lambda: player.length == 50)
+
+    # L, L : lecture avant ×2 ; K : pause ; J depuis la fin : lecture arrière
+    QTest.keyClick(window, Qt.Key.Key_L)
+    assert wait_until(lambda: player.playing)
+    QTest.keyClick(window, Qt.Key.Key_L)
+    assert wait_until(lambda: player.speed == 2)
+    assert preview.speed_label.text() == "▶▶ ×2"
+    QTest.keyClick(window, Qt.Key.Key_K)
+    assert wait_until(lambda: not player.playing and player.speed == 1)
+    player.seek(40)
+    assert wait_until(lambda: player.position == 40)
+    QTest.keyClick(window, Qt.Key.Key_J)
+    assert wait_until(lambda: player.speed == -1)
+    assert wait_until(lambda: not player.playing)  # arrivé au début
+    assert player.position == 0
+
+    # zoom 200 % : le cadre dépasse la zone et se déplace à la molette
+    canvas = preview.canvas
+    preview.set_zoom(2.0)
+    assert preview.zoom_button.text() == "200 %"
+    big = canvas.frame_rect()
+    assert big.width() > canvas.width()
+    canvas.pan_by(-10_000, 0)
+    assert canvas.frame_rect().right() == pytest.approx(canvas.width(), abs=0.5)
+    preview.set_zoom(None)
+    assert canvas.frame_rect().width() <= canvas.width() + 0.5
+
+    # volume : mémorisé dans les préférences
+    preview.volume_slider.setValue(40)
+    assert player.volume == pytest.approx(0.4)
+    assert window.settings.preview_volume == pytest.approx(0.4)
+    preview.mute_action.setChecked(True)
+    assert player.volume == 0.0 and window.settings.preview_volume == pytest.approx(0.4)
+
+    # plein écran, refermé par Échap
+    preview.toggle_fullscreen()
+    full = preview.fullscreen
+    assert full is not None and full.isVisible()
+    full.activateWindow()
+    QTest.qWaitForWindowActive(full)
+    QTest.keyClick(full, Qt.Key.Key_Escape)
+    assert wait_until(lambda: preview.fullscreen is None)

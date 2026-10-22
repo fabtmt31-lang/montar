@@ -2,7 +2,8 @@
 """Lecture de l'aperçu dans un fil dédié : le moteur n'est jamais appelé depuis l'interface.
 
 Pendant la lecture, l'horloge est la position de la sortie son ; sans sortie son
-(aucun périphérique audio), l'horloge système prend le relais.
+(aucun périphérique audio), l'horloge système prend le relais. Hors vitesse normale
+(lecture rapide ou arrière, touches J / L), le son est coupé et l'horloge système sert.
 """
 from __future__ import annotations
 
@@ -17,12 +18,23 @@ from montar.engine.base import AudioOutput, Engine, Source, TimelineSpec
 
 log = logging.getLogger(__name__)
 
+MAX_SPEED = 8  # J / L : ×1, ×2, ×4, ×8
+
+
+def shuttle(speed: int, playing: bool, direction: int) -> int:
+    """Vitesse après un appui sur J (direction -1) ou L (+1), comme dans les logiciels de
+    montage : un appui démarre à ×1 dans ce sens, les suivants doublent la vitesse."""
+    if not playing or speed * direction <= 0:
+        return direction
+    return direction * min(MAX_SPEED, abs(speed) * 2)
+
 
 class PlaybackWorker(QObject):
     frameReady = pyqtSignal(QImage, int)
     loaded = pyqtSignal(int, float)  # nombre d'images, i/s
     failed = pyqtSignal(str)
     playingChanged = pyqtSignal(bool)
+    speedChanged = pyqtSignal(int)
 
     def __init__(self, engine_factory: Callable[[], Engine]) -> None:
         super().__init__()
@@ -37,6 +49,8 @@ class PlaybackWorker(QObject):
         self._pending_seek: int | None = None
         self._pending_spec: TimelineSpec | None = None
         self._playing = False
+        self._speed = 1
+        self._volume = 1.0
         self._play_origin = (0.0, 0)  # (instant, image) du début de lecture sans son
         self._timer: QTimer | None = None
 
@@ -154,14 +168,37 @@ class PlaybackWorker(QObject):
 
     @pyqtSlot()
     def play(self) -> None:
-        if self._source is None or self._playing or self._timer is None or self._length == 0:
+        self.play_at(1)
+
+    @pyqtSlot(int)
+    def play_at(self, speed: int) -> None:
+        """Lecture à `speed` fois la vitesse normale (négatif : en arrière)."""
+        if self._source is None or self._timer is None or self._length == 0 or speed == 0:
             return
-        if self._position >= self._length - 1:
+        if self._playing:
+            if speed == self._speed:
+                return
+            self._position = self._clock()
+            if self._audio is not None:
+                self._audio.stop()
+        elif speed > 0 and self._position >= self._length - 1:
             self._position = 0
-        self._playing = True
+        elif speed < 0 and self._position <= 0:
+            return
+        if speed != self._speed:
+            self._speed = speed
+            self.speedChanged.emit(speed)
         self._start_clock()
-        self._timer.start(max(1, int(500 / max(1, self._spec.canvas.fps))))
-        self.playingChanged.emit(True)
+        if not self._playing:
+            self._playing = True
+            self._timer.start(max(1, int(500 / max(1, self._spec.canvas.fps))))
+            self.playingChanged.emit(True)
+
+    @pyqtSlot(float)
+    def set_volume(self, volume: float) -> None:
+        self._volume = volume
+        if self._audio is not None:
+            self._audio.set_volume(volume)
 
     def _start_clock(self) -> None:
         if self._audio_stale and self._spec is not None:
@@ -173,7 +210,9 @@ class PlaybackWorker(QObject):
                 log.warning("sortie son indisponible : %s", exc)
                 self._audio = None
             self._audio_stale = False
-        if self._audio is not None:
+            if self._audio is not None:
+                self._audio.set_volume(self._volume)
+        if self._audio is not None and self._speed == 1:
             try:
                 self._audio.start(self._position)
             except Exception as exc:
@@ -194,12 +233,15 @@ class PlaybackWorker(QObject):
             if self._audio is not None:
                 self._audio.stop()
             self.playingChanged.emit(False)
+        if self._speed != 1:
+            self._speed = 1
+            self.speedChanged.emit(1)
 
     def _clock(self) -> int:
         start_t, start_f = self._play_origin
         elapsed = time.perf_counter() - start_t
-        wall = start_f + int(elapsed * self._spec.canvas.fps)
-        if self._audio is not None and elapsed > 0.25:
+        wall = start_f + int(elapsed * self._spec.canvas.fps * self._speed)
+        if self._audio is not None and self._speed == 1 and elapsed > 0.25:
             # Juste après un démarrage, la sortie son peut encore annoncer son ancienne
             # position : elle ne sert d'horloge que si elle est cohérente.
             heard = self._audio.position()
@@ -213,6 +255,15 @@ class PlaybackWorker(QObject):
             return
         target = self._clock()
         last = self._length - 1
+        if self._speed < 0:
+            if target <= 0:
+                self._position = 0
+                self._render(0)
+                self._stop()
+            elif target < self._position:
+                self._position = target
+                self._render(target)
+            return
         if target >= last:
             self._position = last
             self._render(last)
@@ -251,12 +302,15 @@ class Player(QObject):
     loaded = pyqtSignal(int, float)
     failed = pyqtSignal(str)
     playingChanged = pyqtSignal(bool)
+    speedChanged = pyqtSignal(int)
 
     _load = pyqtSignal(object)
     _close = pyqtSignal()
     _seek = pyqtSignal(int)
     _play = pyqtSignal()
     _pause = pyqtSignal()
+    _play_at = pyqtSignal(int)
+    _volume = pyqtSignal(float)
     _size = pyqtSignal(int, int)
 
     def __init__(self, engine_factory: Callable[[], Engine], parent: QObject | None = None) -> None:
@@ -271,16 +325,21 @@ class Player(QObject):
         self._seek.connect(self._worker.seek)
         self._play.connect(self._worker.play)
         self._pause.connect(self._worker.pause)
+        self._play_at.connect(self._worker.play_at)
+        self._volume.connect(self._worker.set_volume)
         self._size.connect(self._worker.set_render_size)
         self._worker.frameReady.connect(self._on_frame)
         self._worker.loaded.connect(self._on_loaded)
         self._worker.failed.connect(self.failed)
         self._worker.playingChanged.connect(self._on_playing)
+        self._worker.speedChanged.connect(self._on_speed)
         self._thread.start()
         self.length = 0
         self.fps = 25.0
         self.position = 0
         self.playing = False
+        self.speed = 1
+        self.volume = 1.0
 
     def load(self, spec: TimelineSpec) -> None:
         self._load.emit(spec)
@@ -297,6 +356,14 @@ class Player(QObject):
 
     def toggle(self) -> None:
         self.pause() if self.playing else self.play()
+
+    def shuttle(self, direction: int) -> None:
+        """Touches J (-1) et L (+1)."""
+        self._play_at.emit(shuttle(self.speed, self.playing, direction))
+
+    def set_volume(self, volume: float) -> None:
+        self.volume = max(0.0, min(1.0, volume))
+        self._volume.emit(self.volume)
 
     def set_render_size(self, width: int, height: int) -> None:
         self._size.emit(width, height)
@@ -317,3 +384,7 @@ class Player(QObject):
     def _on_playing(self, playing: bool) -> None:
         self.playing = playing
         self.playingChanged.emit(playing)
+
+    def _on_speed(self, speed: int) -> None:
+        self.speed = speed
+        self.speedChanged.emit(speed)

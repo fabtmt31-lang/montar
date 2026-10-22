@@ -1173,6 +1173,7 @@ class EditorPage(QWidget):
         view.viewport().update()
         if opening:
             self.timeline.magnet.setChecked(settings.snap)
+            self.preview.set_volume(settings.preview_volume)
 
     # --- glisser-déposer de fichiers -----------------------------------------------
 

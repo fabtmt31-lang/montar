@@ -182,6 +182,9 @@ class AudioOutput(ABC):
     def position(self) -> int:
         """Image en cours de lecture."""
 
+    def set_volume(self, volume: float) -> None:  # noqa: B027
+        """Niveau d'écoute (0 = muet, 1 = normal) ; n'affecte pas l'export."""
+
     def close(self) -> None:  # noqa: B027
         pass
 

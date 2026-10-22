@@ -83,6 +83,13 @@ class MainWindow(QMainWindow):
         self.home.set_entries(entries)
         self.projects.set_entries(entries)
 
+    def _volume_changed(self, volume: float) -> None:
+        self.settings.preview_volume = round(volume, 2)
+        try:
+            self.settings.save(self._settings_file)
+        except OSError as exc:
+            log.warning("préférences non enregistrées : %s", exc)
+
     def _save_settings(self) -> None:
         try:
             self.settings.save(self._settings_file)
@@ -161,6 +168,7 @@ class MainWindow(QMainWindow):
         editor.backRequested.connect(self.show_home)
         editor.saved.connect(lambda _p: None)
         editor.saveAsRequested.connect(self.save_project_as)
+        editor.preview.volumeChanged.connect(self._volume_changed)
         editor.library_provider = lambda: self.library_items(project.path)
         editor.thumbnail_provider = self._thumbnail_for
         self.editor = editor
