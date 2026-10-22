@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 )
 
 from montar.core.project import EXPORT_DIR, MediaItem, Project, ProjectError, new_id
+from montar.core.timecode import frames_to_timecode
 from montar.engine.base import Engine, timeline_spec
 from montar.engine.export import ExportSettings, human_size, retime
 from montar.engine.geometry import offset_for_center, placement
@@ -46,9 +47,11 @@ from montar.media.store import is_inside
 from montar.media.thumbnails import thumbnail_path
 from montar.media.waveform import waveform_path
 from montar.plugins import ModuleManager, default_manager
+from montar.ui.dialogs.apply_effect import ApplyEffectDialog
 from montar.ui.dialogs.export import ExportDialog
 from montar.ui.dialogs.media_editor import MediaEditorDialog
 from montar.ui.dialogs.recorder import COUNTDOWN, RecorderDialog, RecordingBar
+from montar.ui.editor.apply import ApplyAction, actions_for, apply_change
 from montar.ui.editor.busy import BusyOverlay, remaining_text
 from montar.ui.editor.controller import EditorController
 from montar.ui.editor.importer import MediaImporter
@@ -149,7 +152,7 @@ class EditorPage(QWidget):
 
         self.timeline = TimelinePanel(self.controller, self.thumbnails.get, self.waveforms.get)
         self.timeline.view.badge_provider = self.modules.badges
-        self.timeline.view.tool_provider = self._tool_actions
+        self.timeline.view.applyRequested.connect(self.open_apply)
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.setChildrenCollapsible(False)
         splitter.setHandleWidth(1)
@@ -504,9 +507,54 @@ class EditorPage(QWidget):
 
     # --- modules -------------------------------------------------------------------------
 
-    def _tool_actions(self, clip) -> list[tuple[str, Callable[[], None]]]:
-        return [(_(tool.name), lambda mid=mid, t=tool, c=clip: self.modules.run_tool(mid, t, c))
-                for mid, tool in self.modules.tools_for(clip)]
+    def _is_visual(self, clip) -> bool:
+        media = self.project.find_media(clip.media_id) if clip.media_id else None
+        return (media is not None and media.kind in ("video", "image")
+                and self.controller.timeline.track(clip.track_id).kind == "video")
+
+    def open_apply(self, clip_id: str) -> None:
+        """« Appliquer un effet ou un module… » sur le clip (ou sa plage sélectionnée)."""
+        clip = self.controller.timeline.clip(clip_id)
+        actions = actions_for(clip, self._is_visual(clip), self.modules)
+        view = self.timeline.view
+        found = view.valid_range()
+        on_range = found is not None and found[0].id == clip_id
+        name = (clip.text.content.split("\n")[0] if clip.is_text else
+                self.project.find_media(clip.media_id).name)
+        fps = self.project.fps
+        if on_range:
+            target = _("Sur la plage {a} → {b} de « {name} »").format(
+                a=frames_to_timecode(found[1], fps), b=frames_to_timecode(found[2], fps),
+                name=name)
+        else:
+            target = _("Sur le clip « {name} »").format(name=name)
+        if not actions:
+            QMessageBox.information(self, _("Appliquer un effet ou un module"),
+                                    _("Aucun effet ni module ne s'applique à ce clip."))
+            return
+        dialog = ApplyEffectDialog(actions, target, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.chosen is None:
+            return
+        self.apply_action(dialog.chosen, clip_id)
+
+    def apply_action(self, action: ApplyAction, clip_id: str) -> None:
+        clip = self.controller.timeline.clip(clip_id)
+        if action.kind == "tool":
+            self.modules.run_tool(action.module_id, action.tool, clip)  # gère la plage
+            return
+        view = self.timeline.view
+        found = view.valid_range()
+        if found is not None and found[0].id == clip_id and \
+                (found[1], found[2]) != (clip.start, clip.end):
+            view.isolate_range()  # l'effet ne porte que sur la plage
+            clip = self.controller.selected_clip() or clip
+        defaults = None
+        if action.kind == "module_effect":
+            found_effect = self.module_manager.effect(action.key)
+            defaults = found_effect[1].defaults() if found_effect else {}
+        self.controller.edit_clip(action.title, clip.id, apply_change(action, defaults))
+        self.controller.select(clip.id)
+        self.show_side("filters" if action.kind == "preset" else "effects")
 
     def _update_jobs(self) -> None:
         """Calculs longs (module, export) : fenêtre d'avancement qui bloque le projet ;

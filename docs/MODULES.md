@@ -45,6 +45,7 @@ from montar.api import Param, VideoEffect
 class Negatif(VideoEffect):
     id = "exemple.negatif"
     name = "Négatif"
+    description = "Inverse les couleurs de l'image, plus ou moins fortement."
     params = [Param.float("intensite", "Intensité", 0.0, 1.0, default=1.0)]
 
     def filters(self, values):
@@ -62,9 +63,14 @@ def register(api):
 fait en Python. Les paramètres (`Param.float`, `Param.bool`, `Param.choice`) génèrent les
 contrôles du panneau **Effets**.
 
+Les effets et les outils des modules apparaissent aussi dans la fenêtre **Appliquer un effet
+ou un module…** (clic droit sur un clip de la timeline), avec leur `name`, leur
+`description` et leur `icon` (nom d'une icône Lucide) — `description` et `icon` des effets
+sont apparus avec l'API 1.1 et restent facultatifs.
+
 ## Outils et sources de clip
 
-- `Tool` (`id`, `name`, `icon`, `section`) : `available(editor, clip)` et
+- `Tool` (`id`, `name`, `icon`, `section`, `description`) : `available(editor, clip)` et
   `run(editor, clip)`. `editor` donne accès au projet, à la timeline, à
   `editor.edit(libellé, opération)` (modification annulable), à la plage marquée avec I / O
   (`editor.selection_range`) et à `editor.schedule_job(clé, titre, travail)` pour les calculs

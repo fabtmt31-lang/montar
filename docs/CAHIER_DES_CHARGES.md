@@ -496,6 +496,7 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
   - **édition d'un média avant le montage** (F-MED-07) : aperçu partagé avant / après ; rogner début / fin, recadrer, pivoter, retourner, couleur et filtres, vitesse et son (Timelapse compris) ; à la validation, **remplacer** le média d'origine ou **créer une copie** ;
   - **filtre des médias du projet** (F-MED-08) : recherche par nom, filtre « dans le montage / pas encore utilisé », pastille ✓ sur les médias déjà dans la timeline ;
   - **avancement bien visible** (F-UX-11) des calculs longs (module comme le Timelapse, export) : fenêtre d'avancement au centre de l'écran, qui empêche de modifier le projet pendant le calcul, avec annulation ;
+  - **« Appliquer un effet ou un module… »** (F-MOD-07) : une seule entrée dans le clic droit d'un clip ou d'une plage, ouvrant une fenêtre de choix (outils et effets des modules, filtres, effets) avec recherche — prête pour les futurs modules ;
   - **enregistreur d'écran** simplifié (F-MED-06, avancé en J5) : écran entier ou fenêtre, son du micro et du système, webcam en incrustation ; l'enregistrement est importé dans le projet.
 
 ---

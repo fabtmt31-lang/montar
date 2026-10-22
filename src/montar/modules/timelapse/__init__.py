@@ -23,6 +23,8 @@ class TimelapseTool(Tool):
     name = "Timelapse…"
     icon = "gauge"
     section = "speed"
+    description = ("Accélère fortement le clip ou la plage sélectionnée (×2 à ×1000), "
+                   "par échantillonnage ou fusion d'images.")
 
     def available(self, editor, clip) -> bool:
         return _video_clip(editor, clip) and (
@@ -60,6 +62,7 @@ class RemoveTimelapseTool(Tool):
     name = "Retirer le timelapse"
     icon = "rotate-ccw"
     section = "speed"
+    description = "Rend au segment accéléré sa vitesse et sa durée d'origine."
 
     def available(self, editor, clip) -> bool:
         return clip is not None and core.settings_of(clip) is not None

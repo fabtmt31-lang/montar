@@ -8,7 +8,7 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
 
 ## État d'avancement
 
-**Jalon J5 — compléments v1 Linux** (en cours, version 0.5.3) :
+**Jalon J5 — compléments v1 Linux** (en cours, version 0.5.4) :
 
 - les calculs longs (export, Timelapse) s'affichent dans une grande fenêtre d'avancement
   au centre, qui protège le projet pendant le calcul (annulation possible) ;
@@ -22,7 +22,10 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
   la souris ou d'une fenêtre, avec le micro et / ou le son de l'ordinateur et la webcam en
   incrustation ; montar se réduit et laisse une petite fenêtre « Arrêter » ;
   l'enregistrement est ajouté aux médias du projet. Session X11 nécessaire (session
-  Cinnamon par défaut de Linux Mint) ; pas encore sous Wayland.
+  Cinnamon par défaut de Linux Mint) ; pas encore sous Wayland ;
+- clic droit sur un clip (ou une plage sélectionnée) → **Appliquer un effet ou un module…** :
+  une fenêtre avec recherche regroupe les outils des modules (Timelapse…), les effets des
+  modules, les filtres et les effets ; sur une plage, le clip est d'abord coupé à ses bornes.
 
 **Jalon J4 — export** (0.5.0) :
 
@@ -100,7 +103,7 @@ Pas encore disponible : export (J4).
 ## Installer le paquet
 
 ```sh
-sudo apt install ./montar_0.5.3_all.deb
+sudo apt install ./montar_0.5.4_all.deb
 ```
 
 Le paquet est produit par l'intégration continue (onglet *Actions* de GitHub, artefacts

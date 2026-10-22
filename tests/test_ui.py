@@ -871,3 +871,59 @@ def test_screen_recording_is_imported(window, media_dir, tmp_path, monkeypatch):
     finally:
         xvfb.terminate()
         xvfb.wait(5)
+
+
+@needs_ffmpeg
+def test_apply_effect_or_module(window, media_dir, monkeypatch):
+    from montar.ui.dialogs.apply_effect import ROLE_ACTION, ApplyEffectDialog
+    from montar.ui.editor.apply import actions_for
+
+    editor = imported_editor(window, media_dir, ["clip.mp4", "son.wav"])
+    clip_media, son = editor.project.media
+    editor.add_to_timeline(clip_media)
+    editor.add_to_timeline(son)
+    video = next(c for c in editor.project.clips if c.media_id == clip_media.id)
+    audio = next(c for c in editor.project.clips if c.media_id == son.id)
+    kinds = {(a.kind, a.key) for a in actions_for(video, True, editor.modules)}
+    assert {("tool", "timelapse.apply"), ("preset", "sepia"), ("effect", "blur")} <= kinds
+    assert not actions_for(audio, False, editor.modules)  # rien pour un son
+
+    # fenêtre : recherche, catégories vides masquées
+    dialog = ApplyEffectDialog(actions_for(video, True, editor.modules), "test")
+    dialog.search.setText("délavées")  # cherche aussi dans les descriptions
+    shown = [dialog.list.item(i) for i in range(dialog.list.count())
+             if not dialog.list.item(i).isHidden()]
+    assert [i.data(ROLE_ACTION).key for i in shown if i.data(ROLE_ACTION)] == ["fade"]
+    assert len(shown) == 2 and dialog.apply_button.isEnabled()  # titre « FILTRES » + délavé
+
+    # application sur une plage : le clip est coupé, seule la partie du milieu est filtrée
+    editor.timeline.view.selection_range = (video.id, 10, 30)
+    chosen = {}
+
+    def fake_exec(self):
+        self.select(*chosen["target"])
+        self._accept()
+        return ApplyEffectDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(ApplyEffectDialog, "exec", fake_exec)
+    chosen["target"] = ("preset", "sepia")
+    editor.open_apply(video.id)
+    parts = sorted((c for c in editor.project.clips if c.media_id == clip_media.id),
+                   key=lambda c: c.start)
+    assert [(c.start, c.end, c.preset) for c in parts] == [(0, 10, ""), (10, 30, "sepia"),
+                                                           (30, 50, "")]
+    assert editor.side.currentWidget() is editor.filters_panel
+    chosen["target"] = ("effect", "vignette")
+    editor.open_apply(parts[0].id)
+    assert parts[0].effects.vignette == 0.5 and editor.side.currentWidget() is \
+        editor.effects_panel
+
+    # outil d'un module (Timelapse) par la même fenêtre
+    import importlib
+
+    tl_dialog = importlib.import_module("montar_modules.timelapse.dialog")
+    monkeypatch.setattr(tl_dialog.TimelapseDialog, "exec",
+                        lambda self: tl_dialog.QDialog.DialogCode.Accepted)
+    chosen["target"] = ("tool", "timelapse.apply")
+    editor.open_apply(parts[2].id)
+    assert any("timelapse" in c.modules for c in editor.project.clips)

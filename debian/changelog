@@ -1,3 +1,14 @@
+montar (0.5.4) unstable; urgency=medium
+
+  * Clic droit sur un clip ou une plage : « Appliquer un effet ou un
+    module… » ouvre une fenêtre de choix avec recherche (outils et effets des
+    modules, filtres, effets) ; sur une plage, le clip est coupé à ses bornes
+    avant l'application. Remplace la liste des outils dans le menu.
+  * API des modules 1.1 : « description » des outils et des effets, « icon »
+    des effets (facultatifs, compatibles avec l'API 1.0).
+
+ -- Fabien <admin@appsdoc.fr>  Tue, 27 Oct 2026 16:00:00 +0100
+
 montar (0.5.3) unstable; urgency=medium
 
   * Enregistreur d'écran (rail « Enregistrer ») : écran entier, zone dessinée

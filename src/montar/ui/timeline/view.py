@@ -66,10 +66,15 @@ class _Drag:
     insert_at: int | None = None  # nouvelle piste à cette position (déplacement)
 
 
+def set_icon_action(action, name: str) -> None:
+    action.setIcon(theme().icon(name, theme().palette.forest))
+
+
 class TimelineView(QAbstractScrollArea):
     seekRequested = pyqtSignal(int)
     zoomChanged = pyqtSignal(float)
     rangeChanged = pyqtSignal()
+    applyRequested = pyqtSignal(str)  # clip : « Appliquer un effet ou un module… »
 
     def __init__(self, controller: EditorController,
                  thumbnail_for: Callable[[str], str | None],
@@ -89,10 +94,8 @@ class TimelineView(QAbstractScrollArea):
         self.selection_range: tuple[str, int, int] | None = None
         self.range_tool = False  # glisser sur un clip sélectionne une plage (comme Maj)
         self.video_waveforms = True  # forme d'onde sous les vignettes des clips vidéo
-        # Fournis par la page de montage (modules) : badges d'un clip, actions d'outils
+        # Fourni par la page de montage (modules) : badges d'un clip
         self.badge_provider: Callable[[Clip], list[str]] = lambda clip: []
-        self.tool_provider: Callable[[Clip], list[tuple[str, Callable[[], None]]]] = \
-            lambda clip: []
         self._hover_header: tuple[str, str] | None = None
         self.setAcceptDrops(True)
         self.viewport().setMouseTracking(True)
@@ -995,14 +998,13 @@ class TimelineView(QAbstractScrollArea):
                     and timeline.track(hit[0].track_id).kind == "video" and hit[0].volume > 0):
                 menu.addAction(_("Détacher l'audio"), lambda: self.controller.edit(
                     _("Détacher l'audio"), lambda t: t.detach_audio(clip_id)))
-            tools = self.tool_provider(hit[0])
-            if tools:
-                menu.addSeparator()
-                if found is not None and found[0].id == clip_id:
-                    note = menu.addAction(_("Sur la plage sélectionnée :"))
-                    note.setEnabled(False)
-                for text, action in tools:
-                    menu.addAction(text, action)
+            menu.addSeparator()
+            on_range = found is not None and found[0].id == clip_id
+            apply = menu.addAction(
+                _("Appliquer un effet ou un module sur la plage…") if on_range
+                else _("Appliquer un effet ou un module…"),
+                lambda: self.applyRequested.emit(clip_id))
+            set_icon_action(apply, "sparkles")
             menu.addSeparator()
             menu.addAction(_("Supprimer"), lambda: self.controller.edit(
                 _("Supprimer"), lambda t: t.delete(clip_id)))

@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-API_VERSION = (1, 0)
+API_VERSION = (1, 1)
 
 Filters = list[tuple[str, dict[str, Any]]]
 
@@ -56,6 +56,8 @@ class VideoEffect:
 
     id: str = ""
     name: str = ""
+    description: str = ""  # phrase affichée dans « Appliquer un effet ou un module » (1.1)
+    icon: str = "sparkles"  # (1.1)
     params: Sequence[Param] = ()
 
     def defaults(self) -> dict[str, Any]:
@@ -93,6 +95,7 @@ class Tool:
     name: str = ""
     icon: str = "sparkles"
     section: str = ""
+    description: str = ""  # phrase affichée dans « Appliquer un effet ou un module » (1.1)
 
     def available(self, editor: EditorContext, clip: Any) -> bool:
         return True

@@ -6,6 +6,7 @@ from montar.api import Param, VideoEffect
 class Negatif(VideoEffect):
     id = "exemple.negatif"
     name = "Négatif"
+    description = "Inverse les couleurs de l'image, plus ou moins fortement."
     params = [Param.float("intensite", "Intensité", 0.0, 1.0, default=1.0)]
 
     def filters(self, values):
