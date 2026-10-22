@@ -356,3 +356,14 @@ def test_isolate_range(tl):
     assert tl.isolate(middle.id, 0, 200) is middle  # plage = clip entier : rien à couper
     with pytest.raises(TimelineError):
         tl.isolate(middle.id, 50, 50)
+
+
+def test_fit_to_media_after_replacement(tl):
+    clip = tl.add_clip(media(tl, "video"))  # 4 s = 100 images
+    clip.source_in, clip.duration = 40, 60
+    media(tl, "video").duration = 2.0  # version modifiée, plus courte
+    tl.fit_to_media(clip.id)
+    assert (clip.source_in, clip.duration) == (40, 10)
+    media(tl, "video").duration = 1.0
+    tl.fit_to_media(clip.id)
+    assert (clip.source_in, clip.duration) == (0, 10)

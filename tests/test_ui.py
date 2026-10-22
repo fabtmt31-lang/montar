@@ -784,3 +784,57 @@ def test_media_panel_search_and_usage(window, media_dir):
     assert shown() == {clip.id, photo.id, son.id}
     editor.controller.undo()  # le clip de la photo disparaît : plus de pastille
     assert not item[photo.id].data(ROLE_USED)
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("mode", ["copy", "replace"])
+def test_edit_media_copy_or_replace(window, media_dir, mode):
+    from montar.media.edit import MediaEdit
+
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    media = editor.project.media[0]
+    editor.add_to_timeline(media)
+    clip = editor.project.clips[0]
+    edit = MediaEdit(trim_in=0.0, trim_out=1.0, rotation=90)
+    editor.start_media_edit(media, edit, mode)
+    assert editor.busy.isVisibleTo(editor)
+    assert wait_until(lambda: not editor._media_edits, 60)
+    assert not editor.busy.isVisibleTo(editor)
+    medias = editor.project.media
+    if mode == "copy":
+        assert len(medias) == 2 and medias[0].path == media.path
+        new = medias[1]
+        assert new.id != media.id and clip.media_id == media.id
+    else:
+        assert len(medias) == 1 and medias[0].id == media.id
+        new = medias[0]
+        assert clip.duration == 25  # le clip ne dépasse plus le média raccourci
+        editor.controller.undo()
+        assert editor.project.media[0].path == media.path  # l'original revient
+    assert "(modifié)" in new.name and (new.width, new.height) == (360, 640)
+    assert new.duration == pytest.approx(1.0, abs=0.1)
+
+
+@needs_ffmpeg
+def test_media_editor_dialog_preview(window, media_dir):
+    from montar.engine import get_engine
+    from montar.ui.dialogs.media_editor import MediaEditorDialog
+
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    dialog = MediaEditorDialog(editor.project.media[0], get_engine, True, editor)
+    assert not dialog.replace_button.isEnabled()  # rien de modifié
+    dialog.crop_rows["crop_left"].moved.emit(25)
+    dialog._rotate(90)
+    dialog.color_rows["saturation"].moved.emit(-100)
+    dialog._render()
+    assert dialog.replace_button.isEnabled()
+    after = dialog.after.pixmap()
+    assert after.height() > after.width()  # recadré puis tourné : image en hauteur
+    assert dialog.edit.output_size(editor.project.media[0]) == (360, 480)
+    dialog.position.setValue(10)
+    dialog._mark("in")
+    dialog.position.setValue(40)
+    dialog._mark("out")
+    assert dialog.edit.segment(editor.project.media[0]) == pytest.approx((0.4, 1.6))
+    dialog.timelapse.setChecked(True)
+    assert dialog.edit.timelapse["factor"] == 16

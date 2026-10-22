@@ -2,6 +2,7 @@
 """Écran de montage (maquette 02)."""
 from __future__ import annotations
 
+import copy
 import logging
 import time
 from collections.abc import Callable
@@ -25,17 +26,27 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from montar.core.project import EXPORT_DIR, MediaItem, Project, ProjectError
+from montar.core.project import EXPORT_DIR, MediaItem, Project, ProjectError, new_id
 from montar.engine.base import Engine, timeline_spec
 from montar.engine.export import ExportSettings, human_size, retime
 from montar.engine.geometry import offset_for_center, placement
 from montar.i18n import _
-from montar.media.probe import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, is_supported
+from montar.media.edit import MediaEdit, output_suffix, updated_media
+from montar.media.edit import apply as apply_edit
+from montar.media.probe import (
+    AUDIO_EXTENSIONS,
+    IMAGE_EXTENSIONS,
+    VIDEO_EXTENSIONS,
+    ProbeError,
+    is_supported,
+    probe,
+)
 from montar.media.store import is_inside
 from montar.media.thumbnails import thumbnail_path
 from montar.media.waveform import waveform_path
 from montar.plugins import ModuleManager, default_manager
 from montar.ui.dialogs.export import ExportDialog
+from montar.ui.dialogs.media_editor import MediaEditorDialog
 from montar.ui.editor.busy import BusyOverlay, remaining_text
 from montar.ui.editor.controller import EditorController
 from montar.ui.editor.importer import MediaImporter
@@ -157,6 +168,8 @@ class EditorPage(QWidget):
         self.media_panel.mediaSelected.connect(self._on_media_selected)
         self.media_panel.removeRequested.connect(self.remove_media)
         self.media_panel.addToTimelineRequested.connect(self.add_to_timeline)
+        self.media_panel.editRequested.connect(self.edit_media)
+        self._media_edits: dict[str, tuple[str, str, Path]] = {}  # clé → (média, mode, fichier)
 
         self.text_panel.addRequested.connect(self.add_text)
         self.transitions_panel.applyRequested.connect(self.add_transition)
@@ -528,6 +541,85 @@ class EditorPage(QWidget):
         else:
             self.modules.jobs.cancel()
 
+    # --- édition d'un média ------------------------------------------------------------
+
+    def _timelapse_render(self):
+        """Fonction de calcul du module Timelapse, s'il est actif."""
+        import sys
+
+        if not self.module_manager.is_active("timelapse"):
+            return None
+        core = sys.modules.get("montar_modules.timelapse.core")
+        return getattr(core, "render", None)
+
+    def edit_media(self, media: MediaItem) -> None:
+        if not media.exists or self.project.media_dir is None:
+            return
+        dialog = MediaEditorDialog(media, self._engine_factory,
+                                   self._timelapse_render() is not None, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.result_mode:
+            return
+        self.start_media_edit(media, dialog.edit, dialog.result_mode)
+
+    def start_media_edit(self, media: MediaItem, edit: MediaEdit, mode: str) -> None:
+        """Calcule le média modifié, puis remplace l'original (« replace ») ou ajoute une
+        copie (« copy ») ; calcul en tâche de fond, sous la fenêtre d'avancement."""
+        folder = self.project.media_dir
+        stem = Path(media.path).stem
+        target = folder / f"{stem} ({_('modifié')}){output_suffix(media)}"
+        n = 2
+        while target.exists() or any(m.path == str(target) for m in self.project.media):
+            target = folder / f"{stem} ({_('modifié')} {n}){output_suffix(media)}"
+            n += 1
+        key = f"edit:{media.id}:{target.name}"
+        self._media_edits[key] = (media.id, mode, target)
+        source, frozen, render = media.path, copy.deepcopy(media), self._timelapse_render()
+        edit = copy.deepcopy(edit)
+
+        def work(progress, cancelled):
+            apply_edit(source, target, frozen, edit, progress, cancelled, render)
+
+        self.modules.jobs.schedule(key, _("Modification de {name}").format(name=media.name),
+                                   work)
+
+    def _media_edit_done(self, key: str, error: str) -> None:
+        media_id, mode, target = self._media_edits.pop(key)
+        self.modules.jobs.failed.pop(key, None)  # rien à relancer : il suffit de refaire
+        self._update_jobs()
+        if error:
+            if error != CANCELLED:
+                QMessageBox.warning(self, _("Modification impossible"), error)
+            return
+        try:
+            probed = probe(target)
+        except ProbeError as exc:
+            QMessageBox.warning(self, _("Modification impossible"), str(exc))
+            return
+        original = self.project.find_media(media_id)
+        if original is None:
+            return
+        if mode == "replace":
+            new = updated_media(original, probed, target)
+
+            def replace(t, new=new):
+                index = next(i for i, m in enumerate(t.project.media) if m.id == new.id)
+                t.project.media[index] = new
+                for clip in [c for c in t.project.clips if c.media_id == new.id]:
+                    t.fit_to_media(clip.id)
+
+            self.controller.edit(_("Modifier {name}").format(name=original.name), replace)
+        else:
+            new = updated_media(original, probed, target)
+            new.id = new_id()
+            self.controller.edit(_("Importer {name}").format(name=new.name),
+                                 lambda t, new=new: t.project.media.append(new))
+        if new.kind != "audio":
+            self.importer.ensure_thumbnail(new)
+        self._ensure_waveform(new)
+        self.media_panel.set_media(self.project.media, self.thumbnails)
+        self.media_panel.select(new.id)
+        self._reload_player()
+
     # --- export --------------------------------------------------------------------------
 
     def open_export(self) -> None:
@@ -609,7 +701,10 @@ class EditorPage(QWidget):
         self.modules.jobs.retry()
         self._reload_player()  # les sources des modules relancent leur calcul
 
-    def _on_job_finished(self, _key: str, error: str) -> None:
+    def _on_job_finished(self, key: str, error: str) -> None:
+        if key in self._media_edits:
+            self._media_edit_done(key, error)
+            return
         if error and error != CANCELLED:
             self.modules.error(_("Un calcul en arrière-plan a échoué :\n{e}").format(e=error))
         self._reload_player()  # le fichier pré-calculé remplace l'aperçu provisoire

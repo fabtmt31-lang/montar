@@ -8,12 +8,16 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
 
 ## État d'avancement
 
-**Jalon J5 — compléments v1 Linux** (en cours, version 0.5.1) :
+**Jalon J5 — compléments v1 Linux** (en cours, version 0.5.2) :
 
 - les calculs longs (export, Timelapse) s'affichent dans une grande fenêtre d'avancement
   au centre, qui protège le projet pendant le calcul (annulation possible) ;
 - panneau Médias : recherche par nom, filtre **Tous / Utilisés / Non utilisés**, pastille ✓
-  sur les médias déjà dans le montage.
+  sur les médias déjà dans le montage ;
+- **Modifier le média…** (clic droit dans le panneau Médias) : aperçu avant / après côte à
+  côte ; rogner début / fin, recadrer, pivoter, retourner, couleur et filtres, vitesse,
+  volume ou suppression du son, Timelapse sur tout le média ; puis **Remplacer
+  l'original** (les clips qui l'utilisent sont adaptés, annulable) ou **Créer une copie**.
 
 **Jalon J4 — export** (0.5.0) :
 
@@ -91,7 +95,7 @@ Pas encore disponible : export (J4).
 ## Installer le paquet
 
 ```sh
-sudo apt install ./montar_0.5.1_all.deb
+sudo apt install ./montar_0.5.2_all.deb
 ```
 
 Le paquet est produit par l'intégration continue (onglet *Actions* de GitHub, artefacts

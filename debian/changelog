@@ -1,3 +1,15 @@
+montar (0.5.2) unstable; urgency=medium
+
+  * « Modifier le média… » (panneau Médias, clic droit) : aperçu partagé
+    avant / après ; rogner, recadrer, pivoter, retourner, couleur et filtres,
+    vitesse, volume, suppression du son, Timelapse ; le résultat remplace le
+    média d'origine (les clips sont adaptés, annulable) ou en devient une
+    copie. Calcul par ffmpeg sous la fenêtre d'avancement.
+  * Exécution de ffmpeg mise en commun (avancement, annulation, arrêt d'un
+    ffmpeg bloqué) entre le Timelapse et l'édition de média.
+
+ -- Fabien <admin@appsdoc.fr>  Mon, 26 Oct 2026 18:00:00 +0100
+
 montar (0.5.1) unstable; urgency=medium
 
   * Calculs longs (export, modules comme le Timelapse) : grande fenêtre

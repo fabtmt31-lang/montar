@@ -480,6 +480,24 @@ class Timeline:
         self.project.transitions.remove(t)
         self._shift_from(t.track_id, right.start, t.duration)
 
+    def fit_to_media(self, clip_id: str) -> Clip:
+        """Après remplacement du média (par une version modifiée, plus courte par exemple) :
+        le clip garde sa place mais ne dépasse plus la fin du média."""
+        clip = self.clip(clip_id)
+        media = self.media_of(clip)
+        length = media.length_frames(self.fps) if media is not None else None
+        if length is None:
+            return clip
+        if clip.source_in >= length:
+            clip.source_in = 0
+        available = max(1, int((length - clip.source_in) / clip.speed))
+        if clip.duration > available:
+            clip.duration = available
+            clip.fade_in = min(clip.fade_in, available)
+            clip.fade_out = min(clip.fade_out, available)
+            self.sanitize()
+        return clip
+
     def sanitize(self) -> None:
         """Retire les transitions dont les clips ne sont plus en place."""
         ids = {c.id: c for c in self.project.clips}

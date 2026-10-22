@@ -61,6 +61,7 @@ class MediaPanel(QFrame):
     mediaSelected = pyqtSignal(object)  # MediaItem ou None
     removeRequested = pyqtSignal(object)  # MediaItem
     addToTimelineRequested = pyqtSignal(object)  # MediaItem
+    editRequested = pyqtSignal(object)  # MediaItem
 
     def __init__(self) -> None:
         super().__init__()
@@ -219,6 +220,9 @@ class MediaPanel(QFrame):
         menu = QMenu(self)
         menu.addAction(_("Ajouter à la timeline"),
                        lambda: self.addToTimelineRequested.emit(item.data(ROLE_PAYLOAD)))
+        edit = menu.addAction(_("Modifier le média…"),
+                              lambda: self.editRequested.emit(item.data(ROLE_PAYLOAD)))
+        edit.setEnabled(item.data(ROLE_PAYLOAD).exists)
         menu.addAction(_("Retirer du projet"),
                        lambda: self.removeRequested.emit(item.data(ROLE_PAYLOAD)))
         menu.exec(self.grid.viewport().mapToGlobal(pos))

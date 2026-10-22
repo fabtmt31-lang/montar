@@ -9,16 +9,12 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import os
-import select
 import shutil
-import subprocess
-import tempfile
-import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from montar.core.timeline import TimelineError
+from montar.media import ffmpeg_run
 
 MODULE_ID = "timelapse"
 MIN_FACTOR, MAX_FACTOR = 2.0, 1000.0
@@ -29,8 +25,7 @@ RAMPS = {"none": "Aucune", "in": "Douce en entrée", "out": "Douce en sortie",
 AUDIO = {"mute": "Couper", "remove": "Supprimer", "speed": "Accélérer"}
 
 
-class Cancelled(Exception):
-    pass
+Cancelled = ffmpeg_run.Cancelled
 
 
 @dataclass
@@ -305,56 +300,19 @@ def render(source: str, output: Path, source_in: int, data: dict, fps: int,
     output.parent.mkdir(parents=True, exist_ok=True)
     tmp = output.with_name(output.stem + ".part.mp4")
     cmd, produced = ffmpeg_command(source, tmp, source_in, data, fps)
-    # messages d'erreur dans un fichier : un tuyau plein bloquerait ffmpeg
-    errors = tempfile.TemporaryFile()
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errors)
-    try:
-        assert proc.stdout is not None
-        fd = proc.stdout.fileno()
-        pending, last_change, last_state = b"", time.monotonic(), None
-        while True:
-            if cancelled():
-                raise Cancelled()
-            ready, _w, _x = select.select([fd], [], [], 0.25)
-            if ready:
-                chunk = os.read(fd, 65536)
-                if not chunk:
-                    break  # ffmpeg a terminé
-                pending += chunk
-                *lines, pending = pending.split(b"\n")
-                for line in lines:
-                    key, _sep, value = line.decode("ascii", "replace").strip().partition("=")
-                    if key in ("frame", "out_time_us") and (key, value) != last_state:
-                        last_state, last_change = (key, value), time.monotonic()
-                    if key == "frame":
-                        try:
-                            progress(min(1.0, int(value) / produced))
-                        except ValueError:
-                            pass
-            if time.monotonic() - last_change > STALL_SECONDS:
-                raise RuntimeError(_stalled_message())
-        code = proc.wait()
-        if code != 0:
-            errors.seek(0)
-            lines = errors.read().decode("utf-8", "replace").strip().splitlines()
-            raise RuntimeError(lines[-1] if lines else f"ffmpeg a échoué (code {code})")
-        tmp.replace(output)
-        progress(1.0)
-        return output
-    except BaseException:
-        if proc.poll() is None:
-            proc.terminate()
+
+    def on_progress(key: str, value: str) -> None:
+        if key == "frame":
             try:
-                proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-        proc.wait()
+                progress(min(1.0, int(value) / produced))
+            except ValueError:
+                pass
+
+    try:
+        ffmpeg_run.run(cmd, on_progress, cancelled, STALL_SECONDS)
+        tmp.replace(output)
+    except BaseException:
         tmp.unlink(missing_ok=True)
         raise
-    finally:
-        errors.close()
-
-
-def _stalled_message() -> str:
-    return (f"ffmpeg n'avance plus depuis {STALL_SECONDS // 60} minutes ; le calcul a été "
-            "arrêté")
+    progress(1.0)
+    return output
