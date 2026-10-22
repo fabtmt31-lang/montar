@@ -161,6 +161,8 @@ QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 #PreviewFrame {{ background: {preview_bg}; border-radius: {r_card}px; }}
 #DialogCard {{ background: {surface}; border-radius: {r_window}px; }}
 #ExportDialog {{ background: {surface}; }}
+#WarningBox {{ background: rgba(180, 69, 47, 0.12); border: 1px solid rgba(180, 69, 47, 0.45);
+               border-radius: 10px; }}
 #BusyCard {{ background: {surface}; border: 1px solid {border}; border-radius: {r_window}px; }}
 #BusyBar {{ border-radius: 6px; }}
 #BusyBar::chunk {{ border-radius: 6px; }}

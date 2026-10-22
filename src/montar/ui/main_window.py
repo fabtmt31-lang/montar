@@ -10,6 +10,8 @@ from PyQt6.QtWidgets import QDialog, QFileDialog, QMainWindow, QMessageBox, QSta
 
 from montar import __version__
 from montar.core.project import Project, ProjectError, unique_project_folder
+from montar.core.project_files import Session
+from montar.core.project_files import duplicate as duplicate_project
 from montar.core.recent import RecentProjects
 from montar.core.settings import Settings
 from montar.engine import get_engine
@@ -31,6 +33,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.settings, self._settings_file = settings, settings_file
         self.recent = RecentProjects(paths.data_dir() / "recent.json")
+        self.session = Session(paths.data_dir() / "session.json")
         self.cache = paths.cache_dir()
         self.setWindowTitle("montar")
         self.setMinimumSize(QSize(1100, 680))
@@ -49,6 +52,7 @@ class MainWindow(QMainWindow):
             page.importRequested.connect(self.import_into_new_project)
             page.openRequested.connect(self.open_project)
             page.projects.set_thumbnail_provider(self._thumbnail_for)
+            page.projects.duplicateRequested.connect(self.duplicate)
         self.home.showAllRequested.connect(lambda: self.shell.show_page("projects"))
         self.preferences.themeChanged.connect(theme().apply)
         self.preferences.settingsChanged.connect(self._save_settings)
@@ -143,14 +147,56 @@ class MainWindow(QMainWindow):
         editor.apply_preferences(self.settings, opening=True)
         editor.backRequested.connect(self.show_home)
         editor.saved.connect(lambda _p: None)
+        editor.saveAsRequested.connect(self.save_project_as)
         self.editor = editor
+        if project.path is not None:
+            self.session.open(project.path)
         self.stack.addWidget(editor)
         self.stack.setCurrentWidget(editor)
         self.setWindowTitle(f"{project.name} — montar")
         return editor
 
+    def save_project_as(self, name: str) -> EditorPage | None:
+        """Copie complète du projet ouvert sous un autre nom, puis ouverture de la copie."""
+        if self.editor is None or self.editor.project.path is None or not self.editor.save():
+            return None
+        try:
+            copy = duplicate_project(self.editor.project.path, name, self.settings.projects_path)
+        except (OSError, ProjectError) as exc:
+            QMessageBox.warning(self, _("Enregistrer sous"), str(exc))
+            return None
+        return self.open_project(copy)
+
+    def duplicate(self, path: Path) -> None:
+        """Accueil : copie d'un projet, ajoutée aux projets récents."""
+        try:
+            name = Project.load(path).name
+            copy = duplicate_project(path, _("{name} (copie)").format(name=name),
+                                     self.settings.projects_path)
+        except (OSError, ProjectError) as exc:
+            QMessageBox.warning(self, _("Dupliquer"), str(exc))
+            return
+        self.recent.add(copy)
+        self.refresh_recent()
+
+    def check_interrupted(self) -> None:
+        """Au démarrage : montar s'est-il arrêté brutalement la fois précédente ?"""
+        project = self.session.interrupted()
+        self.session.close()
+        if project is None:
+            return
+        answer = QMessageBox.question(
+            self, _("Récupération"),
+            _("montar ne s'est pas fermé normalement la dernière fois. Rouvrir le projet "
+              "« {name} » ?\n\nLe projet est enregistré automatiquement à chaque "
+              "modification ; des versions plus anciennes se trouvent dans son dossier "
+              "« sauvegardes ».").format(name=project.stem))
+        if answer == QMessageBox.StandardButton.Yes:
+            self.open_project(project)
+
     def _close_editor(self) -> None:
         if self.editor is not None:
+            self.session.close()
             self.editor.close_project()
             self.stack.removeWidget(self.editor)
             self.editor.deleteLater()

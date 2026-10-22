@@ -62,6 +62,8 @@ class MediaPanel(QFrame):
     removeRequested = pyqtSignal(object)  # MediaItem
     addToTimelineRequested = pyqtSignal(object)  # MediaItem
     editRequested = pyqtSignal(object)  # MediaItem
+    relinkRequested = pyqtSignal(object)  # MediaItem introuvable
+    relinkAllRequested = pyqtSignal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -77,6 +79,19 @@ class MediaPanel(QFrame):
         self.count_label = label("", "small")
         head.addWidget(self.count_label)
         layout.addLayout(head)
+
+        self.missing_box = QFrame()
+        self.missing_box.setObjectName("WarningBox")
+        ml = QHBoxLayout(self.missing_box)
+        ml.setContentsMargins(12, 8, 8, 8)
+        self.missing_label = label("", "small")
+        self.missing_label.setWordWrap(True)
+        relink = button(_("Relier…"), "secondary", "link")
+        relink.clicked.connect(self.relinkAllRequested)
+        ml.addWidget(self.missing_label, 1)
+        ml.addWidget(relink)
+        self.missing_box.setVisible(False)
+        layout.addWidget(self.missing_box)
 
         imp = button(_("Importer des fichiers"), "dashed", "plus")
         imp.clicked.connect(self.importRequested)
@@ -157,6 +172,12 @@ class MediaPanel(QFrame):
         item.setHidden(not self._matches(media))
         self._update_count()
 
+    def set_missing(self, count: int) -> None:
+        """Bandeau des médias introuvables (fichiers déplacés ou supprimés)."""
+        self.missing_box.setVisible(count > 0)
+        self.missing_label.setText(_("1 média introuvable") if count == 1 else
+                                   _("{n} médias introuvables").format(n=count))
+
     def set_used(self, media_ids: set[str]) -> None:
         """Médias présents dans la timeline : pastille ✓ et filtre « Dans le montage »."""
         self._used = set(media_ids)
@@ -220,9 +241,11 @@ class MediaPanel(QFrame):
         menu = QMenu(self)
         menu.addAction(_("Ajouter à la timeline"),
                        lambda: self.addToTimelineRequested.emit(item.data(ROLE_PAYLOAD)))
-        edit = menu.addAction(_("Modifier le média…"),
-                              lambda: self.editRequested.emit(item.data(ROLE_PAYLOAD)))
-        edit.setEnabled(item.data(ROLE_PAYLOAD).exists)
+        media = item.data(ROLE_PAYLOAD)
+        if media.exists:
+            menu.addAction(_("Modifier le média…"), lambda: self.editRequested.emit(media))
+        else:
+            menu.addAction(_("Relier à un fichier…"), lambda: self.relinkRequested.emit(media))
         menu.addAction(_("Retirer du projet"),
                        lambda: self.removeRequested.emit(item.data(ROLE_PAYLOAD)))
         menu.exec(self.grid.viewport().mapToGlobal(pos))

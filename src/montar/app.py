@@ -122,5 +122,8 @@ def main(argv: list[str] | None = None) -> int:
     window = MainWindow(settings, settings_file)
     window.show()
     if args.project:
+        window.session.close()
         window.open_project(Path(args.project))
+    else:
+        window.check_interrupted()
     return app.exec()

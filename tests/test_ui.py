@@ -927,3 +927,39 @@ def test_apply_effect_or_module(window, media_dir, monkeypatch):
     chosen["target"] = ("tool", "timelapse.apply")
     editor.open_apply(parts[2].id)
     assert any("timelapse" in c.modules for c in editor.project.clips)
+
+
+@needs_ffmpeg
+def test_save_as_and_relink(window, media_dir, tmp_path, monkeypatch):
+    editor = imported_editor(window, media_dir, ["clip.mp4", "photo.png"])
+    editor.add_to_timeline(editor.project.media[0])
+    original = editor.project.path
+    copy_editor = window.save_project_as("Montage bis")
+    assert copy_editor is window.editor and copy_editor.project.name == "Montage bis"
+    assert copy_editor.project.path.parent.name == "Montage bis"
+    assert len(copy_editor.project.media) == 2 and len(copy_editor.project.clips) == 1
+    assert all(str(copy_editor.project.path.parent) in m.path
+               for m in copy_editor.project.media)
+    assert original.exists()
+
+    # médias supprimés du disque : bandeau, puis reliaison (avec recherche des autres)
+    elsewhere = tmp_path / "ailleurs"
+    elsewhere.mkdir()
+    for m in copy_editor.project.media:
+        _shutil = __import__("shutil")
+        _shutil.copy(m.path, elsewhere / Path(m.path).name)
+        Path(m.path).unlink()
+    copy_editor._update_used_media()
+    panel = copy_editor.media_panel
+    assert panel.missing_box.isVisibleTo(panel) and "2" in panel.missing_label.text()
+    clip_media = copy_editor.project.media[0]
+    copy_editor.relink(clip_media, str(elsewhere / "clip.mp4"))
+    assert wait_until(lambda: not copy_editor.missing_media(), 30)
+    assert all(m.exists and "medias" in m.path for m in copy_editor.project.media)
+    copy_editor._update_used_media()
+    assert not panel.missing_box.isVisibleTo(panel)
+
+    # accueil : dupliquer un projet
+    window.show_home()
+    window.duplicate(original)
+    assert "Montage (copie)" in [e.name for e in window.recent.entries()]

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtCore import QSize, Qt, QUrl, pyqtSignal
+from PyQt6.QtGui import QDesktopServices, QPixmap
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -13,6 +14,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QScrollArea,
     QStackedWidget,
@@ -106,6 +108,8 @@ class ProjectList(QWidget):
     """Projets récents en grille ou en liste."""
 
     openRequested = pyqtSignal(object)  # Path
+    duplicateRequested = pyqtSignal(object)  # Path
+    deleteRequested = pyqtSignal(object)  # Path
 
     def __init__(self) -> None:
         super().__init__()
@@ -115,6 +119,8 @@ class ProjectList(QWidget):
         self.grid.itemActivated.connect(self._activate)
         self.grid.itemClicked.connect(self._activate)
         self.grid.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.grid.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.grid.customContextMenuRequested.connect(self._context_menu)
         self.empty = QFrame()
         self.empty.setObjectName("EmptyState")
         el = QVBoxLayout(self.empty)
@@ -173,9 +179,21 @@ class ProjectList(QWidget):
         self._fit()
 
     def _activate(self, item: QListWidgetItem) -> None:
-        from pathlib import Path
-
         self.openRequested.emit(Path(item.data(ROLE_PAYLOAD)))
+
+    def _context_menu(self, pos) -> None:
+        item = self.grid.itemAt(pos)
+        if item is None:
+            return
+        path = Path(item.data(ROLE_PAYLOAD))
+        menu = QMenu(self)
+        menu.addAction(_("Ouvrir"), lambda: self.openRequested.emit(path))
+        menu.addAction(_("Dupliquer"), lambda: self.duplicateRequested.emit(path))
+        menu.addAction(_("Ouvrir le dossier"), lambda: QDesktopServices.openUrl(
+            QUrl.fromLocalFile(str(path.parent))))
+        menu.addSeparator()
+        menu.addAction(_("Mettre à la corbeille"), lambda: self.deleteRequested.emit(path))
+        menu.exec(self.grid.viewport().mapToGlobal(pos))
 
 
 class HomePage(QWidget):

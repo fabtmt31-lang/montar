@@ -16,7 +16,9 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QSplitter,
@@ -27,6 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from montar.core.project import EXPORT_DIR, MediaItem, Project, ProjectError, new_id
+from montar.core.project_files import backup
 from montar.core.timecode import frames_to_timecode
 from montar.engine.base import Engine, timeline_spec
 from montar.engine.export import ExportSettings, human_size, retime
@@ -100,6 +103,7 @@ class EditorPage(QWidget):
     saved = pyqtSignal(object)  # Path
     exportFinished = pyqtSignal(str)  # erreur (vide si réussite)
     recordingFinished = pyqtSignal(str)  # fichier enregistré (vide si échec)
+    saveAsRequested = pyqtSignal(str)  # nom de la copie du projet
 
     def __init__(self, project: Project, engine_factory: Callable[[], Engine], cache: Path,
                  preview_quality: str = "medium", modules: ModuleManager | None = None) -> None:
@@ -170,11 +174,14 @@ class EditorPage(QWidget):
         self.importer.copyProgress.connect(self._on_copy_progress)
         self.importer.gathered.connect(self._on_gathered)
         self._copies: dict[str, float] = {}  # fichier d'origine → avancement de la copie
+        self._gathering: dict[str, tuple[str, bool]] = {}  # média → (source, reliaison)
         self.media_panel.importRequested.connect(self.choose_files)
         self.media_panel.mediaSelected.connect(self._on_media_selected)
         self.media_panel.removeRequested.connect(self.remove_media)
         self.media_panel.addToTimelineRequested.connect(self.add_to_timeline)
         self.media_panel.editRequested.connect(self.edit_media)
+        self.media_panel.relinkRequested.connect(self.relink)
+        self.media_panel.relinkAllRequested.connect(self.relink_first_missing)
         self._media_edits: dict[str, tuple[str, str, Path]] = {}  # clé → (média, mode, fichier)
 
         self.text_panel.addRequested.connect(self.add_text)
@@ -299,6 +306,13 @@ class EditorPage(QWidget):
         self.redo_button.clicked.connect(self.controller.redo)
         layout.addWidget(self.undo_button)
         layout.addWidget(self.redo_button)
+        self.project_button = button("", "ghost", "ellipsis", tooltip=_("Projet"))
+        menu = QMenu(self.project_button)
+        menu.addAction(_("Enregistrer (Ctrl+S)"), self.save)
+        menu.addAction(_("Enregistrer sous…"), self.save_as)
+        menu.addAction(_("Ouvrir le dossier du projet"), self._open_project_folder)
+        self.project_button.setMenu(menu)
+        layout.addWidget(self.project_button)
         layout.addStretch(1)
 
         self.export_button = button(_("Exporter"), "primary", "download",
@@ -350,6 +364,7 @@ class EditorPage(QWidget):
             ("Shift+Delete", lambda: tl.delete(ripple=True)),
             ("Ctrl+D", tl.duplicate),
             ("Ctrl+E", self.open_export),
+            ("Ctrl+S", self.save),
             (QKeySequence.StandardKey.Undo, self.controller.undo),
             (QKeySequence.StandardKey.Redo, self.controller.redo),
             ("Ctrl+Y", self.controller.redo),
@@ -387,35 +402,96 @@ class EditorPage(QWidget):
         if folder is None:
             return
         for m in self.project.media:
-            if m.exists and not is_inside(m.path, folder) and m.path not in self._copies:
-                self._copies[m.path] = 0.0
-                self.importer.gather(m.id, m.path, folder)
+            if m.exists and not is_inside(m.path, folder):
+                self._copy_into_project(m, m.path)
+
+    def _copy_into_project(self, media: MediaItem, source: str, relink: bool = False) -> None:
+        if media.id in self._gathering or self.project.media_dir is None:
+            return
+        self._gathering[media.id] = (source, relink)
+        self._copies[source] = 0.0
+        self.importer.gather(media.id, source, self.project.media_dir)
         self._update_jobs()
 
     def _on_gathered(self, media_id: str, copy: str | None, error: str) -> None:
-        media = self.project.find_media(media_id)
-        if media is not None:
-            self._copies.pop(media.path, None)
+        source, relink = self._gathering.pop(media_id, ("", False))
+        self._copies.pop(source, None)
         self._update_jobs()
+        media = self.project.find_media(media_id)
         if media is None or copy is None:
             if error:
-                log.warning("copie de %s dans le projet impossible : %s",
-                            media.path if media else media_id, error)
+                log.warning("copie de %s dans le projet impossible : %s", source, error)
+                if relink:
+                    QMessageBox.warning(self, _("Relier le média"), error)
             return
-        original = media.path
+        probed = None
+        if relink:
+            try:
+                probed = probe(copy)
+            except ProbeError as exc:
+                QMessageBox.warning(self, _("Relier le média"), str(exc))
+                return
+            if probed.kind != media.kind:
+                QMessageBox.warning(self, _("Relier le média"),
+                                    _("{name} n'est pas du même type que le média "
+                                      "manquant.").format(name=Path(source).name))
+                return
 
-        def relocate(t, media_id=media_id, copy=copy, original=original):
+        def relocate(t, media_id=media_id, copy=copy, source=source, probed=probed):
             m = t.project.find_media(media_id)
-            if m is not None:
-                m.path, m.original_path = copy, m.original_path or original
+            if m is None:
+                return
+            if probed is not None:  # nouveau fichier : ses propres mesures
+                for name in ("duration", "width", "height", "fps", "has_audio",
+                             "video_codec", "audio_codec"):
+                    setattr(m, name, getattr(probed, name))
+                m.original_path = source
+            else:
+                m.original_path = m.original_path or source
+            m.path = copy
 
-        self.controller.edit(_("Copier {name} dans le projet").format(name=media.name),
-                             relocate)
+        label_ = (_("Relier {name}") if relink else _("Copier {name} dans le projet")).format(
+            name=media.name)
+        self.controller.edit(label_, relocate)
         moved = self.project.find_media(media_id)
         if moved is not None:
             if moved.kind != "audio":
                 self.importer.ensure_thumbnail(moved)
             self._ensure_waveform(moved)
+            if relink:
+                for clip in [c for c in self.project.clips if c.media_id == media_id]:
+                    self.controller.timeline.fit_to_media(clip.id)
+                self.media_panel.set_media(self.project.media, self.thumbnails)
+                self._reload_player()
+
+    # --- médias manquants ------------------------------------------------------------
+
+    def missing_media(self) -> list[MediaItem]:
+        return [m for m in self.project.media if not m.exists]
+
+    def relink(self, media: MediaItem, path: str | None = None) -> None:
+        """Relie un média introuvable à un fichier (copié dans le projet)."""
+        if path is None:
+            path, _f = QFileDialog.getOpenFileName(
+                self, _("Où se trouve {name} ?").format(name=media.name),
+                str(Path(media.original_path or media.path).parent), media_file_filter())
+            if not path:
+                return
+        self._copy_into_project(media, path, relink=True)
+        # les autres médias manquants sont cherchés dans le même dossier
+        folder = Path(path).parent
+        for other in self.missing_media():
+            if other.id == media.id or other.id in self._gathering:
+                continue
+            for name in (Path(other.path).name, Path(other.original_path).name):
+                if name and (folder / name).is_file():
+                    self._copy_into_project(other, str(folder / name), relink=True)
+                    break
+
+    def relink_first_missing(self) -> None:
+        missing = self.missing_media()
+        if missing:
+            self.relink(missing[0])
 
     def _on_copy_progress(self, path: str, ratio: float) -> None:
         if path in self._copies:
@@ -460,10 +536,22 @@ class EditorPage(QWidget):
             _("Enregistré"), _("Modifié"), 1))
         self._save_timer.start()
 
+    def save_as(self) -> None:
+        name, ok = QInputDialog.getText(self, _("Enregistrer sous"),
+                                        _("Nom de la copie du projet :"),
+                                        text=_("{name} (copie)").format(name=self.project.name))
+        if ok and name.strip() and self.save():
+            self.saveAsRequested.emit(name.strip())
+
+    def _open_project_folder(self) -> None:
+        if self.project.path is not None:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.project.path.parent)))
+
     def save(self) -> bool:
         self._save_timer.stop()
         try:
             path = self.project.save()
+            backup(self.project)
         except (OSError, ProjectError) as exc:
             QMessageBox.warning(self, _("Enregistrement impossible"), str(exc))
             return False
@@ -944,6 +1032,7 @@ class EditorPage(QWidget):
         self._update_preview_selection()
 
     def _update_used_media(self) -> None:
+        self.media_panel.set_missing(len(self.missing_media()))
         used = {c.media_id for c in self.project.clips if c.media_id}
         if used != self._used_media:
             self._used_media = used
