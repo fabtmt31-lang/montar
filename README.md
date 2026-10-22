@@ -8,7 +8,27 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
 
 ## État d'avancement
 
-**Jalon J5 — compléments v1 Linux** (en cours, version 0.5.4) :
+**Version 1.0 — Linux** (1.0.0) : fin du jalon J5, toutes les exigences P1 sont en place.
+
+- projets : **Enregistrer sous** / **Dupliquer**, copies de sauvegarde datées dans le
+  dossier `sauvegardes/` du projet, **récupération** après un arrêt brutal, **reliaison**
+  des médias manquants (les autres fichiers du même dossier sont retrouvés) ;
+- accueil : **Médiathèque** (médias de tous les projets, réutilisables) et **Corbeille**
+  (restauration, suppression définitive après 30 jours) ;
+- aperçu : **volume**, **plein écran** (F), raccourcis **J / K / L** (arrière, pause,
+  avant ; appuyer plusieurs fois accélère jusqu'à ×8), zoom **Ajuster / 50 / 100 / 200 %** ;
+- timeline : **marqueurs** (M, Ctrl+← / Ctrl+→, glisser le fanion, double-clic pour le
+  renommer) et **voix off** (bouton micro : la timeline est lue pendant que vous parlez,
+  l'enregistrement est placé sur une piste « Voix off ») ;
+- préférences : sauvegarde automatique activable (sinon Ctrl+S et proposition à la
+  fermeture), intervalle des copies de sauvegarde, **Stockage & cache** (taille, « Vider le
+  cache », espace libre), **langue** : français, anglais ou langue du système ;
+- modules (API 1.2) : **effets audio**, **transitions**, **générateurs** (bouton
+  **Créer…** du panneau Médias) et **formats d'export** ; nouveau module intégré
+  **Essentiels** : écho, graves et aigus, volume égalisé, transitions cercle / volet /
+  diagonale, fond uni et dégradé, exports MKV et ProRes.
+
+**Jalon J5 — compléments v1 Linux** (0.5.1 à 0.5.4) :
 
 - les calculs longs (export, Timelapse) s'affichent dans une grande fenêtre d'avancement
   au centre, qui protège le projet pendant le calcul (annulation possible) ;
@@ -98,12 +118,10 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
 **Jalon J0 — socle** (0.1.0) : accueil, nouveau projet, import de médias, aperçu,
 préférences, thèmes, paquet `.deb`.
 
-Pas encore disponible : export (J4).
-
 ## Installer le paquet
 
 ```sh
-sudo apt install ./montar_0.5.4_all.deb
+sudo apt install ./montar_1.0.0_all.deb
 ```
 
 Le paquet est produit par l'intégration continue (onglet *Actions* de GitHub, artefacts

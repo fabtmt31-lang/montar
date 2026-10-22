@@ -22,12 +22,13 @@ Depends: ${misc:Depends},
          python3-numpy,
          python3-pyqt6,
          python3-pyqt6.qtsvg
-Recommends: xdg-user-dirs, x11-utils
+Recommends: xdg-user-dirs, x11-utils, pulseaudio-utils, qt6-translations-l10n
 Description: simple and local video editor
  montar is a free video editor with the basic features of consumer editors:
  multi-track timeline, cutting and trimming, speed, titles and lower thirds,
- transitions, colour adjustments, filters and effects, audio volume and fades.
- Export is coming in an upcoming release.
+ transitions, colour adjustments, filters and effects, audio volume and fades,
+ markers, voice-over and screen recording, timelapse, and export to MP4, MOV,
+ WebM, GIF or audio files. The interface is available in French and English.
  .
  Everything happens locally: no account, no cloud storage, no upload. Media
  files are referenced and never modified. montar can be extended with

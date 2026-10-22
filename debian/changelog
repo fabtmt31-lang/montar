@@ -1,3 +1,28 @@
+montar (1.0.0) unstable; urgency=medium
+
+  * Version 1.0 pour Linux : toutes les exigences P1 du cahier des charges.
+  * Projets : « Enregistrer sous » et « Dupliquer » (copie complète du dossier),
+    copies de sauvegarde datées (sauvegardes/), récupération après un arrêt
+    brutal, reliaison des médias manquants.
+  * Accueil : Médiathèque (médias de tous les projets) et Corbeille
+    (restauration ; suppression définitive après 30 jours).
+  * Aperçu : volume mémorisé, plein écran (F), raccourcis J / K / L avec
+    lecture rapide et arrière, zoom Ajuster / 50 / 100 / 200 %.
+  * Timeline : marqueurs (M, Ctrl+flèches) et enregistrement de voix off sur
+    une piste « Voix off ».
+  * Préférences : sauvegarde automatique activable, intervalle des copies,
+    Stockage & cache (taille, vidage, espace libre), langue de l'interface.
+  * Interface en anglais (langue du système par défaut) ; les modules peuvent
+    fournir leurs traductions.
+  * API des modules 1.2 : effets audio, transitions, générateurs, formats
+    d'export ; module intégré « Essentiels ».
+  * Recommends: pulseaudio-utils (liste des micros), qt6-translations-l10n
+    (boutons standard traduits).
+  * Correction : abandon possible après la fermeture d'un projet pendant la
+    copie de ses médias.
+
+ -- Fabien <admin@appsdoc.fr>  Wed, 28 Oct 2026 10:00:00 +0100
+
 montar (0.5.4) unstable; urgency=medium
 
   * Clic droit sur un clip ou une plage : « Appliquer un effet ou un
@@ -123,7 +148,7 @@ montar (0.4.1) unstable; urgency=medium
   * En-tête : les modes Couleur et Audio ouvrent les panneaux et onglets
     correspondants.
 
- -- Fabien <admin@appsdoc.fr>  Thu, 22 Oct 2026 18:00:00 +0200
+ -- Fabien <admin@appsdoc.fr>  Wed, 28 Oct 2026 10:00:00 +0100
 
 montar (0.4.0) unstable; urgency=medium
 
