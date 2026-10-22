@@ -64,6 +64,7 @@ class MediaPanel(QFrame):
     editRequested = pyqtSignal(object)  # MediaItem
     relinkRequested = pyqtSignal(object)  # MediaItem introuvable
     relinkAllRequested = pyqtSignal()
+    libraryRequested = pyqtSignal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -96,6 +97,10 @@ class MediaPanel(QFrame):
         imp = button(_("Importer des fichiers"), "dashed", "plus")
         imp.clicked.connect(self.importRequested)
         layout.addWidget(imp)
+        lib = button(_("Médiathèque…"), "ghost", "library",
+                     tooltip=_("Réutiliser un média d'un autre projet"))
+        lib.clicked.connect(self.libraryRequested)
+        layout.addWidget(lib)
 
         chips = QHBoxLayout()
         chips.setSpacing(4)

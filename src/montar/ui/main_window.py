@@ -9,11 +9,13 @@ from PyQt6.QtCore import QSize
 from PyQt6.QtWidgets import QDialog, QFileDialog, QMainWindow, QMessageBox, QStackedWidget
 
 from montar import __version__
+from montar.core.library import library
 from montar.core.project import Project, ProjectError, unique_project_folder
 from montar.core.project_files import Session
 from montar.core.project_files import duplicate as duplicate_project
 from montar.core.recent import RecentProjects
 from montar.core.settings import Settings
+from montar.core.trash import Trash
 from montar.engine import get_engine
 from montar.i18n import _
 from montar.media.thumbnails import thumbnail_path
@@ -22,6 +24,7 @@ from montar.plugins import default_manager
 from montar.ui.dialogs.new_project import NewProjectDialog, NewProjectParams
 from montar.ui.editor.editor_page import EditorPage, media_file_filter
 from montar.ui.home.home_page import HomePage, HomeShell
+from montar.ui.home.library import LibraryPage, TrashPage
 from montar.ui.home.preferences_page import PreferencesPage
 from montar.ui.theme import theme
 
@@ -45,7 +48,16 @@ class MainWindow(QMainWindow):
         self.projects = HomePage(compact=True)
         self.modules = default_manager(settings.disabled_modules)
         self.preferences = PreferencesPage(settings, self.modules)
-        self.shell = HomeShell(self.home, self.projects, self.preferences)
+        self.trash = Trash(paths.data_dir() / "corbeille")
+        self.trash.purge()
+        self.library_page = LibraryPage(self._thumbnail_for)
+        self.trash_page = TrashPage(self.trash)
+        self.trash_page.restored.connect(self._restored)
+        self.shell = HomeShell(self.home, self.projects, self.preferences, [
+            ("library", _("Médiathèque"), "library", self.library_page),
+            ("trash", _("Corbeille"), "trash-2", self.trash_page),
+        ])
+        self.shell.pageShown.connect(self._page_shown)
         self.stack.addWidget(self.shell)
         for page in (self.home, self.projects):
             page.newProjectRequested.connect(self.new_project)
@@ -53,6 +65,7 @@ class MainWindow(QMainWindow):
             page.openRequested.connect(self.open_project)
             page.projects.set_thumbnail_provider(self._thumbnail_for)
             page.projects.duplicateRequested.connect(self.duplicate)
+            page.projects.deleteRequested.connect(self.move_to_trash)
         self.home.showAllRequested.connect(lambda: self.shell.show_page("projects"))
         self.preferences.themeChanged.connect(theme().apply)
         self.preferences.settingsChanged.connect(self._save_settings)
@@ -148,6 +161,8 @@ class MainWindow(QMainWindow):
         editor.backRequested.connect(self.show_home)
         editor.saved.connect(lambda _p: None)
         editor.saveAsRequested.connect(self.save_project_as)
+        editor.library_provider = lambda: self.library_items(project.path)
+        editor.thumbnail_provider = self._thumbnail_for
         self.editor = editor
         if project.path is not None:
             self.session.open(project.path)
@@ -178,6 +193,32 @@ class MainWindow(QMainWindow):
             return
         self.recent.add(copy)
         self.refresh_recent()
+
+    def move_to_trash(self, path: Path) -> None:
+        if self.editor is not None and self.editor.project.path == path:
+            return
+        try:
+            self.trash.put(path)
+        except OSError as exc:
+            QMessageBox.warning(self, _("Corbeille"), str(exc))
+            return
+        self.recent.remove(path)
+        self.refresh_recent()
+        self.trash_page.refresh()
+
+    def _restored(self, path: Path) -> None:
+        self.recent.add(path)
+        self.refresh_recent()
+
+    def library_items(self, exclude: Path | None = None):
+        paths = [p for p in self.recent.paths() if p != exclude]
+        return library(paths)
+
+    def _page_shown(self, key: str) -> None:
+        if key == "library":
+            self.library_page.set_items(self.library_items())
+        elif key == "trash":
+            self.trash_page.refresh()
 
     def check_interrupted(self) -> None:
         """Au démarrage : montar s'est-il arrêté brutalement la fois précédente ?"""

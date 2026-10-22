@@ -36,22 +36,27 @@ _PLACEHOLDER_BY_ASPECT = {"16:9": "mint", "9:16": "pistachio", "1:1": "water",
                           "4:5": "voiceover", "21:9": "mist"}
 
 
-def relative_time(timestamp: float, now: float | None = None) -> str:
+def ago(timestamp: float, now: float | None = None) -> str:
+    """« à l'instant », « il y a 3 min », « hier », « le 12/10/2026 »…"""
     delta = max(0, (now or time.time()) - timestamp)
     if delta < 60:
-        return _("Modifié à l'instant")
+        return _("à l'instant")
     if delta < 3600:
-        return _("Modifié il y a {n} min").format(n=int(delta // 60))
+        return _("il y a {n} min").format(n=int(delta // 60))
     if delta < 86400:
-        return _("Modifié il y a {n} h").format(n=int(delta // 3600))
+        return _("il y a {n} h").format(n=int(delta // 3600))
     days = int(delta // 86400)
     if days == 1:
-        return _("Modifié hier")
+        return _("hier")
     if days < 7:
-        return _("Modifié il y a {n} jours").format(n=days)
+        return _("il y a {n} jours").format(n=days)
     if days < 14:
-        return _("Modifié la semaine dernière")
-    return _("Modifié le {date}").format(date=time.strftime("%d/%m/%Y", time.localtime(timestamp)))
+        return _("la semaine dernière")
+    return _("le {date}").format(date=time.strftime("%d/%m/%Y", time.localtime(timestamp)))
+
+
+def relative_time(timestamp: float, now: float | None = None) -> str:
+    return _("Modifié {when}").format(when=ago(timestamp, now))
 
 
 class _Swatch(QFrame):
@@ -298,7 +303,8 @@ class HomePage(QWidget):
 class HomeShell(QWidget):
     """Navigation latérale + pages (Accueil, Mes projets, Préférences)."""
 
-    def __init__(self, home: HomePage, projects: HomePage, preferences: QWidget) -> None:
+    def __init__(self, home: HomePage, projects: HomePage, preferences: QWidget,
+                 extra: list[tuple[str, str, str, QWidget]] = ()) -> None:
         super().__init__()
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -319,6 +325,7 @@ class HomeShell(QWidget):
         for key, text, icon, page in (
             ("home", _("Accueil"), "house", home),
             ("projects", _("Mes projets"), "folder-open", projects),
+            *extra,
         ):
             sl.addWidget(self._nav_button(key, text, icon, page))
         sl.addStretch()
@@ -339,7 +346,10 @@ class HomeShell(QWidget):
         btn.setProperty("page_index", self.pages.count() - 1)
         return btn
 
+    pageShown = pyqtSignal(str)
+
     def show_page(self, key: str) -> None:
         btn = self._nav[key]
         btn.setChecked(True)
         self.pages.setCurrentIndex(btn.property("page_index"))
+        self.pageShown.emit(key)

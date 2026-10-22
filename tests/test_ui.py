@@ -963,3 +963,31 @@ def test_save_as_and_relink(window, media_dir, tmp_path, monkeypatch):
     window.show_home()
     window.duplicate(original)
     assert "Montage (copie)" in [e.name for e in window.recent.entries()]
+
+
+@needs_ffmpeg
+def test_trash_and_library_pages(window, media_dir, monkeypatch):
+    from montar.ui.home.library import LibraryDialog
+
+    editor = imported_editor(window, media_dir, ["clip.mp4", "photo.png"])
+    first = editor.project.path
+    assert editor.save()
+    other = window.create_project(NewProjectParams("Autre", "16:9", "720p", 25))
+    # médiathèque : médias des autres projets, ajoutés (copiés) au projet ouvert
+    items = other.library_provider()
+    assert {i.media.name for i in items} == {"clip.mp4", "photo.png"}
+    monkeypatch.setattr(LibraryDialog, "exec", lambda self: (
+        self.library.grid.selectAll(), LibraryDialog.DialogCode.Accepted)[1])
+    other.open_library()
+    assert wait_until(lambda: len(other.project.media) == 2)
+    assert all(str(other.project.path.parent) in m.path for m in other.project.media)
+    window.show_home()
+    window.shell.show_page("library")
+    assert window.library_page.library.grid.count() == 2  # même fichier : une seule fois
+    # corbeille : mettre, restaurer
+    window.move_to_trash(first)
+    assert not first.exists() and "Montage" not in [e.name for e in window.recent.entries()]
+    window.shell.show_page("trash")
+    assert window.trash_page.rows.count() == 1
+    window.trash_page._restore(window.trash.entries()[0])
+    assert first.exists() and "Montage" in [e.name for e in window.recent.entries()]

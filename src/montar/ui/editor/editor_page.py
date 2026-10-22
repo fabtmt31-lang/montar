@@ -64,6 +64,7 @@ from montar.ui.editor.modules import CANCELLED, EditorModules
 from montar.ui.editor.panels import EffectsPanel, FiltersPanel, TextPanel, TransitionsPanel
 from montar.ui.editor.player import Player
 from montar.ui.editor.preview import PreviewPanel
+from montar.ui.home.library import LibraryDialog
 from montar.ui.text_render import image_path as text_image_path
 from montar.ui.text_render import preset_style, text_bounds
 from montar.ui.timeline.panel import TimelinePanel
@@ -182,6 +183,9 @@ class EditorPage(QWidget):
         self.media_panel.editRequested.connect(self.edit_media)
         self.media_panel.relinkRequested.connect(self.relink)
         self.media_panel.relinkAllRequested.connect(self.relink_first_missing)
+        self.media_panel.libraryRequested.connect(self.open_library)
+        self.library_provider = lambda: []  # fourni par la fenêtre principale
+        self.thumbnail_provider = lambda path: None
         self._media_edits: dict[str, tuple[str, str, Path]] = {}  # clé → (média, mode, fichier)
 
         self.text_panel.addRequested.connect(self.add_text)
@@ -487,6 +491,16 @@ class EditorPage(QWidget):
                 if name and (folder / name).is_file():
                     self._copy_into_project(other, str(folder / name), relink=True)
                     break
+
+    def open_library(self) -> None:
+        items = self.library_provider()
+        if not items:
+            QMessageBox.information(self, _("Médiathèque"),
+                                    _("Aucun média dans vos autres projets pour l'instant."))
+            return
+        dialog = LibraryDialog(items, self.thumbnail_provider, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.import_files(dialog.paths())
 
     def relink_first_missing(self) -> None:
         missing = self.missing_media()
