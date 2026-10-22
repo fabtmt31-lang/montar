@@ -11,6 +11,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from montar.i18n import N_, _
+
 WEBCAM_WIDTH = 0.25  # largeur de l'incrustation, en fraction de la largeur de la vidéo
 
 
@@ -30,12 +32,12 @@ class RecordOptions:
 def session_problem() -> str:
     """Raison pour laquelle l'enregistrement est impossible ici, ou chaîne vide."""
     if shutil.which("ffmpeg") is None:
-        return "ffmpeg est introuvable"
+        return N_("ffmpeg est introuvable")
     if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
-        return ("l'enregistrement d'écran n'est pas encore possible dans une session Wayland ; "
-                "ouvrez une session X11 (la session Cinnamon par défaut de Linux Mint)")
+        return N_("l'enregistrement d'écran n'est pas encore possible dans une session Wayland ; "
+                  "ouvrez une session X11 (la session Cinnamon par défaut de Linux Mint)")
     if not os.environ.get("DISPLAY"):
-        return "aucun affichage X11 (variable DISPLAY absente)"
+        return N_("aucun affichage X11 (variable DISPLAY absente)")
     return ""
 
 
@@ -147,5 +149,5 @@ class Recorder:
         self.target.with_suffix(".log").unlink(missing_ok=True)
         ok = self.target.exists() and self.target.stat().st_size > 0
         if not ok:
-            self.error = lines[-1] if lines else "aucune image enregistrée"
+            self.error = lines[-1] if lines else _("aucune image enregistrée")
         return ok

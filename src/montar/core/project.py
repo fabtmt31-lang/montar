@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from montar.core import formats
+from montar.i18n import _
 
 FORMAT_VERSION = 4  # 2 : clips ; 3 : réglages, textes, transitions ; 4 : réglages de modules
 PROJECT_SUFFIX = ".montar"
@@ -234,7 +235,7 @@ class Project:
         if self.resolution not in formats.RESOLUTIONS:
             raise ValueError(f"résolution inconnue : {self.resolution}")
         if not self.tracks:
-            self.tracks = [Track("video", "Vidéo"), Track("audio", "Musique")]
+            self.tracks = [Track("video", _("Vidéo")), Track("audio", _("Musique"))]
 
     @property
     def canvas_size(self) -> tuple[int, int]:

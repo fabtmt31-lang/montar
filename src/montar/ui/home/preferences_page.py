@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
 from montar.core import storage
 from montar.core.settings import BACKUP_INTERVALS, Settings
 from montar.engine.export import human_size
-from montar.i18n import _
+from montar.i18n import LANGUAGES, _
 from montar.ui.widgets import Segmented, Switch, button, label, shrink
 
 _THEME_PREVIEW = {
@@ -139,12 +139,14 @@ class PreferencesPage(QWidget):
         self.quality.changed.connect(self._set_quality)
         gl.addWidget(_row(_("Qualité de l'aperçu"),
                           _("Réduisez-la sur une machine moins puissante"), self.quality))
-        language = QComboBox()
-        language.addItem(_("Français"))
-        language.setEnabled(False)
-        language.setToolTip(_("Seule langue disponible pour le moment"))
+        self.language = QComboBox()
+        self.language.addItem(_("Système (langue de l'ordinateur)"), "system")
+        for code, name in LANGUAGES.items():
+            self.language.addItem(name, code)
+        self.language.setCurrentIndex(max(0, self.language.findData(settings.language)))
+        self.language.currentIndexChanged.connect(self._set_language)
         gl.addWidget(_row(_("Langue de l'interface"), _("Menus, info-bulles et raccourcis"),
-                          language))
+                          self.language))
         self.switches: dict[str, Switch] = {}
         for key, title, subtitle in (
             ("hardware_export", _("Accélération matérielle"),
@@ -245,6 +247,15 @@ class PreferencesPage(QWidget):
             storage.clear_cache(self.cache)
             self.refresh_storage()
             self.cacheCleared.emit()
+
+    def _set_language(self, _index: int) -> None:
+        code = self.language.currentData()
+        if code == self.settings.language:
+            return
+        self.settings.language = code
+        self.settingsChanged.emit()
+        QMessageBox.information(self, _("Langue"), _(
+            "Le changement de langue prendra effet au prochain démarrage de montar."))
 
     def _set_backup_interval(self, key: str) -> None:
         self.settings.backup_minutes = int(key)

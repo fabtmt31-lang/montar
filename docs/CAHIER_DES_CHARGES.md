@@ -491,7 +491,7 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
 - ✅ timeline : **marqueurs** et **enregistrement de voix off** (F-TL-03) ;
 - ✅ aperçu : volume, **plein écran**, raccourcis J / K / L, bouton « Ajuster » (F-PRV-02, F-PRV-03) ;
 - ✅ préférences : sauvegarde automatique réglable (F-UX-04), **Stockage & cache** avec « Vider le cache » (F-UX-08) ;
-- préférences : interface en **anglais** (F-UX-02) ;
+- ✅ préférences : interface en **anglais** (F-UX-02), langue du système par défaut ;
 - ✅ modules : types effet audio, transition, générateur, format d'export (F-MOD-03), module intégré « Essentiels » ;
 - ajouts demandés (octobre 2026) :
   - **édition d'un média avant le montage** (F-MED-07) : aperçu partagé avant / après ; rogner début / fin, recadrer, pivoter, retourner, couleur et filtres, vitesse et son (Timelapse compris) ; à la validation, **remplacer** le média d'origine ou **créer une copie** ;

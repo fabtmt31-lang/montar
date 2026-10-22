@@ -205,7 +205,7 @@ class EditorPage(QWidget):
         self._drag_origin: tuple | None = None
         self.controller.historyChanged.connect(self._update_history_buttons)
         self.controller.error.connect(
-            lambda msg: QMessageBox.information(self, _("Action impossible"), msg))
+            lambda msg: QMessageBox.information(self, _("Action impossible"), _(msg)))
         self.timeline.view.seekRequested.connect(self.player.seek)
         self.player.frameReady.connect(self._on_frame)
         # Limite les mises à jour de l'aperçu pendant un réglage (sans attendre la fin du

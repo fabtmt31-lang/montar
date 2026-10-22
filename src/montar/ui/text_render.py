@@ -15,6 +15,7 @@ from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QBrush, QColor, QFont, QFontMetricsF, QImage, QPainter, QPainterPath, QPen
 
 from montar.core.project import Clip, TextStyle
+from montar.i18n import _
 
 REFERENCE_HEIGHT = 1080  # les tailles des styles sont données pour une toile de 1080 px
 
@@ -51,7 +52,9 @@ FAMILIES = ("Manrope", "Fraunces", "Caveat", "JetBrains Mono")
 
 
 def preset_style(preset: str) -> TextStyle:
-    return copy.deepcopy(PRESETS.get(preset, PRESETS["title"])[2])
+    style = copy.deepcopy(PRESETS.get(preset, PRESETS["title"])[2])
+    style.content = _(style.content)  # texte d'exemple dans la langue de l'interface
+    return style
 
 
 def _font(style: TextStyle, scale: float) -> QFont:

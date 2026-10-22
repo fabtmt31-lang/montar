@@ -26,6 +26,7 @@ from montar.api import (
     Transition,
     VideoEffect,
 )
+from montar.i18n import add_module_translations
 
 log = logging.getLogger(__name__)
 
@@ -150,6 +151,7 @@ class ModuleManager:
                 raise ModuleError("fonction register(api) absente")
             api = ModuleAPI(info.id, info.path)
             register(api)
+            add_module_translations(info.path)
             info.loaded, info.error = api, ""
         except Exception as exc:  # un module défectueux ne doit pas bloquer montar
             log.exception("échec du chargement du module %s", info.id)

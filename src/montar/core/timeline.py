@@ -22,6 +22,7 @@ from montar.core.project import (
     Transition,
     new_id,
 )
+from montar.i18n import _
 
 IMAGE_DEFAULT_SECONDS = 5
 TEXT_DEFAULT_SECONDS = 5
@@ -402,7 +403,7 @@ class Timeline:
             self.project.markers.remove(existing)
             return None
         number = len(self.project.markers) + 1
-        marker = Marker(max(0, frame), f"Marqueur {number}")
+        marker = Marker(max(0, frame), _("Marqueur {n}").format(n=number))
         self.project.markers.append(marker)
         return marker
 
@@ -431,12 +432,12 @@ class Timeline:
         trim = max(0, min(trim, self.default_duration(media) - 1))
         duration = max(1, self.default_duration(media) - trim)
         tracks = [t for t in self.project.tracks if t.kind == "audio"]
-        tracks.sort(key=lambda t: t.name != VOICE_OVER_TRACK)  # les pistes « Voix off » d'abord
-        track = next((t for t in tracks if t.name == VOICE_OVER_TRACK
+        tracks.sort(key=lambda t: t.name != _(VOICE_OVER_TRACK))  # les pistes « Voix off » d'abord
+        track = next((t for t in tracks if t.name == _(VOICE_OVER_TRACK)
                       and self.free_start(t.id, start, duration) == start), None)
         if track is None:
             track = self.add_track("audio")
-            track.name = VOICE_OVER_TRACK
+            track.name = _(VOICE_OVER_TRACK)
         clip = Clip(media.id, track.id, max(0, start), duration)
         clip.source_in = trim
         self.project.clips.append(clip)
@@ -445,7 +446,7 @@ class Timeline:
     def add_track(self, kind: str) -> Track:
         if kind not in TRACK_KINDS:
             raise TimelineError(f"type de piste inconnu : {kind}")
-        track = Track(kind, TRACK_NAMES[kind])
+        track = Track(kind, _(TRACK_NAMES[kind]))
         tracks = self.project.tracks
         if kind == "text":  # au-dessus de tout
             tracks.insert(0, track)
@@ -466,7 +467,7 @@ class Timeline:
         if kind not in TRACK_KINDS:
             raise TimelineError(f"type de piste inconnu : {kind}")
         low, high = self.track_block(kind)
-        track = Track(kind, TRACK_NAMES[kind])
+        track = Track(kind, _(TRACK_NAMES[kind]))
         self.project.tracks.insert(max(low, min(high, index)), track)
         return track
 

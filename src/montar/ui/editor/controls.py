@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from montar.i18n import _
 from montar.ui.widgets import Segmented, label
 
 _STEPS = 1000
@@ -87,13 +88,13 @@ class ColorSwatches(QWidget):
         layout.setSpacing(6)
         self._buttons: dict[str, QPushButton] = {}
         if allow_none:
-            none = self._swatch("", "Aucun")
+            none = self._swatch("", _("Aucun"))
             layout.addWidget(none)
         for c in colors:
             layout.addWidget(self._swatch(c, c))
         custom = QPushButton("+")
         custom.setFixedSize(30, 30)
-        custom.setToolTip("Couleur personnalisée")
+        custom.setToolTip(_("Couleur personnalisée"))
         custom.setStyleSheet("QPushButton { border-radius: 15px; border: 1.5px dashed #9CCBB0;"
                              " padding: 0; font-weight: 700; }")
         custom.clicked.connect(self._custom)

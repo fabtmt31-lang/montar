@@ -7,6 +7,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from montar.i18n import N_
 from montar.media.recorder import Recorder
 
 RATE = 48000
@@ -15,7 +16,7 @@ WAV_HEADER = 44  # octets de l'en-tête d'un fichier WAV PCM
 
 def microphones() -> list[tuple[str, str]]:
     """(périphérique, description) des entrées son ; « default » en premier."""
-    found = [("default", "Micro par défaut")]
+    found = [("default", N_("Micro par défaut"))]
     if shutil.which("pactl") is None:
         return found
     try:

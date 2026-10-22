@@ -111,6 +111,13 @@ volet et diagonale ; fond uni et dégradé ; exports MKV et ProRes.
 Le module intégré **Timelapse** (`src/montar/modules/timelapse/`) est un exemple complet
 d'outil et de source de clip.
 
+## Traduire un module
+
+Les textes d'un module (`name`, `description`, libellés des paramètres…) sont affichés tels
+quels en français et traduits si le module fournit `locale/<langue>.json` (par exemple
+`locale/en.json`) : un objet JSON « texte d'origine → traduction ». Le script
+`scripts/i18n_extract.py` de montar relève les chaînes des modules intégrés.
+
 ## Installer
 
 Compressez le dossier du module en `.zip`, renommez-le en `mon-module.montar-module`, puis

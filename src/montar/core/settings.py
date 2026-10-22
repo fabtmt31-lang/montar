@@ -6,6 +6,7 @@ import json
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
+from montar.i18n import LANGUAGES
 from montar.platform import paths
 
 THEMES = ("light", "dark", "system")
@@ -16,6 +17,7 @@ BACKUP_INTERVALS = (1, 2, 5, 10)  # minutes entre deux copies de sauvegarde
 @dataclass
 class Settings:
     theme: str = "light"
+    language: str = "system"  # system | fr | en (pris en compte au démarrage)
     projects_dir: str = ""
     preview_quality: str = "medium"
     disabled_modules: list[str] = field(default_factory=list)
@@ -46,6 +48,8 @@ class Settings:
         if isinstance(disabled, list):
             values["disabled_modules"] = [m for m in disabled if isinstance(m, str)]
         settings = cls(**values)
+        if settings.language not in ("system", *LANGUAGES):
+            settings.language = "system"
         if settings.theme not in THEMES:
             settings.theme = "light"
         if settings.preview_quality not in PREVIEW_QUALITIES:

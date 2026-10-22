@@ -85,6 +85,22 @@ def diagnostic() -> int:
     return 0
 
 
+def _install_language(app, setting: str) -> None:
+    """Langue de montar et, si Qt fournit ses traductions, celle des boutons standard."""
+    from PyQt6.QtCore import QLibraryInfo, QLocale, QTranslator
+
+    from montar.i18n import set_language
+
+    language = set_language(setting)
+    QLocale.setDefault(QLocale(language))
+    translator = QTranslator(app)
+    folder = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+    for base in (folder, "/usr/share/qt6/translations"):
+        if translator.load(f"qtbase_{language}", base):
+            app.installTranslator(translator)
+            break
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="montar", description="Montage vidéo simple et local")
     parser.add_argument("project", nargs="?", help="projet .montar à ouvrir")
@@ -118,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
 
     settings_file = paths.config_dir() / "settings.json"
     settings = Settings.load(settings_file)
+    _install_language(app, settings.language)
     theme().apply(settings.theme)
     window = MainWindow(settings, settings_file)
     window.show()

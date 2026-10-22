@@ -1219,3 +1219,32 @@ def test_module_types_in_editor(window, media_dir):
     assert dialog.target().suffix == ".mkv" and dialog.settings().format == "essentiels.mkv"
     assert "MKV" in dialog.summary_output.text()
     dialog.close()
+
+
+# --- J5-G : interface en anglais -----------------------------------------------------------------
+
+
+def test_english_interface(app, isolated_home, monkeypatch):
+    from montar import i18n
+    from montar.ui.main_window import MainWindow
+
+    for name in ("warning", "information"):
+        monkeypatch.setattr(QMessageBox, name, staticmethod(lambda *a, **k: None))
+    i18n.set_language("en")
+    try:
+        w = MainWindow(Settings(language="en"), isolated_home / ".config/montar/settings.json")
+        w.show()
+        editor = w.create_project(NewProjectParams("Movie", "16:9", "720p", 25))
+        assert editor.export_button.text() == "Export"
+        assert [t.name for t in editor.project.tracks] == ["Video", "Music"]
+        assert editor.preview.zoom_button.text() == "Fit"
+        w.show_home()
+        w.close()
+    finally:
+        i18n.set_language("fr")
+
+
+def test_language_preference(window):
+    prefs = window.preferences
+    prefs.language.setCurrentIndex(prefs.language.findData("en"))
+    assert window.settings.language == "en"

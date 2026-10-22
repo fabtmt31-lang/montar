@@ -22,7 +22,7 @@ PRESETS = (4, 8, 16, 32, 60)
 METHODS = {"sample": "Échantillonnage", "blend": "Fusion d'images"}
 RAMPS = {"none": "Aucune", "in": "Douce en entrée", "out": "Douce en sortie",
          "both": "Les deux"}
-AUDIO = {"mute": "Couper", "remove": "Supprimer", "speed": "Accélérer"}
+AUDIO = {"mute": "Couper le son", "remove": "Supprimer le son", "speed": "Accélérer le son"}
 
 
 Cancelled = ffmpeg_run.Cancelled
