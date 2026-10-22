@@ -36,6 +36,7 @@ from montar.media.thumbnails import thumbnail_path
 from montar.media.waveform import waveform_path
 from montar.plugins import ModuleManager, default_manager
 from montar.ui.dialogs.export import ExportDialog
+from montar.ui.editor.busy import BusyOverlay, remaining_text
 from montar.ui.editor.controller import EditorController
 from montar.ui.editor.importer import MediaImporter
 from montar.ui.editor.inspector import Inspector
@@ -197,6 +198,8 @@ class EditorPage(QWidget):
         self.module_manager.listeners.append(self._modules_listener)
 
         self._install_shortcuts()
+        self.busy = BusyOverlay(self)
+        self.busy.cancelRequested.connect(self._cancel_jobs)
         self._load_project_media()
         self._gather_media()
         self._refresh_header()
@@ -249,11 +252,8 @@ class EditorPage(QWidget):
         self.jobs_bar.setFixedWidth(110)
         self.jobs_bar.setTextVisible(False)
         self.jobs_bar.setFixedHeight(6)
-        self.jobs_cancel = button("", "ghost", "x", tooltip=_("Annuler le calcul"))
-        self.jobs_cancel.clicked.connect(self._cancel_jobs)
         jl.addWidget(self.jobs_label)
         jl.addWidget(self.jobs_bar)
-        jl.addWidget(self.jobs_cancel)
         self.jobs_box.setVisible(False)
         layout.addWidget(self.jobs_box)
         self.failed_box = QWidget()
@@ -349,6 +349,8 @@ class EditorPage(QWidget):
             self._ensure_waveform(m)
         self.media_panel.set_media(self.project.media, self.thumbnails)
         self._shown_media = [m.id for m in self.project.media]
+        self._used_media: set[str] = set()
+        self._update_used_media()
 
     def _gather_media(self) -> None:
         """Projets d'avant la copie des médias : les fichiers encore hors du dossier du
@@ -480,33 +482,45 @@ class EditorPage(QWidget):
                 for mid, tool in self.modules.tools_for(clip)]
 
     def _update_jobs(self) -> None:
-        summary = self.modules.jobs.summary()
-        copying = getattr(self, "_copies", None)
+        """Calculs longs (module, export) : fenêtre d'avancement qui bloque le projet ;
+        copies de médias : petit indicateur dans l'en-tête."""
+        modules = self.modules.jobs.summary()
         job = getattr(self, "_export_job", None)
+        busy = None
         if job is not None:
-            summary = (_("Export"), job.progress)
-            copying = None
-        elif copying:
+            name = Path(self._export_settings.path).name if self._export_settings else ""
+            busy = (_("Export de {name}").format(name=name), job.progress,
+                    remaining_text(time.monotonic() - self._export_started, job.progress))
+        elif modules is not None:
+            title, ratio = modules
+            busy = (_("{title} : calcul en cours").format(title=title), ratio,
+                    remaining_text(self.modules.jobs.elapsed(), ratio))
+        overlay = getattr(self, "busy", None)
+        if overlay is not None:
+            if busy is not None:
+                overlay.show_progress(*busy)
+            elif overlay.isVisible():
+                overlay.hide()
+            self._set_shortcuts_enabled(busy is None)
+        copying = getattr(self, "_copies", None)
+        self.jobs_box.setVisible(bool(copying))
+        if copying:
             ratio = sum(copying.values()) / len(copying)
-            summary = (_("Copie des médias ({n})").format(n=len(copying)) if len(copying) > 1
-                       else _("Copie des médias"), ratio)
-        self.jobs_cancel.setVisible(not copying)
-        self.jobs_cancel.setToolTip(_("Annuler l'export") if job is not None
-                                    else _("Annuler le calcul"))
-        self.jobs_box.setVisible(summary is not None)
-        if summary is not None:
-            title, ratio = summary
-            text = _("{title} : {p} %").format(title=title, p=round(ratio * 100))
-            if job is not None:
-                text += self._remaining_text(job)
-            self.jobs_label.setText(text)
+            title = (_("Copie des médias ({n})").format(n=len(copying)) if len(copying) > 1
+                     else _("Copie des médias"))
+            self.jobs_label.setText(_("{title} : {p} %").format(title=title,
+                                                                p=round(ratio * 100)))
             self.jobs_bar.setValue(round(ratio * 100))
-        failure = self.modules.jobs.failure_summary() if summary is None else None
+        failure = self.modules.jobs.failure_summary() if busy is None else None
         self.failed_box.setVisible(failure is not None)
         if failure is not None:
             title, cancelled = failure
             text = _("{title} annulé") if cancelled else _("{title} : échec")
             self.failed_label.setText(text.format(title=title))
+
+    def _set_shortcuts_enabled(self, enabled: bool) -> None:
+        for shortcut in self.findChildren(QShortcut):
+            shortcut.setEnabled(enabled)
 
     def _cancel_jobs(self) -> None:
         if self._export_job is not None:
@@ -554,16 +568,6 @@ class EditorPage(QWidget):
         self._export_timer.start()
         self.export_button.setEnabled(False)
         self._update_jobs()
-
-    def _remaining_text(self, job) -> str:
-        elapsed = time.monotonic() - self._export_started
-        ratio = job.progress
-        if ratio < 0.03 or elapsed < 2:
-            return ""
-        left = elapsed / ratio * (1 - ratio)
-        if left < 60:
-            return " · " + _("moins d'une minute")
-        return " · " + _("{n} min restantes").format(n=round(left / 60))
 
     def _poll_export(self) -> None:
         job = self._export_job
@@ -707,6 +711,7 @@ class EditorPage(QWidget):
         if media_ids != self._shown_media:
             self._shown_media = media_ids
             self.media_panel.set_media(self.project.media, self.thumbnails)
+        self._update_used_media()
         if not self._load_timer.isActive():
             self._load_timer.start()
         if self.controller.selected_transition:
@@ -714,6 +719,12 @@ class EditorPage(QWidget):
         else:
             self._on_clip_selected(self.controller.selected)
         self._update_preview_selection()
+
+    def _update_used_media(self) -> None:
+        used = {c.media_id for c in self.project.clips if c.media_id}
+        if used != self._used_media:
+            self._used_media = used
+            self.media_panel.set_used(used)
 
     # --- import -------------------------------------------------------------
 

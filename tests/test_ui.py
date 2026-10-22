@@ -9,7 +9,7 @@ pytest.importorskip("PyQt6.QtWidgets")
 pytest.importorskip("PyQt6.QtSvg")
 
 from PyQt6.QtCore import QEvent, QEventLoop, QPoint, QPointF, QRectF, Qt, QTimer  # noqa: E402
-from PyQt6.QtGui import QMouseEvent  # noqa: E402
+from PyQt6.QtGui import QMouseEvent, QShortcut  # noqa: E402
 from PyQt6.QtTest import QTest  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
@@ -588,10 +588,15 @@ def test_timelapse_job_cancel_and_retry(window, media_dir, monkeypatch):
     monkeypatch.setattr(core, "ffmpeg_command", lambda *a: (sleeper, 3))
     editor._reload_player()
     jobs = editor.modules.jobs
-    assert wait_until(lambda: jobs.jobs and editor.jobs_box.isVisibleTo(editor))
-    editor.jobs_cancel.click()
+    assert wait_until(lambda: jobs.jobs and editor.busy.isVisibleTo(editor))
+    # calcul en cours : le projet est protégé (fenêtre au-dessus, raccourcis coupés)
+    assert editor.busy.geometry() == editor.rect()
+    assert not any(s.isEnabled() for s in editor.findChildren(QShortcut))
+    editor.busy.cancel_button.click()
     assert wait_until(lambda: not jobs.jobs, 5)
     assert editor.failed_box.isVisibleTo(editor) and "annulé" in editor.failed_label.text()
+    assert not editor.busy.isVisibleTo(editor)
+    assert all(s.isEnabled() for s in editor.findChildren(QShortcut))
     editor._reload_player()
     pump(200)
     assert not jobs.jobs  # une annulation n'est pas relancée d'elle-même
@@ -689,6 +694,7 @@ def test_acceptance_scenario_export(window, media_dir, monkeypatch):
     editor.exportFinished.connect(results.append)
     editor.open_export()
     assert editor._export_job is not None and not editor.export_button.isEnabled()
+    assert editor.busy.isVisibleTo(editor) and "Recette.mp4" in editor.busy.title.text()
     assert wait_until(lambda: results, 180)
     assert results == [""]
     target = editor.project.path.parent / "exports" / "Recette.mp4"
@@ -706,7 +712,7 @@ def test_acceptance_scenario_export(window, media_dir, monkeypatch):
     # relecture par un lecteur tiers : ffmpeg décode tout le fichier sans erreur
     subprocess.run([shutil.which("ffmpeg"), "-v", "error", "-xerror", "-i", str(target),
                     "-f", "null", "-"], check=True, capture_output=True)
-    assert editor.export_button.isEnabled()
+    assert editor.export_button.isEnabled() and not editor.busy.isVisibleTo(editor)
 
 
 @needs_ffmpeg
@@ -751,3 +757,30 @@ def test_preferences_switches_apply_to_editor(window, media_dir, monkeypatch):
     assert editor.timeline.magnet.isChecked()  # projet ouvert : inchangé
     saved = Settings.load(window._settings_file)
     assert (saved.video_waveforms, saved.hardware_export, saved.snap) == (False, True, False)
+
+
+# --- J5 ---------------------------------------------------------------------------------
+
+
+@needs_ffmpeg
+def test_media_panel_search_and_usage(window, media_dir):
+    from montar.ui.thumbgrid import ROLE_USED
+
+    editor = imported_editor(window, media_dir, ["clip.mp4", "photo.png", "son.wav"])
+    clip, photo, son = editor.project.media
+    panel = editor.media_panel
+    editor.add_to_timeline(photo)
+    item = panel._items
+    assert item[photo.id].data(ROLE_USED) and not item[clip.id].data(ROLE_USED)
+    shown = lambda: {m for m, it in item.items() if not it.isHidden()}  # noqa: E731
+    panel.usage.button("used").click()
+    assert shown() == {photo.id}
+    panel.usage.button("unused").click()
+    assert shown() == {clip.id, son.id}
+    panel.search.setText("SON")
+    assert shown() == {son.id}
+    panel.usage.button("all").click()
+    panel.search.clear()
+    assert shown() == {clip.id, photo.id, son.id}
+    editor.controller.undo()  # le clip de la photo disparaît : plus de pastille
+    assert not item[photo.id].data(ROLE_USED)

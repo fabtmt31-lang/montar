@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QModelIndex, QRect, QRectF, QSize, Qt
-from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPixmap
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QListView,
     QListWidget,
@@ -21,6 +21,7 @@ ROLE_BADGE = Qt.ItemDataRole.UserRole + 2
 ROLE_PLACEHOLDER = Qt.ItemDataRole.UserRole + 3  # nom de jeton de couleur (mint, pistachio…)
 ROLE_ICON = Qt.ItemDataRole.UserRole + 4  # icône affichée sans vignette
 ROLE_WARNING = Qt.ItemDataRole.UserRole + 5  # média manquant
+ROLE_USED = Qt.ItemDataRole.UserRole + 6  # média présent dans la timeline (pastille ✓)
 ROLE_PAYLOAD = Qt.ItemDataRole.UserRole + 10
 
 
@@ -82,6 +83,16 @@ class ThumbDelegate(QStyledItemDelegate):
         if index.data(ROLE_WARNING):
             ip = icon_pixmap("triangle-alert", "#B4452F", 18)
             painter.drawPixmap(int(thumb.x()) + 8, int(thumb.y()) + 8, ip)
+
+        if index.data(ROLE_USED):
+            d = 22
+            circle = QRectF(thumb.right() - d - 7, thumb.y() + 7, d, d)
+            painter.setPen(QPen(QColor("#FFFFFF"), 1.5))
+            painter.setBrush(QColor(p.forest))
+            painter.drawEllipse(circle)
+            ip = icon_pixmap("check", "#FFFFFF", 14)
+            painter.drawPixmap(int(circle.center().x() - 7), int(circle.center().y() - 7), ip)
+            painter.setPen(Qt.PenStyle.NoPen)
 
         badge = index.data(ROLE_BADGE)
         if badge:

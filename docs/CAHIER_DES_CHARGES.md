@@ -78,7 +78,7 @@ La colonne « Écran » renvoie aux maquettes du §6.
 | F-MED-03 | Panneau « Médias du projet » : vignettes, durée, nombre d'éléments, filtres Tout / Vidéos / Images / Sons. Aperçu au survol. | P1 | 02 |
 | F-MED-04 | **Médiathèque** globale : médias déjà utilisés dans les projets, réutilisables (index local, aucun fichier copié). | P2 | 01 |
 | F-MED-05 | Génération de **proxys** (copies basse résolution) pour les fichiers lourds (4K), en tâche de fond. | P2 | — |
-| F-MED-06 | « Enregistrer l'écran » (écran + webcam) et voix off (micro), en local. | P3 (écran) / P2 (voix off, cf. F-AUD-04) | 01, 02 |
+| F-MED-06 | « Enregistrer l'écran » (écran + webcam) et voix off (micro), en local. | P1 (écran, avancé en J5) / P2 (voix off, cf. F-AUD-04) | 01, 02 |
 
 ### 3.3 Timeline (ligne de temps)
 | ID | Exigence | Prio | Écran |
@@ -492,6 +492,11 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
 - aperçu : volume, **plein écran**, raccourcis J / K / L, bouton « Ajuster » (F-PRV-02, F-PRV-03) ;
 - préférences : sauvegarde automatique réglable (F-UX-04), **Stockage & cache** avec « Vider le cache » (F-UX-08), interface en **anglais** (F-UX-02) ;
 - modules : types effet audio, transition, générateur, format d'export (F-MOD-03).
+- ajouts demandés (octobre 2026) :
+  - **édition d'un média avant le montage** (F-MED-07) : aperçu partagé avant / après ; rogner début / fin, recadrer, pivoter, retourner, couleur et filtres, vitesse et son (Timelapse compris) ; à la validation, **remplacer** le média d'origine ou **créer une copie** ;
+  - **filtre des médias du projet** (F-MED-08) : recherche par nom, filtre « dans le montage / pas encore utilisé », pastille ✓ sur les médias déjà dans la timeline ;
+  - **avancement bien visible** (F-UX-11) des calculs longs (module comme le Timelapse, export) : fenêtre d'avancement au centre de l'écran, qui empêche de modifier le projet pendant le calcul, avec annulation ;
+  - **enregistreur d'écran** simplifié (F-MED-06, avancé en J5) : écran entier ou fenêtre, son du micro et du système, webcam en incrustation ; l'enregistrement est importé dans le projet.
 
 ---
 

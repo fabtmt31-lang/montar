@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QButtonGroup,
     QFrame,
     QHBoxLayout,
+    QLineEdit,
     QListWidgetItem,
     QMenu,
     QPushButton,
@@ -23,14 +24,16 @@ from montar.ui.thumbgrid import (
     ROLE_ICON,
     ROLE_PAYLOAD,
     ROLE_PLACEHOLDER,
+    ROLE_USED,
     ROLE_WARNING,
     ThumbGrid,
 )
-from montar.ui.widgets import button, label
+from montar.ui.widgets import Segmented, button, label
 
 MEDIA_MIME = "application/x-montar-media"  # identifiant du média glissé vers la timeline
 
 _FILTERS = (("all", "Tout"), ("video", "Vidéos"), ("image", "Images"), ("audio", "Sons"))
+_USAGE = (("all", "Tous"), ("used", "Utilisés"), ("unused", "Non utilisés"))
 _PLACEHOLDER = {"video": "mint", "image": "voiceover", "audio": "pistachio"}
 _ICON = {"video": "film", "image": "image", "audio": "music"}
 
@@ -94,6 +97,16 @@ class MediaPanel(QFrame):
         chips.addStretch()
         layout.addLayout(chips)
 
+        self.search = QLineEdit()
+        self.search.setPlaceholderText(_("Rechercher par nom"))
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(lambda _t: self._apply_filters())
+        layout.addWidget(self.search)
+        self.usage = Segmented([(k, _(t)) for k, t in _USAGE], "all", compact=True)
+        self.usage.setToolTip(_("Utilisés : médias déjà dans le montage (pastille ✓)"))
+        self.usage.changed.connect(lambda _k: self._apply_filters())
+        layout.addWidget(self.usage)
+
         self.grid = _MediaGrid(min_width=110, aspect=16 / 11, title_px=13, radius=10,
                                with_subtitle=False)
         self.grid.setDragEnabled(True)
@@ -114,6 +127,7 @@ class MediaPanel(QFrame):
         layout.addWidget(self.empty_hint)
         self._filter = "all"
         self._items: dict[str, QListWidgetItem] = {}
+        self._used: set[str] = set()
 
     def set_media(self, media: list[MediaItem], thumbnails: dict[str, str]) -> None:
         self.grid.clear()
@@ -136,10 +150,33 @@ class MediaPanel(QFrame):
             item.setToolTip(media.path)
         if thumbnail:
             item.setData(Qt.ItemDataRole.DecorationRole, QPixmap(thumbnail))
+        item.setData(ROLE_USED, media.id in self._used)
         self.grid.addItem(item)
         self._items[media.id] = item
-        item.setHidden(self._filter not in ("all", media.kind))
+        item.setHidden(not self._matches(media))
         self._update_count()
+
+    def set_used(self, media_ids: set[str]) -> None:
+        """Médias présents dans la timeline : pastille ✓ et filtre « Dans le montage »."""
+        self._used = set(media_ids)
+        for media_id, item in self._items.items():
+            item.setData(ROLE_USED, media_id in self._used)
+        self._apply_filters()
+
+    def _matches(self, media: MediaItem) -> bool:
+        if self._filter not in ("all", media.kind):
+            return False
+        usage = self.usage.current()
+        if usage == "used" and media.id not in self._used:
+            return False
+        if usage == "unused" and media.id in self._used:
+            return False
+        text = self.search.text().strip().casefold()
+        return not text or text in media.name.casefold()
+
+    def _apply_filters(self) -> None:
+        for item in self._items.values():
+            item.setHidden(not self._matches(item.data(ROLE_PAYLOAD)))
 
     def set_thumbnail(self, media_id: str, thumbnail: str) -> None:
         item = self._items.get(media_id)
@@ -170,8 +207,7 @@ class MediaPanel(QFrame):
 
     def _set_filter(self, key: str) -> None:
         self._filter = key
-        for item in self._items.values():
-            item.setHidden(key not in ("all", item.data(ROLE_PAYLOAD).kind))
+        self._apply_filters()
 
     def _current_changed(self, current: QListWidgetItem | None, _prev) -> None:
         self.mediaSelected.emit(current.data(ROLE_PAYLOAD) if current else None)

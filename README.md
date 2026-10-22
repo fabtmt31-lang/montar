@@ -8,7 +8,14 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
 
 ## État d'avancement
 
-**Jalon J4 — export** (version 0.5.0) :
+**Jalon J5 — compléments v1 Linux** (en cours, version 0.5.1) :
+
+- les calculs longs (export, Timelapse) s'affichent dans une grande fenêtre d'avancement
+  au centre, qui protège le projet pendant le calcul (annulation possible) ;
+- panneau Médias : recherche par nom, filtre **Tous / Utilisés / Non utilisés**, pastille ✓
+  sur les médias déjà dans le montage.
+
+**Jalon J4 — export** (0.5.0) :
 
 - bouton **Exporter** (Ctrl+E) : MP4 / MOV (H.264, H.265), WebM (VP9), GIF animé, ou
   **audio seul** (MP3, WAV, AAC) ; résolution 480p à 4K, images par seconde, qualité
@@ -84,7 +91,7 @@ Pas encore disponible : export (J4).
 ## Installer le paquet
 
 ```sh
-sudo apt install ./montar_0.5.0_all.deb
+sudo apt install ./montar_0.5.1_all.deb
 ```
 
 Le paquet est produit par l'intégration continue (onglet *Actions* de GitHub, artefacts

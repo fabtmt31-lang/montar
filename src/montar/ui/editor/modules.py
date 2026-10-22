@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -66,7 +67,8 @@ class JobRunner(QObject):
         if key in self.jobs or key in self.failed:
             return
         cancel = threading.Event()
-        self.jobs[key] = {"title": title, "progress": 0.0, "cancel": cancel}
+        self.jobs[key] = {"title": title, "progress": 0.0, "cancel": cancel,
+                          "started": time.monotonic()}
         self._pool.start(_Job(key, work, self._signals, cancel))
         self.changed.emit()
 
@@ -102,6 +104,12 @@ class JobRunner(QObject):
         titles = {title for title, _e in self.failed.values()}
         cancelled = all(e == CANCELLED for _t, e in self.failed.values())
         return (titles.pop() if len(titles) == 1 else _("Calculs")), cancelled
+
+    def elapsed(self) -> float:
+        """Temps écoulé depuis le début du plus ancien calcul en cours."""
+        if not self.jobs:
+            return 0.0
+        return time.monotonic() - min(j["started"] for j in self.jobs.values())
 
     def summary(self) -> tuple[str, float] | None:
         if not self.jobs:
