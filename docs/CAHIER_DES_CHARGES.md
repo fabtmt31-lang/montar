@@ -463,6 +463,7 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
 | D6 | Interface | Basée sur les maquettes `docs/maquettes/Montar.html` et leur charte « verts pastel ». |
 | D7 | Anciennes versions | Ubuntu 22.04 et Linux Mint 21 (sans PyQt6 packagé) ne sont pas ciblées par le `.deb` ; un Flatpak pourra les couvrir après J4. |
 | D8 | Médias du projet | Copiés dans le dossier du projet, vidéos comprises (choix de sûreté, au prix de l'espace disque). |
+| D9 | Portage Windows | Reporté à la fin, quand la version Linux sera aboutie. |
 
 ### Points restant ouverts
 1. Moteur sous Windows (bindings MLT ou moteur alternatif) : à trancher par prototype en début de phase 2.
@@ -480,8 +481,17 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
 | **J2 — Édition de base** ✅ (0.3.0) | Inspecteur (transformation, ajustements, vitesse, couleur), filtres, texte et titres, transitions, audio | Alpha |
 | **J3 — Timelapse + API modules** ✅ (0.4.0) | Chargeur de modules, API v1 documentée, module Timelapse, Préférences → Extensions | Bêta |
 | **J4 — Export & packaging Linux** ✅ (0.5.0) | Dialogue d'export, file d'export, accélération matérielle, préférences complètes, `.deb` validé sur Debian / Ubuntu / Mint | **v1.0 Linux** |
-| **J5 — Portage Windows** | Prototype moteur, exécutable, installeur | **v1.0 Windows** |
-| **J6+** | Fonctions P3, kit de marque, sous-titres automatiques, catalogue de modules, autres distributions | v1.x |
+| **J5 — Compléments v1 Linux** | Exigences P1 restantes (liste ci-dessous) | **v1.0 Linux** |
+| **J6+** | Fonctions P2 / P3, kit de marque, sous-titres automatiques, catalogue de modules, autres distributions | v1.x |
+| **Portage Windows** (en dernier) | Prototype moteur, exécutable, installeur — une fois la version Linux aboutie (décision D9) | **v1.x Windows** |
+
+**Reste à faire pour la v1.0 Linux (J5)**, d'après les exigences P1 :
+- projets : « Enregistrer sous » / dupliquer un projet (F-PRJ-01) ; récupération après plantage (F-PRJ-03) ; pages **Médiathèque** et **Corbeille** (F-PRJ-06) ; **reliaison** des médias manquants (F-PRJ-10) ;
+- médias : aperçu au survol dans le panneau Médias (F-MED-03) ;
+- timeline : **marqueurs** et **enregistrement de voix off** (F-TL-03) ;
+- aperçu : volume, **plein écran**, raccourcis J / K / L, bouton « Ajuster » (F-PRV-02, F-PRV-03) ;
+- préférences : sauvegarde automatique réglable (F-UX-04), **Stockage & cache** avec « Vider le cache » (F-UX-08), interface en **anglais** (F-UX-02) ;
+- modules : types effet audio, transition, générateur, format d'export (F-MOD-03).
 
 ---
 
