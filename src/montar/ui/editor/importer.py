@@ -110,13 +110,16 @@ class MediaImporter(QObject):
         self._signals.done.connect(self.finished)
         self._signals.progress.connect(self.copyProgress)
         self._gather_signals = _Signals(self)
-        self._gather_signals.done.connect(
-            lambda media_id, copy, _t, error: self.gathered.emit(media_id, copy, error))
+        # méthode liée (et non lambda) : Qt la déconnecte si l'importateur est détruit
+        self._gather_signals.done.connect(self._gathered_done)
         self._gather_signals.progress.connect(self.copyProgress)
         self._thumb_signals = _Signals(self)
         self._thumb_signals.done.connect(self._thumbnail_done)
         self._wave_signals = _Signals(self)
         self._wave_signals.done.connect(self._waveform_done)
+
+    def _gathered_done(self, media_id: str, copy, _thumb, error: str) -> None:
+        self.gathered.emit(media_id, copy, error)
 
     def _thumbnail_done(self, path: str, _item, thumb, _error: str) -> None:
         self.thumbnailReady.emit(path, thumb)
