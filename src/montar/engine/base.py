@@ -130,10 +130,13 @@ def timeline_spec(project: Project, text_image: TextImage | None = None,
                   hook: ClipHook | None = None,
                   size: tuple[int, int] | None = None,
                   transition_hook: TransitionHook | None = None,
-                  text_sequence: TextSequence | None = None) -> TimelineSpec:
+                  text_sequence: TextSequence | None = None,
+                  subtitles: bool | None = None) -> TimelineSpec:
     """Description de la timeline pour le moteur. Sans `text_image`, les textes sont ignorés.
     `size` remplace la taille de la toile (export à une autre résolution). Une transition
-    d'un module absent devient un fondu enchaîné."""
+    d'un module absent devient un fondu enchaîné. Les sous-titres sont incrustés sur une
+    piste au-dessus de toutes les autres ; `subtitles` (par défaut : affichés dans le projet)
+    les inclut ou non."""
     w, h = size or project.canvas_size
     media = {m.id: m for m in project.media}
     by_kind = {k: [t for t in project.tracks if t.kind == k] for k in ("video", "text", "audio")}
@@ -169,6 +172,29 @@ def timeline_spec(project: Project, text_image: TextImage | None = None,
         tracks.append(TrackSpec("audio" if track.kind == "audio" else "video", track.muted,
                                 track.hidden, tuple(clips), track.volume,
                                 tuple(sorted(transitions, key=lambda t: t.left))))
+    if subtitles is None:
+        subtitles = project.subtitles_shown
+    if subtitles and text_image is not None and project.subtitles:
+        from montar.core.subtitles import ordered, text_clip
+
+        clips = []
+        for sub in ordered(project):
+            if sub.text.strip() and sub.end > sub.start:
+                c = text_clip(sub, project.subtitle_style)
+                clips.append(_clip_spec(c, text_image(c, w, h), "text", (w, h)))
+        # un sous-titre qui chevauche le précédent attend sa fin ; aucun ne rallonge la vidéo
+        last = max((c.start + c.duration for t in tracks for c in t.clips), default=0)
+        cleaned, end = [], 0
+        for spec in clips:
+            stop = min(spec.start + spec.duration, last)
+            if spec.start < end:
+                spec = dataclasses.replace(spec, start=end)
+            spec = dataclasses.replace(spec, duration=stop - spec.start)
+            if spec.duration > 0:
+                cleaned.append(spec)
+                end = spec.start + spec.duration
+        tracks.insert(len([t for t in tracks if t.kind == "video"]),
+                      TrackSpec("video", False, False, tuple(cleaned)))
     return TimelineSpec(Canvas(w, h, project.fps), tuple(tracks))
 
 

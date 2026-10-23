@@ -81,6 +81,16 @@ class Marker:
 
 
 @dataclass
+class Subtitle:
+    """Sous-titre (F-TXT-05) : texte affiché de `start` à `end` (exclu), en images."""
+
+    start: int
+    end: int
+    text: str = ""
+    id: str = field(default_factory=new_id)
+
+
+@dataclass
 class Transform:
     """Taille, position et orientation d'un clip dans la toile."""
 
@@ -207,6 +217,12 @@ class Transition:
 _NESTED = {"transform": Transform, "color": ColorAdjust, "effects": Effects, "text": TextStyle}
 
 
+def default_subtitle_style() -> TextStyle:
+    """Blanc sur bandeau sombre, en bas de l'image."""
+    return TextStyle("", "subtitle", "Manrope", 44, 600, color="#FFFFFF",
+                     background="#D917261E", y=0.88)
+
+
 def _build(cls, data: dict[str, Any]):
     """Instancie une dataclass en ignorant les champs inconnus (fichiers plus récents)."""
     known = {f.name for f in fields(cls)}
@@ -232,6 +248,9 @@ class Project:
     clips: list[Clip] = field(default_factory=list)
     transitions: list[Transition] = field(default_factory=list)
     markers: list[Marker] = field(default_factory=list)
+    subtitles: list[Subtitle] = field(default_factory=list)
+    subtitle_style: TextStyle = field(default_factory=lambda: default_subtitle_style())
+    subtitles_shown: bool = True  # affichés dans l'aperçu
     path: Path | None = None  # emplacement du fichier .montar, non sérialisé
 
     def __post_init__(self) -> None:
@@ -280,6 +299,9 @@ class Project:
             "clips": [asdict(c) for c in self.clips],
             "transitions": [asdict(t) for t in self.transitions],
             "markers": [asdict(m) for m in self.markers],
+            "subtitles": [asdict(s) for s in self.subtitles],
+            "subtitle_style": asdict(self.subtitle_style),
+            "subtitles_shown": self.subtitles_shown,
         }
 
     @classmethod
@@ -301,6 +323,9 @@ class Project:
             clips = [_build(Clip, c) for c in data.get("clips", [])]
             transitions = [_build(Transition, t) for t in data.get("transitions", [])]
             markers = [_build(Marker, m) for m in data.get("markers", [])]
+            subtitles = [_build(Subtitle, s) for s in data.get("subtitles", [])]
+            subtitle_style = _build(TextStyle, data["subtitle_style"]) \
+                if isinstance(data.get("subtitle_style"), dict) else default_subtitle_style()
         except (TypeError, AttributeError) as exc:
             raise ProjectError(f"projet invalide : {exc}") from exc
         try:
@@ -314,6 +339,9 @@ class Project:
                 clips=clips,
                 transitions=transitions,
                 markers=markers,
+                subtitles=subtitles,
+                subtitle_style=subtitle_style,
+                subtitles_shown=bool(data.get("subtitles_shown", True)),
                 path=path,
             )
         except (KeyError, ValueError, TypeError) as exc:

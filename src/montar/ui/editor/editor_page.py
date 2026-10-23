@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from montar.core import keyframes
+from montar.core import keyframes, subtitles
 from montar.core.project import EXPORT_DIR, MediaItem, Project, ProjectError, new_id
 from montar.core.project_files import backup
 from montar.core.timecode import frames_to_timecode
@@ -72,6 +72,7 @@ from montar.ui.editor.modules_panel import ModuleEntry, ModulesPanel
 from montar.ui.editor.panels import EffectsPanel, FiltersPanel, TextPanel, TransitionsPanel
 from montar.ui.editor.player import Player
 from montar.ui.editor.preview import PreviewPanel
+from montar.ui.editor.subtitles_panel import SubtitlesPanel
 from montar.ui.graphics import graphic_size, render_graphic
 from montar.ui.home.library import LibraryDialog
 from montar.ui.text_render import image_path as text_image_path
@@ -81,7 +82,6 @@ from montar.ui.widgets import LogoMark, button, label, set_icon
 
 log = logging.getLogger(__name__)
 
-SOON = "Disponible dans une prochaine version"
 
 _RAIL = (
     ("media", "Médias", "image"),
@@ -155,13 +155,16 @@ class EditorPage(QWidget):
         self.filters_panel = FiltersPanel(self.controller)
         self.modules_panel = ModulesPanel()
         self.graphics_panel = GraphicsPanel()
+        self.subtitles_panel = SubtitlesPanel(self.controller)
+        self.subtitles_panel.playhead = self._playhead
         self.side = QStackedWidget()
         self._side_index = {}
         for key, panel in (("media", self.media_panel), ("text", self.text_panel),
                            ("graphics", self.graphics_panel),
                            ("transitions", self.transitions_panel),
                            ("effects", self.effects_panel), ("filters", self.filters_panel),
-                           ("modules", self.modules_panel)):
+                           ("modules", self.modules_panel),
+                           ("subtitles", self.subtitles_panel)):
             self._side_index[key] = self.side.addWidget(panel)
         body.addWidget(self._build_rail())
         body.addWidget(self.side)
@@ -173,6 +176,7 @@ class EditorPage(QWidget):
         self.inspector.freezeRequested.connect(self.freeze_frame)
         self.inspector.playhead = self._playhead
         self.inspector.seekRequested.connect(self.player.seek)
+        self.subtitles_panel.seekRequested.connect(self.player.seek)
         body.addWidget(self.inspector)
         self.effects_panel.set_modules(self.modules)
         self.effects_panel.addRequested.connect(self.open_apply)
@@ -381,10 +385,7 @@ class EditorPage(QWidget):
             b.setCheckable(True)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             set_icon(b, icon, "ink", 20)
-            if key == "subtitles":
-                b.setEnabled(False)
-                b.setToolTip(_(SOON))
-            elif key == "record":
+            if key == "record":
                 b.setCheckable(False)
                 b.setToolTip(_("Enregistrer l'écran"))
                 b.clicked.connect(self.open_recorder)
@@ -1214,7 +1215,18 @@ class EditorPage(QWidget):
                                            hardware=False)
         size = None if settings.audio_only else (settings.width, settings.height)
         spec = timeline_spec(self.project, self._text_image, self.modules.hook, size,
-                             self.modules.transition_hook, self._text_sequence)
+                             self.modules.transition_hook, self._text_sequence,
+                             subtitles=settings.subtitles == "burn")
+        if settings.subtitles == "file" and self.project.subtitles:
+            try:
+                srt = Path(settings.path).with_suffix(".srt")
+                srt.parent.mkdir(parents=True, exist_ok=True)
+                srt.write_text(subtitles.to_srt(self.project.subtitles, self.project.fps,
+                                                settings.range_start, settings.range_end),
+                               encoding="utf-8")
+            except OSError as exc:
+                QMessageBox.warning(self, _("Export impossible"), str(exc))
+                return
         if settings.fps != self.project.fps and (settings.range_start or settings.range_end):
             k = settings.fps / self.project.fps  # la partie suit la nouvelle fréquence
             settings = dataclasses.replace(settings, range_start=round(settings.range_start * k),
@@ -1235,7 +1247,7 @@ class EditorPage(QWidget):
 
         spec = timeline_spec(self.project, self._text_image, self.modules.hook,
                              (settings.width, settings.height), self.modules.transition_hook,
-                             self._text_sequence)
+                             self._text_sequence, subtitles=settings.subtitles == "burn")
         try:
             source = self._engine_factory().build(spec)
             try:

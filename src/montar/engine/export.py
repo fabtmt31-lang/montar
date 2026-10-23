@@ -55,6 +55,8 @@ class ExportSettings:
     # partie exportée (F-EXP-09), en images du projet ; range_end = 0 : jusqu'à la fin
     range_start: int = 0
     range_end: int = 0
+    # sous-titres (F-TXT-05) : burn = incrustés, file = fichier .srt à côté, none = aucun
+    subtitles: str = "burn"
 
     @property
     def audio_only(self) -> bool:

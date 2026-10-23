@@ -224,6 +224,17 @@ class ExportDialog(QDialog):
         self.resolutions.group.buttonClicked.connect(self._update)
         vl.addWidget(self.resolutions)
         ml.addWidget(self.video_box)
+        self.subtitles_box = QWidget()
+        sbl = QVBoxLayout(self.subtitles_box)
+        sbl.setContentsMargins(0, 8, 0, 0)
+        sbl.setSpacing(8)
+        sbl.addWidget(label(_("Sous-titres")))
+        self.subtitles = _Chips([("burn", _("Incrustés dans l'image")),
+                                 ("file", _("Fichier .srt séparé")), ("none", _("Aucun"))],
+                                "burn" if project.subtitles_shown else "none")
+        sbl.addWidget(self.subtitles)
+        self.subtitles_box.setVisible(bool(project.subtitles))
+        ml.addWidget(self.subtitles_box)
         ml.addSpacing(8)
 
         head = QHBoxLayout()
@@ -314,6 +325,7 @@ class ExportDialog(QDialog):
         fmt = self._format()
         video = not self.audio_only and not self.still_image
         self.video_box.setVisible(not self.audio_only)
+        self.subtitles_box.setVisible(video and bool(self.project.subtitles))
         self.codec_box.setVisible(video)
         self.hardware.setVisible(video and fmt in ("mp4", "mov"))
         for w in (self.quality, self.recommended):
@@ -372,15 +384,18 @@ class ExportDialog(QDialog):
         if self.audio_only:
             return ExportSettings(str(self.target()), fmt, "", 0, 0, self.project.fps, quality,
                                   custom_audio_only=fmt in self.extra, range_start=start,
-                                  range_end=end)
+                                  range_end=end, subtitles="none")
         w, h = export_size(self.project.canvas_size, self.resolutions.current())
         if self.still_image:
             return ExportSettings(str(self.target()), fmt, "", w, h, self.project.fps,
-                                  range_start=self.playhead, range_end=self.playhead + 1)
+                                  range_start=self.playhead, range_end=self.playhead + 1,
+                                  subtitles="burn" if self.project.subtitles_shown else "none")
         return ExportSettings(str(self.target()), fmt, self.codec.currentData() or "h264",
                               w, h, self.fps.currentData(), quality,
                               self.hardware.isVisible() and self.hardware.isChecked(),
-                              range_start=start, range_end=end)
+                              range_start=start, range_end=end,
+                              subtitles=self.subtitles.current() if self.project.subtitles
+                              else "none")
 
     def _update(self, *_args) -> None:
         s = self.settings()

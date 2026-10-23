@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Tests de l'interface (plateforme Qt « offscreen »)."""
+import dataclasses
 import time
 from pathlib import Path
 
@@ -1537,3 +1538,75 @@ def test_keyframes_from_inspector(window, media_dir):
     assert keyframes.key_frames(editor.project.clips[0]) == [0]
     editor.controller.undo()
     assert keyframes.key_frames(editor.project.clips[0]) == [0, 40]
+
+
+# --- P2-6 -------------------------------------------------------------------------------------
+
+
+@needs_ffmpeg
+def test_subtitles_panel_and_export(window, media_dir, tmp_path, monkeypatch):
+    from PyQt6.QtGui import QImage
+
+    from montar.engine.export import ExportSettings
+    from montar.ui.dialogs.export import ExportDialog
+    from montar.ui.editor.subtitles_panel import SubtitlesPanel
+
+    editor = imported_editor(window, media_dir, ["redblue.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    editor._notify_export = False
+    panel = editor.subtitles_panel
+    assert editor.rail_buttons["subtitles"].isEnabled()
+    editor.show_side("subtitles")
+    assert panel.empty.isVisibleTo(panel) and not panel.editor.isEnabled()
+
+    editor.timeline.set_playhead(10)
+    panel.add_button.click()
+    sub = editor.project.subtitles[0]
+    assert (sub.start, sub.end) == (10, 10 + 3 * editor.project.fps)
+    panel.editor.setPlainText("Bonjour")
+    panel.editor.setPlainText("Bonjour à tous")
+    assert editor.project.subtitles[0].text == "Bonjour à tous"
+    assert editor.controller.history.undo_label() == "Texte du sous-titre"
+    editor.timeline.set_playhead(40)
+    panel.end_button.click()
+    assert editor.project.subtitles[0].end == 40
+    assert panel.list.count() == 1 and "Bonjour" in panel.list.item(0).text()
+
+    # export SRT puis réimport (ajout)
+    path = tmp_path / "s.srt"
+    assert panel.export_file(path)
+    assert "Bonjour à tous" in path.read_text(encoding="utf-8")
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.No)
+    assert panel.import_file(path)
+    assert len(editor.project.subtitles) == 2
+
+    # incrustés : le bandeau sombre apparaît en bas de l'image exportée
+    def frame(mode):
+        s = ExportSettings(str(tmp_path / f"{mode}.png"), "png", "", 320, 180, 25,
+                           range_start=20, range_end=21, subtitles=mode)
+        assert editor.export_frame(s)
+        image = QImage(s.path)
+        return image.pixelColor(160, int(180 * 0.88)).name()
+    burnt, plain = frame("burn"), frame("none")
+    assert burnt != plain
+
+    # dialogue d'export : choix proposé seulement s'il y a des sous-titres
+    dialog = ExportDialog(editor.project, 50, None, tmp_path, parent=editor)
+    assert dialog.subtitles_box.isVisibleTo(dialog)
+    dialog.subtitles.buttons["file"].click()
+    assert dialog.settings().subtitles == "file"
+    dialog.close()
+    video = dataclasses.replace(dialog.settings(), path=str(tmp_path / "v.mp4"))
+    editor.start_export(video)
+    editor._export_job.cancel()
+    editor._export_job.wait(10)
+    assert "Bonjour" in (tmp_path / "v.srt").read_text(encoding="utf-8")
+
+    panel.list.setCurrentRow(0)
+    panel.delete_button.click()
+    assert len(editor.project.subtitles) == 1
+    panel.size.moved.emit(60)
+    panel.position.changed.emit("top")
+    assert editor.project.subtitle_style.size == 60 and editor.project.subtitle_style.y < 0.5
+    assert isinstance(panel, SubtitlesPanel)
