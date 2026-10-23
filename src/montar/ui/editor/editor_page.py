@@ -61,6 +61,7 @@ from montar.ui.dialogs.voice_over import VoiceOverDialog
 from montar.ui.editor.apply import ApplyAction, actions_for, apply_change
 from montar.ui.editor.busy import BusyOverlay, remaining_text
 from montar.ui.editor.controller import EditorController
+from montar.ui.editor.graphics_panel import GraphicsPanel
 from montar.ui.editor.importer import MediaImporter
 from montar.ui.editor.inspector import Inspector
 from montar.ui.editor.media_panel import MediaPanel
@@ -69,6 +70,7 @@ from montar.ui.editor.modules_panel import ModuleEntry, ModulesPanel
 from montar.ui.editor.panels import EffectsPanel, FiltersPanel, TextPanel, TransitionsPanel
 from montar.ui.editor.player import Player
 from montar.ui.editor.preview import PreviewPanel
+from montar.ui.graphics import graphic_size, render_graphic
 from montar.ui.home.library import LibraryDialog
 from montar.ui.text_render import image_path as text_image_path
 from montar.ui.text_render import preset_style, text_bounds
@@ -83,6 +85,7 @@ _RAIL = (
     ("media", "Médias", "image"),
     ("audio", "Audio", "music"),
     ("text", "Texte", "type"),
+    ("graphics", "Graphiques", "shapes"),
     ("transitions", "Transitions", "columns-2"),
     ("effects", "Effets", "sparkles"),
     ("filters", "Filtres", "blend"),
@@ -147,9 +150,11 @@ class EditorPage(QWidget):
         self.effects_panel = EffectsPanel(self.controller)
         self.filters_panel = FiltersPanel(self.controller)
         self.modules_panel = ModulesPanel()
+        self.graphics_panel = GraphicsPanel()
         self.side = QStackedWidget()
         self._side_index = {}
         for key, panel in (("media", self.media_panel), ("text", self.text_panel),
+                           ("graphics", self.graphics_panel),
                            ("transitions", self.transitions_panel),
                            ("effects", self.effects_panel), ("filters", self.filters_panel),
                            ("modules", self.modules_panel)):
@@ -167,6 +172,8 @@ class EditorPage(QWidget):
         self.modules_panel.set_manager(self.module_manager)
         self.modules_panel.activated.connect(self.use_module_entry)
         self.modules_panel.manageRequested.connect(self.manage_modules)
+        self.graphics_panel.set_graphics(self.module_manager.graphics())
+        self.graphics_panel.graphicRequested.connect(self.insert_graphic)
         self.transitions_panel.set_module_transitions(self.module_manager.transitions())
 
         self.timeline = TimelinePanel(self.controller, self.thumbnails.get, self.waveforms.get)
@@ -242,6 +249,7 @@ class EditorPage(QWidget):
         self.backup_every = 120.0  # secondes entre deux copies de sauvegarde
         self._dirty = False
         self._voice_pending: dict[str, tuple[int, int]] = {}  # fichier → (début, rognage)
+        self._overlay_pending: dict[str, tuple[int, bool]] = {}  # fichier → (début, dessous)
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
         self._save_timer.setInterval(800)
@@ -349,7 +357,7 @@ class EditorPage(QWidget):
     def _build_rail(self) -> QWidget:
         rail = QFrame()
         rail.setObjectName("Rail")
-        rail.setFixedWidth(76)
+        rail.setFixedWidth(84)
         layout = QVBoxLayout(rail)
         layout.setContentsMargins(6, 12, 6, 12)
         layout.setSpacing(4)
@@ -963,6 +971,53 @@ class EditorPage(QWidget):
         layout.addWidget(close, 0, Qt.AlignmentFlag.AlignRight)
         dialog.exec()
 
+    # --- graphismes ------------------------------------------------------------------------
+
+    def insert_graphic(self, module_id: str, graphic) -> Path | None:
+        """Panneau Graphiques : l'élément (image PNG à la taille du projet, dans medias/) est
+        placé à la tête de lecture, au-dessus de la vidéo ou, pour un arrière-plan, dessous."""
+        if self.project.media_dir is None:
+            return None
+        w, h = graphic_size(graphic, self.project.canvas_size)
+        name = graphic.id.replace("/", "_").replace(".", "-")
+        target = self.project.media_dir / f"{_('Graphique')} {name} {w}x{h}.png"
+        start = self.timeline.view.playhead
+        below = graphic.category == "arriere-plans"
+        existing = next((m for m in self.project.media if Path(m.path) == target), None)
+        if existing is not None:
+            self._place_overlay(existing, None, start, below, add_media=False)
+            return target
+        try:
+            if not target.exists():
+                render_graphic(graphic, (w, h), target)
+        except OSError as exc:
+            QMessageBox.warning(self, _("Graphiques"), str(exc))
+            return None
+        self._overlay_pending[str(target)] = (start, below)
+        self.import_files([str(target)])
+        return target
+
+    def _place_overlay(self, item: MediaItem, thumb: str | None, start: int, below: bool,
+                       add_media: bool = True) -> None:
+        if add_media:
+            if thumb:
+                self.thumbnails[item.path] = thumb
+
+        def add(t):
+            if add_media:
+                t.project.media.append(item)
+            clip = t.add_overlay(item, start, below)
+            # une image est ajustée à la toile : l'élément garde sa taille prévue
+            cw, ch = self.project.canvas_size
+            if item.width and item.height:
+                clip.transform.scale = round(min(1.0, 1 / min(cw / item.width,
+                                                              ch / item.height)), 4)
+            return clip
+
+        clip = self.controller.edit(_("Ajouter un graphisme"), add)
+        if clip is not None:
+            self.controller.select(clip.id)
+
     # --- générateurs des modules ---------------------------------------------------------
 
     def open_generator(self) -> None:
@@ -1146,6 +1201,7 @@ class EditorPage(QWidget):
         self.effects_panel.rebuild_modules()
         self.transitions_panel.set_module_transitions(self.module_manager.transitions())
         self.modules_panel.set_manager(self.module_manager)
+        self.graphics_panel.set_graphics(self.module_manager.graphics())
         self._on_clip_selected(self.controller.selected)
 
     def _on_frame(self, _image, frame: int) -> None:
@@ -1288,6 +1344,8 @@ class EditorPage(QWidget):
             item, thumb, error = self._import_results.pop(queued)
             if item is None:
                 errors.append(f"{Path(queued).name} : {error}")
+            elif queued in self._overlay_pending:
+                self._place_overlay(item, thumb, *self._overlay_pending.pop(queued))
             elif queued in self._voice_pending:
                 self._add_voice_over(item, thumb, *self._voice_pending.pop(queued))
             elif not self.project.has_media_path(item.path):

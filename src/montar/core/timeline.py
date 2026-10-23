@@ -423,6 +423,24 @@ class Timeline:
             return next((m for m in markers if m.frame > frame), None)
         return next((m for m in reversed(markers) if m.frame < frame), None)
 
+    # --- graphismes ---------------------------------------------------------------------
+
+    def add_overlay(self, media: MediaItem, start: int, below: bool = False) -> Clip:
+        """Place une image à `start` exactement, sur une piste vidéo libre à cet endroit :
+        au-dessus de la piste principale (élément, cadre…) ou, avec `below`, en dessous de
+        toutes (arrière-plan). Une piste est ajoutée au besoin."""
+        duration = max(1, self.default_duration(media))
+        video = [t for t in self.project.tracks if t.kind == "video"]  # de haut en bas
+        candidates = video[-1:] if below else video[:-1]
+        track = next((t for t in candidates
+                      if self.free_start(t.id, start, duration) == start), None)
+        if track is None:
+            low, high = self.track_block("video")
+            track = self.insert_track("video", high if below else low)
+        clip = Clip(media.id, track.id, max(0, start), duration)
+        self.project.clips.append(clip)
+        return clip
+
     # --- voix off ----------------------------------------------------------------------
 
     def add_voice_over(self, media: MediaItem, start: int, trim: int = 0) -> Clip:

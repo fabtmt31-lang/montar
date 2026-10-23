@@ -1283,3 +1283,34 @@ def test_modules_panel(window, media_dir):
     editor.controller.undo()  # l'historique remplace les objets : relire le clip
     assert "effets.vhs" not in editor.project.clips[0].modules
     assert not effects._module_controls
+
+
+def test_graphics_panel(window):
+    from PyQt6.QtGui import QImage
+
+    editor = window.create_project(NewProjectParams("Graphiques", "16:9", "720p", 25))
+    panel = editor.graphics_panel
+    graphics = {g.id: g for _t, g in panel.tiles()}
+    assert len(graphics) >= 35 and "graphismes.wow" in graphics
+    panel.search.setText("cœur")
+    assert {g.id for _t, g in panel.tiles()} == {"graphismes.coeur", "graphismes.coeur_arc"}
+    panel.search.clear()
+
+    path = editor.insert_graphic("graphismes", graphics["graphismes.wow"])
+    assert wait_until(lambda: len(editor.project.clips) == 1)
+    im = QImage(str(path))
+    assert im.hasAlphaChannel() and im.width() == round(720 * 0.45)
+    assert im.pixelColor(0, 0).alpha() == 0  # fond transparent
+    clip = editor.project.clips[0]
+    assert clip.transform.scale < 1  # taille prévue, pas ajustée à la toile
+    # même élément une seconde fois : le média est réutilisé, une autre piste au besoin
+    editor.insert_graphic("graphismes", graphics["graphismes.wow"])
+    assert len(editor.project.media) == 1 and len(editor.project.clips) == 2
+    # arrière-plan plein cadre, sous les autres pistes
+    editor.insert_graphic("graphismes", graphics["graphismes.coucher"])
+    assert wait_until(lambda: len(editor.project.clips) == 3)
+    background = editor.project.clips[-1]
+    video = [t for t in editor.project.tracks if t.kind == "video"]
+    assert background.track_id == video[-1].id
+    im = QImage(editor.project.find_media(background.media_id).path)
+    assert (im.width(), im.height()) == (1280, 720)

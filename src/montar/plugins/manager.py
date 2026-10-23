@@ -21,6 +21,7 @@ from montar.api import (
     ClipSource,
     ExportFormat,
     Generator,
+    Graphic,
     ModuleAPI,
     Tool,
     Transition,
@@ -223,6 +224,9 @@ class ModuleManager:
 
     def generators(self) -> list[tuple[str, Generator]]:
         return [(m.id, g) for m in self.active() for g in m.loaded.generators]
+
+    def graphics(self) -> list[tuple[str, Graphic]]:
+        return [(m.id, g) for m in self.active() for g in m.loaded.graphics]
 
     def export_formats(self) -> list[tuple[str, ExportFormat]]:
         return [(m.id, f) for m in self.active() for f in m.loaded.export_formats]

@@ -1,0 +1,10 @@
+{
+  "id": "graphismes",
+  "name": "Graphismes",
+  "version": "1.0.0",
+  "api_version": "1.3",
+  "author": "montar",
+  "license": "GPL-3.0-or-later",
+  "description": "Éléments du panneau Graphiques : annotations, figures, formes, arrière-plans, superpositions, cadres et stickers (dessins SVG libres).",
+  "permissions": []
+}

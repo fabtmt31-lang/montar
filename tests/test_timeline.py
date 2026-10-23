@@ -411,3 +411,20 @@ def test_voice_over_placement(tl):
     # plus loin : la première piste est libre
     third = tl.add_voice_over(voice, 200)
     assert third.track_id == first.track_id and third.start == 200
+
+
+def test_overlay_placement(tl):
+    image = media(tl, "image")
+    main = next(t for t in tl.project.tracks if t.kind == "video")
+    tl.add_clip(media(tl, "video"), main.id, 0)
+    first = tl.add_overlay(image, 10)
+    tracks = [t for t in tl.project.tracks if t.kind == "video"]
+    assert first.start == 10 and first.track_id == tracks[0].id != main.id  # au-dessus
+    second = tl.add_overlay(image, 20)  # piste occupée : une autre au-dessus
+    assert len([t for t in tl.project.tracks if t.kind == "video"]) == 3
+    assert second.track_id != first.track_id
+    third = tl.add_overlay(image, 500)  # plus loin : la première piste du dessus est libre
+    assert third.track_id == [t for t in tl.project.tracks if t.kind == "video"][0].id
+    background = tl.add_overlay(image, 0, below=True)  # sous la vidéo principale
+    video = [t for t in tl.project.tracks if t.kind == "video"]
+    assert background.track_id == video[-1].id and video[-2].id == main.id

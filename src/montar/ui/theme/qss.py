@@ -78,7 +78,7 @@ QPushButton[variant="nav"]:checked {{ background: {mist}; font-weight: 700; }}
 /* rail vertical de l'éditeur */
 QToolButton[variant="rail"] {{ background: transparent; border: none; border-radius: 12px;
                                padding: 6px 2px; font-size: 12px; font-weight: 500;
-                               min-width: 64px; }}
+                               min-width: 72px; }}
 QToolButton[variant="rail"]:hover {{ background: {mist}; }}
 QToolButton[variant="rail"]:checked {{ background: {mist}; color: {forest}; font-weight: 700; }}
 

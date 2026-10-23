@@ -10,6 +10,7 @@ Points d'extension :
 - `Transition` : transition vidéo entre deux clips (transition MLT) (1.2) ;
 - `Generator` : crée un média (fond, motif…) ajouté au projet (1.2) ;
 - `ExportFormat` : format de fichier supplémentaire à l'export (1.2) ;
+- `Graphic` : élément du panneau Graphiques (forme, sticker, cadre…), fichier SVG ou PNG (1.3) ;
 - `Tool` : action sur un clip (menu contextuel, inspecteur) ;
 - `ClipSource` : remplace la source d'un clip au rendu (ex. timelapse pré-calculé).
 
@@ -135,6 +136,26 @@ class ExportFormat:
         return {}
 
 
+# rubriques du panneau Graphiques (une autre valeur crée une rubrique à ce nom)
+GRAPHIC_CATEGORIES = ("annotations", "figures", "formes", "arriere-plans", "superpositions",
+                      "cadres", "stickers")
+
+
+@dataclass(frozen=True)
+class Graphic:
+    """Élément du panneau Graphiques (1.3). `path` : fichier SVG ou PNG (relatif au dossier
+    du module). `fill` : l'élément couvre toute la toile (fond, cadre, superposition) ;
+    sinon il est placé au centre, au tiers de la largeur. Les arrière-plans se placent sous
+    les vidéos, les autres éléments au-dessus."""
+
+    id: str
+    name: str
+    category: str
+    path: Path | str
+    fill: bool = False
+    description: str = ""
+
+
 @dataclass(frozen=True)
 class SourceOverride:
     """Source de remplacement d'un clip au rendu (chemin, image d'entrée, vitesse)."""
@@ -218,6 +239,7 @@ class ModuleAPI:
     transitions: list[Transition] = field(default_factory=list)
     generators: list[Generator] = field(default_factory=list)
     export_formats: list[ExportFormat] = field(default_factory=list)
+    graphics: list[Graphic] = field(default_factory=list)
 
     def add_video_effect(self, effect: VideoEffect | type[VideoEffect]) -> None:
         self.effects.append(effect() if isinstance(effect, type) else effect)
@@ -239,3 +261,10 @@ class ModuleAPI:
 
     def add_export_format(self, fmt: ExportFormat | type[ExportFormat]) -> None:
         self.export_formats.append(fmt() if isinstance(fmt, type) else fmt)
+
+    def add_graphic(self, graphic: Graphic) -> None:
+        path = Path(graphic.path)
+        if not path.is_absolute():
+            path = self.module_dir / path
+        self.graphics.append(Graphic(graphic.id, graphic.name, graphic.category, path,
+                                     graphic.fill, graphic.description))

@@ -24,7 +24,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 montar = ["assets/fonts/*", "assets/icons/*", "locale/*.json", "modules/*/module.json",
-          "modules/*/locale/*.json"]
+          "modules/*/locale/*.json", "modules/*/svg/*.svg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
