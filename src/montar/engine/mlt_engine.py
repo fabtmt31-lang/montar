@@ -28,6 +28,7 @@ from montar.engine.base import (
 )
 from montar.engine.geometry import affine_rect, crop_pixels, placement
 from montar.engine.looks import color_filters, effect_filters, preset_filters
+from montar.engine.sound import audio_filters
 
 try:
     import mlt7 as mlt
@@ -507,8 +508,10 @@ class _TimelineGraph:
     def _audio_filters(self, producer, clip: ClipSpec, span: tuple[int, int]) -> None:
         if clip.kind in ("image", "text"):
             return
-        for name, props in clip.audio_filters:
+        for name, props in audio_filters(clip.audio) + list(clip.audio_filters):
             self._attach(producer, name, props)
+        if clip.duck:  # atténuation sous la voix (en plus du volume et des fondus)
+            self._attach(producer, "volume", {"level": _anim(list(clip.duck))}, span)
         if clip.volume <= 0.001:
             self._attach(producer, "volume", {"gain": 0})
             return

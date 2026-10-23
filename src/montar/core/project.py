@@ -67,6 +67,7 @@ class Track:
     hidden: bool = False  # pistes vidéo et texte : image masquée
     locked: bool = False  # clips protégés contre toute modification
     volume: float = 1.0  # gain linéaire de la piste (0 à 2)
+    voice: bool = False  # piste de voix : les sons « s'effacent sous la voix » baissent dessous
     id: str = field(default_factory=new_id)
 
 
@@ -138,6 +139,29 @@ class Effects:
 
 
 @dataclass
+class AudioAdjust:
+    """Réglages du son d'un clip (F-AUD-05 / 06 et options avancées)."""
+
+    denoise: float = 0.0  # réduction de bruit, 0 à 1
+    normalize: bool = False  # volume régulier (normalisation dynamique)
+    duck: bool = False  # baisse automatiquement sous les pistes de voix
+    duck_depth: float = 12.0  # atténuation sous la voix, en dB
+    bass: float = 0.0  # égaliseur, en dB (-12 à +12)
+    mid: float = 0.0
+    treble: float = 0.0
+    highpass: float = 0.0  # coupe-bas, en Hz (0 = aucun)
+    lowpass: float = 0.0  # coupe-haut, en Hz (0 = aucun)
+    compress: float = 0.0  # compresseur, 0 à 1
+    pitch: float = 0.0  # hauteur, en demi-tons (-12 à +12)
+    pan: float = 0.0  # panoramique, -1 (gauche) à 1 (droite)
+    echo: float = 0.0  # écho, 0 à 1
+    reverb: float = 0.0  # réverbération, 0 à 1
+
+    def is_identity(self) -> bool:
+        return self == AudioAdjust()
+
+
+@dataclass
 class TextStyle:
     """Contenu et mise en forme d'un clip de texte (tailles pour une toile de 1080 px)."""
 
@@ -183,6 +207,7 @@ class Clip:
     preset: str = ""  # filtre prédéfini (noir et blanc, sépia…)
     preset_amount: float = 1.0
     effects: Effects = field(default_factory=Effects)
+    audio: AudioAdjust = field(default_factory=AudioAdjust)
     text: TextStyle | None = None
     # Réglages propres aux modules, par identifiant de module (ex. "timelapse").
     # Un module absent est ignoré au rendu mais ses réglages sont conservés.
@@ -214,7 +239,8 @@ class Transition:
     id: str = field(default_factory=new_id)
 
 
-_NESTED = {"transform": Transform, "color": ColorAdjust, "effects": Effects, "text": TextStyle}
+_NESTED = {"transform": Transform, "color": ColorAdjust, "effects": Effects, "text": TextStyle,
+           "audio": AudioAdjust}
 
 
 def default_subtitle_style() -> TextStyle:

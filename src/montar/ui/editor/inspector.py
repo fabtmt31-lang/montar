@@ -24,7 +24,15 @@ from PyQt6.QtWidgets import (
 )
 
 from montar.core import keyframes
-from montar.core.project import Clip, ColorAdjust, MediaItem, Project, Transform, Transition
+from montar.core.project import (
+    AudioAdjust,
+    Clip,
+    ColorAdjust,
+    MediaItem,
+    Project,
+    Transform,
+    Transition,
+)
 from montar.core.timecode import frames_to_timecode, seconds_to_short
 from montar.core.timeline import AUDIO_TRANSITIONS, VIDEO_TRANSITIONS
 from montar.i18n import _
@@ -216,6 +224,7 @@ class Inspector(QFrame):
         al.addWidget(self.detach_button)
         al.addWidget(section(_("FONDUS")))
         self._fade_rows(al, "audio")
+        self._build_sound_settings(al)
 
         speed, sl = page()
         sl.addWidget(section(_("VITESSE")))
@@ -272,6 +281,75 @@ class Inspector(QFrame):
         self.clip_tabs = Tabs([("image", _("Image"), image), ("audio", _("Audio"), audio),
                                ("speed", _("Vitesse"), speed), ("color", _("Couleur"), color)])
         return self.clip_tabs
+
+    def _audio_slider(self, layout, title: str, low: float, high: float, prop: str,
+                      fmt, factor: float = 1.0, off: float | None = None) -> SliderRow:
+        """Curseur d'un réglage de `Clip.audio` ; `off` : position du curseur qui vaut 0
+        (réglage absent, ex. coupe-haut tout à droite)."""
+        def get(c, p=prop, k=factor):
+            value = getattr(c.audio, p)
+            return off if off is not None and not value else value * k
+
+        def put(c, v, p=prop, k=factor):
+            setattr(c.audio, p, 0.0 if off is not None and v == off else round(v / k, 3))
+
+        return self._slider(layout, title, low, high, f"audio:{prop}", get, put, fmt)
+
+    def _audio_check(self, layout, text: str, prop: str, tip: str = "") -> QCheckBox:
+        box = QCheckBox(text)
+        box.setToolTip(tip)
+        box.toggled.connect(lambda on, p=prop: self._edit(text, f"audio:{p}", lambda c: setattr(
+            c.audio, p, on)))
+        layout.addWidget(box)
+        self._audio_checks.append((box, prop))
+        return box
+
+    def _build_sound_settings(self, al) -> None:
+        """Voix et nettoyage (F-AUD-05 / 06), puis options avancées repliables."""
+        self._audio_checks: list[tuple[QCheckBox, str]] = []
+        pct = _pct
+        db = lambda v: f"{v:+.1f} dB" if round(v, 1) else "0 dB"  # noqa: E731
+        al.addWidget(section(_("VOIX ET NETTOYAGE")))
+        self._audio_slider(al, _("Réduction de bruit"), 0, 100, "denoise", pct, 100)
+        self._audio_check(al, _("Volume régulier (normalisation)"), "normalize",
+                          _("Rapproche les passages faibles et forts"))
+        self._audio_check(al, _("S'efface sous les voix"), "duck",
+                          _("Baisse automatiquement quand une piste de voix parle (pistes "
+                            "« Voix off », ou clic droit sur une piste → « Piste de voix »)"))
+        self.duck_row = self._audio_slider(al, _("Atténuation sous la voix"), 3, 30,
+                                           "duck_depth", lambda v: f"−{v:.0f} dB")
+        self.advanced_button = button(_("Options avancées"), "secondary", "sliders-horizontal")
+        self.advanced_button.setCheckable(True)
+        al.addWidget(self.advanced_button)
+        advanced, adv = page()
+        advanced.setVisible(False)
+        self.advanced_sound = advanced
+        self.advanced_button.toggled.connect(advanced.setVisible)
+        adv.addWidget(section(_("ÉGALISEUR")))
+        for prop, title in (("bass", _("Graves")), ("mid", _("Médiums")), ("treble", _("Aigus"))):
+            self._audio_slider(adv, title, -12, 12, prop, db)
+        adv.addWidget(section(_("FILTRES")))
+        self._audio_slider(adv, _("Coupe-bas"), 0, 400, "highpass",
+                           lambda v: f"{v:.0f} Hz" if v else _("aucun"))
+        self._audio_slider(adv, _("Coupe-haut"), 1000, 20000, "lowpass",
+                           lambda v: f"{v / 1000:.1f} kHz" if v < 20000 else _("aucun"),
+                           off=20000)
+        adv.addWidget(section(_("DYNAMIQUE ET HAUTEUR")))
+        self._audio_slider(adv, _("Compresseur"), 0, 100, "compress", pct, 100)
+        self._audio_slider(adv, _("Hauteur"), -12, 12, "pitch",
+                           lambda v: _("{n:+.0f} demi-tons").format(n=v) if round(v) else "0")
+        adv.addWidget(section(_("ESPACE")))
+        self._audio_slider(adv, _("Panoramique"), -100, 100, "pan",
+                           lambda v: _("centre") if not round(v) else
+                           (_("{n:.0f} % gauche") if v < 0 else _("{n:.0f} % droite")).format(
+                               n=abs(v)), 100)
+        self._audio_slider(adv, _("Écho"), 0, 100, "echo", pct, 100)
+        self._audio_slider(adv, _("Réverbération"), 0, 100, "reverb", pct, 100)
+        reset = button(_("Réinitialiser le son"), "secondary", "rotate-ccw")
+        reset.clicked.connect(lambda: self._edit(_("Réinitialiser le son"), "audio:reset",
+                                                 lambda c: setattr(c, "audio", AudioAdjust())))
+        adv.addWidget(reset)
+        al.addWidget(advanced)
 
     def _fade_rows(self, layout, key: str) -> None:
         fps = self.controller.project.fps
@@ -627,6 +705,9 @@ class Inspector(QFrame):
             b.setChecked(b.text() == f"×{clip.speed:g}")
         self._speed_buttons.setExclusive(True)
         self.speed_row.set_value(clip.speed)
+        for box, prop in self._audio_checks:
+            box.setChecked(bool(getattr(clip.audio, prop)))
+        self.duck_row.setEnabled(clip.audio.duck)
         self.reverse_check.blockSignals(True)
         self.reverse_check.setChecked(clip.reverse)
         self.reverse_check.blockSignals(False)

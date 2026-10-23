@@ -418,7 +418,8 @@ class Timeline:
         track = self.first_track("audio") or self.add_track("audio")
         audio = Clip(media.id, track.id, 0, clip.duration, source_in=clip.source_in,
                      speed=clip.speed, reverse=clip.reverse, volume=clip.volume,
-                     fade_in=clip.fade_in, fade_out=clip.fade_out)
+                     fade_in=clip.fade_in, fade_out=clip.fade_out,
+                     audio=copy.deepcopy(clip.audio))
         if any(c.start < clip.end and clip.start < c.end for c in self.clips_on(track.id)):
             track = self.add_track("audio")
             audio.track_id = track.id
@@ -498,6 +499,7 @@ class Timeline:
         if track is None:
             track = self.add_track("audio")
             track.name = _(VOICE_OVER_TRACK)
+            track.voice = True
         clip = Clip(media.id, track.id, max(0, start), duration)
         clip.source_in = trim
         self.project.clips.append(clip)

@@ -8,7 +8,16 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from montar.core.project import Clip, ColorAdjust, Effects, MediaItem, Project, Transform
+from montar.core.project import (
+    AudioAdjust,
+    Clip,
+    ColorAdjust,
+    Effects,
+    MediaItem,
+    Project,
+    Transform,
+)
+from montar.engine.sound import duck_points, voice_spans
 
 
 class EngineUnavailable(RuntimeError):
@@ -54,6 +63,8 @@ class ClipSpec:
     keyframes: tuple[tuple[str, tuple[tuple[float, float], ...]], ...] = ()
     # taille réelle du fichier lu quand il diffère du média (proxy de l'aperçu)
     source_size: tuple[int, int] = (0, 0)
+    audio: AudioAdjust = field(default_factory=AudioAdjust)  # réglages du son
+    duck: tuple[tuple[int, float], ...] = ()  # atténuation sous la voix : (image, dB)
 
 
 @dataclass(frozen=True)
@@ -145,6 +156,7 @@ def timeline_spec(project: Project, text_image: TextImage | None = None,
     taille."""
     w, h = size or project.canvas_size
     media = {m.id: m for m in project.media}
+    voices = voice_spans(project)
     by_kind = {k: [t for t in project.tracks if t.kind == k] for k in ("video", "text", "audio")}
     tracks = []
     for track in [*reversed(by_kind["video"]), *reversed(by_kind["text"]), *by_kind["audio"]]:
@@ -167,6 +179,13 @@ def timeline_spec(project: Project, text_image: TextImage | None = None,
                 override = hook(c, m) if hook is not None and c.modules else None
                 spec = _clip_spec(c, m.path, kind, (m.width, m.height), override,
                                   m.length_frames(project.fps) or 0)
+                if not c.audio.is_identity():
+                    spec = dataclasses.replace(spec, audio=copy.deepcopy(c.audio))
+                if c.audio.duck and voices and m.has_audio:
+                    points = duck_points(voices, c.start, c.duration, c.audio.duck_depth,
+                                         project.fps)
+                    if points:
+                        spec = dataclasses.replace(spec, duck=tuple(points))
                 light = proxy(m) if proxy is not None and kind == "video" \
                     and (override is None or override.path is None) else None
                 if light is not None:

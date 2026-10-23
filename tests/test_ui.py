@@ -12,7 +12,7 @@ pytest.importorskip("PyQt6.QtSvg")
 from PyQt6.QtCore import QEvent, QEventLoop, QPoint, QPointF, QRectF, Qt, QTimer  # noqa: E402
 from PyQt6.QtGui import QMouseEvent, QShortcut  # noqa: E402
 from PyQt6.QtTest import QTest  # noqa: E402
-from PyQt6.QtWidgets import QApplication, QMessageBox  # noqa: E402
+from PyQt6.QtWidgets import QApplication, QLabel, QMessageBox  # noqa: E402
 
 from montar.core import keyframes  # noqa: E402
 from montar.core.project import Project  # noqa: E402
@@ -1748,3 +1748,33 @@ def test_timeline_maximize_and_detach(window, media_dir):
 
     panel.detach_button.click()
     assert editor.close_project() is not None and editor._timeline_window is None
+
+
+@needs_ffmpeg
+def test_sound_settings_in_inspector(window, media_dir):
+    editor = imported_editor(window, media_dir, ["son.wav", "clip.mp4"])
+    song, video = editor.project.media
+    clip = editor.add_to_timeline(song) or editor.project.clips[-1]
+    editor.controller.select(clip.id)
+    inspector = editor.inspector
+    assert not inspector.advanced_sound.isVisibleTo(inspector)
+    inspector.advanced_button.click()
+    assert inspector.advanced_sound.isVisibleTo(inspector)
+    rows = {r.findChild(QLabel).text(): r for r in inspector._sliders
+            if r.findChild(QLabel) is not None}
+    rows["Aigus"].moved.emit(6)
+    rows["Coupe-haut"].moved.emit(20000)  # tout à droite : aucun filtre
+    rows["Réduction de bruit"].moved.emit(50)
+    duck = next(b for b, p in inspector._audio_checks if p == "duck")
+    duck.click()
+    clip = editor.project.clips[-1]
+    assert clip.audio.treble == 6 and clip.audio.lowpass == 0 and clip.audio.denoise == 0.5
+    assert clip.audio.duck and inspector.duck_row.isEnabled()
+    editor.controller.undo()
+    assert not editor.project.clips[-1].audio.duck
+
+    # piste de voix : la voix off en crée une, le menu de piste permet d'en marquer une
+    track = editor.controller.timeline.track(clip.track_id)
+    assert not track.voice
+    editor.controller.edit("voix", lambda t: setattr(t.track(track.id), "voice", True))
+    assert editor.controller.timeline.track(track.id).voice

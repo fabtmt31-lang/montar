@@ -723,9 +723,15 @@ class TimelineView(QAbstractScrollArea):
             painter.setPen(QColor(p.ink))
             buttons = self._header_buttons(row)
             room = min(rect.left() for _k, rect in buttons) - 50
+            left = 48
+            if row.track.voice:  # piste de voix : micro devant le nom
+                painter.drawPixmap(left, int(r.center().y()) - 7,
+                                   icon_pixmap("mic", p.forest, 14))
+                left += 18
+                room -= 18
             name = QFontMetrics(f).elidedText(_(row.track.name), Qt.TextElideMode.ElideRight,
                                               room)
-            painter.drawText(QRect(48, r.top(), room, r.height()),
+            painter.drawText(QRect(left, r.top(), room, r.height()),
                              Qt.AlignmentFlag.AlignVCenter, name)
             for key, rect in buttons:
                 off = {"mute": row.track.muted, "hide": row.track.hidden,
@@ -1096,6 +1102,14 @@ class TimelineView(QAbstractScrollArea):
             track_id = row.track.id
             if row.track.kind != "text":
                 menu.addAction(self._volume_action(menu, row.track))
+                menu.addSeparator()
+            if row.track.kind == "audio":
+                voice = menu.addAction(_("Piste de voix (les sons « s'effacent sous les "
+                                         "voix » baissent dessous)"))
+                voice.setCheckable(True)
+                voice.setChecked(row.track.voice)
+                voice.toggled.connect(lambda on: self.controller.edit(
+                    _("Piste de voix"), lambda t: setattr(t.track(track_id), "voice", on)))
                 menu.addSeparator()
             menu.addAction(_("Supprimer la piste"), lambda: self.controller.edit(
                 _("Supprimer la piste"), lambda t: t.remove_track(track_id)))
