@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QDialog, QFileDialog, QMainWindow, QMessageBox, QSta
 
 from montar import __version__
 from montar.core.library import library
+from montar.core.notifications import Notifications
 from montar.core.project import Project, ProjectError, unique_project_folder
 from montar.core.project_files import Session
 from montar.core.project_files import duplicate as duplicate_project
@@ -47,6 +48,8 @@ class MainWindow(QMainWindow):
         self.home = HomePage()
         self.projects = HomePage(compact=True)
         self.modules = default_manager(settings.disabled_modules)
+        self.notifications = Notifications(paths.data_dir() / "notifications.json")
+        self.modules.failure_listeners.append(self._module_failed)
         self.preferences = PreferencesPage(settings, self.modules, self.cache,
                                            self.recent.paths)
         self.trash = Trash(paths.data_dir() / "corbeille")
@@ -73,6 +76,8 @@ class MainWindow(QMainWindow):
         self.preferences.settingsChanged.connect(self._save_settings)
         self.preferences.cacheCleared.connect(self.refresh_recent)
         self.editor: EditorPage | None = None
+        for page in (self.home, self.projects):
+            page.set_notifications(self.notifications)
         self.refresh_recent()
 
     # --- accueil -------------------------------------------------------------
@@ -99,6 +104,9 @@ class MainWindow(QMainWindow):
             self.settings.save(self._settings_file)
         except OSError as exc:
             log.warning("préférences non enregistrées : %s", exc)
+
+    def _module_failed(self, name: str, error: str) -> None:
+        self.notifications.add(_("Module « {m} » désactivé").format(m=_(name)), error, "error")
 
     def _accent_changed(self, color: str) -> None:
         theme().apply(accent=color)
@@ -179,6 +187,7 @@ class MainWindow(QMainWindow):
         editor = EditorPage(project, get_engine, self.cache, self.settings.preview_quality,
                             self.modules)
         editor.apply_preferences(self.settings, opening=True)
+        editor.set_notifications(self.notifications)
         editor.backRequested.connect(self.show_home)
         editor.saved.connect(lambda _p: None)
         editor.saveAsRequested.connect(self.save_project_as)

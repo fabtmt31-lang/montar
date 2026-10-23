@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -48,6 +49,7 @@ class ClipSpec:
     audio_filters: tuple[tuple[str, dict], ...] = ()  # filtres audio des modules
     reverse: bool = False  # lecture inversée
     media_length: int = 0  # images du média à la fréquence du projet (lecture inversée)
+    sequence: tuple[tuple[str, int], ...] = ()  # textes animés : (image, durée) successives
 
 
 @dataclass(frozen=True)
@@ -85,6 +87,8 @@ class TimelineSpec:
 
 
 TextImage = Callable[[Clip, int, int], str]  # (clip, largeur, hauteur) -> image PNG
+# texte « machine à écrire » : (clip, largeur, hauteur) -> [(image PNG, images)]
+TextSequence = Callable[[Clip, int, int], list[tuple[str, int]]]
 
 
 @dataclass(frozen=True)
@@ -121,7 +125,8 @@ def _clip_spec(clip: Clip, path: str, kind: str, size: tuple[int, int],
 def timeline_spec(project: Project, text_image: TextImage | None = None,
                   hook: ClipHook | None = None,
                   size: tuple[int, int] | None = None,
-                  transition_hook: TransitionHook | None = None) -> TimelineSpec:
+                  transition_hook: TransitionHook | None = None,
+                  text_sequence: TextSequence | None = None) -> TimelineSpec:
     """Description de la timeline pour le moteur. Sans `text_image`, les textes sont ignorés.
     `size` remplace la taille de la toile (export à une autre résolution). Une transition
     d'un module absent devient un fondu enchaîné."""
@@ -139,6 +144,8 @@ def timeline_spec(project: Project, text_image: TextImage | None = None,
                 if text_image is None:
                     continue
                 spec = _clip_spec(c, text_image(c, w, h), "text", (w, h))
+                if c.text.animation_in == "typewriter" and text_sequence is not None:
+                    spec = dataclasses.replace(spec, sequence=tuple(text_sequence(c, w, h)))
             else:
                 m = media.get(c.media_id)
                 if m is None or not m.exists:

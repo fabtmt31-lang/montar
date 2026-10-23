@@ -239,6 +239,7 @@ class HomePage(QWidget):
         imp.setMinimumHeight(44)
         imp.clicked.connect(self.importRequested)
         top.addWidget(imp)
+        self._top = top
         name = user_first_name()
         avatar = QLabel((name[:1] or "?").upper())
         avatar.setObjectName("Avatar")
@@ -295,6 +296,16 @@ class HomePage(QWidget):
         from montar.ui.theme.icons import pixmap
 
         self._search_icon.setPixmap(pixmap("search", theme().palette.text_muted, 18))
+
+    def set_notifications(self, notifications) -> None:
+        from montar.ui.notifications import NotificationButton
+
+        self.bell = NotificationButton(notifications)
+        self.bell.setMinimumHeight(44)
+        index = next(i for i in range(self._top.count())
+                     if self._top.itemAt(i).widget() is not None
+                     and self._top.itemAt(i).widget().objectName() == "Avatar")
+        self._top.insertWidget(index - 1, self.bell)
 
     def set_entries(self, entries: list[RecentEntry]) -> None:
         self.projects.set_entries(entries if self._compact else entries[:8])

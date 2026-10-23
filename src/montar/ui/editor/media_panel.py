@@ -2,7 +2,9 @@
 """Panneau « Médias du projet » (maquette 02)."""
 from __future__ import annotations
 
-from PyQt6.QtCore import QMimeData, Qt, pyqtSignal
+from pathlib import Path
+
+from PyQt6.QtCore import QMimeData, QObject, QRunnable, Qt, QThreadPool, pyqtSignal
 from PyQt6.QtGui import QDrag, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -19,6 +21,7 @@ from PyQt6.QtWidgets import (
 from montar.core.project import MediaItem
 from montar.core.timecode import seconds_to_short
 from montar.i18n import _
+from montar.media.thumbnails import FILMSTRIP_FRAMES, make_filmstrip
 from montar.ui.thumbgrid import (
     ROLE_BADGE,
     ROLE_ICON,
@@ -38,8 +41,78 @@ _PLACEHOLDER = {"video": "mint", "image": "voiceover", "audio": "pistachio"}
 _ICON = {"video": "film", "image": "image", "audio": "music"}
 
 
+ROLE_ORIGINAL = Qt.ItemDataRole.UserRole + 20  # vignette d'origine pendant le survol
+
+
+class _FilmstripSignals(QObject):
+    ready = pyqtSignal(str, str)  # chemin du média, bande (vide si impossible)
+
+
+class _FilmstripTask(QRunnable):
+    def __init__(self, cache: Path, media: MediaItem, signals: _FilmstripSignals) -> None:
+        super().__init__()
+        self.cache, self.media, self.signals = cache, media, signals
+
+    def run(self) -> None:
+        path = make_filmstrip(self.cache, self.media)
+        self.signals.ready.emit(self.media.path, str(path) if path else "")
+
+
 class _MediaGrid(ThumbGrid):
-    """Grille dont les vignettes se glissent vers la timeline."""
+    """Grille dont les vignettes se glissent vers la timeline ; au survol d'une vidéo, la
+    vignette défile dans la vidéo selon la position du pointeur (F-MED-03)."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.cache: Path | None = None
+        self._strips: dict[str, QPixmap | None] = {}  # média → bande (None : en cours)
+        self._hovered: QListWidgetItem | None = None
+        self._pool = QThreadPool(self)
+        self._pool.setMaxThreadCount(1)
+        self._signals = _FilmstripSignals(self)
+        self._signals.ready.connect(self._strip_ready)
+
+    def _strip_ready(self, media_path: str, strip: str) -> None:
+        self._strips[media_path] = QPixmap(strip) if strip else QPixmap()
+
+    def _strip(self, media: MediaItem) -> QPixmap | None:
+        if self.cache is None or media.kind != "video":
+            return None
+        if media.path not in self._strips:
+            self._strips[media.path] = None
+            self._pool.start(_FilmstripTask(self.cache, media, self._signals))
+        strip = self._strips[media.path]
+        return strip if strip is not None and not strip.isNull() else None
+
+    def _restore_hovered(self) -> None:
+        item, self._hovered = self._hovered, None
+        if item is not None and item.data(ROLE_ORIGINAL) is not None:
+            item.setData(Qt.ItemDataRole.DecorationRole, item.data(ROLE_ORIGINAL))
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802 - API Qt
+        super().mouseMoveEvent(event)
+        if event.buttons() != Qt.MouseButton.NoButton:
+            return
+        item = self.itemAt(event.position().toPoint())
+        if item is not self._hovered:
+            self._restore_hovered()
+        media = item.data(ROLE_PAYLOAD) if item is not None else None
+        strip = self._strip(media) if media is not None and media.exists else None
+        if strip is None:
+            return
+        if self._hovered is not item:
+            self._hovered = item
+            item.setData(ROLE_ORIGINAL, item.data(Qt.ItemDataRole.DecorationRole))
+        rect = self.visualItemRect(item)
+        ratio = (event.position().x() - rect.left()) / max(1, rect.width())
+        index = max(0, min(FILMSTRIP_FRAMES - 1, int(ratio * FILMSTRIP_FRAMES)))
+        cell = strip.width() // FILMSTRIP_FRAMES
+        item.setData(Qt.ItemDataRole.DecorationRole,
+                     strip.copy(index * cell, 0, cell, strip.height()))
+
+    def leaveEvent(self, event) -> None:  # noqa: N802 - API Qt
+        self._restore_hovered()
+        super().leaveEvent(event)
 
     def startDrag(self, actions) -> None:  # noqa: N802 - API Qt
         item = self.currentItem()
@@ -53,6 +126,7 @@ class _MediaGrid(ThumbGrid):
         pm = item.data(Qt.ItemDataRole.DecorationRole)
         if isinstance(pm, QPixmap) and not pm.isNull():
             drag.setPixmap(pm.scaledToWidth(96, Qt.TransformationMode.SmoothTransformation))
+        self._restore_hovered()
         drag.exec(Qt.DropAction.CopyAction)
 
 

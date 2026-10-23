@@ -77,7 +77,7 @@ def _structure(spec: TimelineSpec) -> tuple:
     tracks = []
     for t in spec.tracks:
         clips = tuple((c.path, c.kind, c.start, c.duration, c.source_in, c.speed, c.media_size,
-                       c.reverse) for c in t.clips)
+                       c.reverse, c.sequence) for c in t.clips)
         tracks.append((t.kind, t.muted, t.hidden, t.volume, t.transitions, clips))
     return spec.canvas, tuple(tracks)
 
@@ -340,6 +340,19 @@ class _TimelineGraph:
 
     def _clip_producer(self, clip: ClipSpec, track_kind: str, key: tuple[int, int]):
         """Producteur propre au clip, avec ses filtres ; renvoie (producteur, image d'entrée)."""
+        if clip.kind == "text" and clip.sequence:  # machine à écrire : images successives
+            producer = mlt.Playlist(self.profile)
+            for path, frames in clip.sequence:
+                step = mlt.Producer(self.profile, path)
+                if step is None or not step.is_valid():
+                    raise SourceError(f"MLT ne sait pas ouvrir {path}")
+                step.set("length", frames)
+                producer.append(step, 0, frames - 1)
+                self._keep.append(step)
+            span = (0, clip.duration - 1)
+            self._attach_clip_filters(producer, clip, span, track_kind, key)
+            self._keep.append(producer)
+            return producer, 0
         if clip.kind in ("video", "audio") and clip.reverse and clip.media_length:
             # timewarp négatif : l'image j montre l'image L-1-j·k du média
             k = abs(clip.speed)

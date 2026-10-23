@@ -1412,3 +1412,48 @@ def test_export_frame_range_accent_and_trash_days(window, media_dir, tmp_path):
     prefs.accent_buttons["#2F7A56"].click()
     prefs.trash_days.button("90").click()
     assert window.settings.trash_days == 90 and window.trash_page.days == 90
+
+
+# --- P2-3 -------------------------------------------------------------------------------------
+
+
+@needs_ffmpeg
+def test_hover_preview_notifications_typewriter(window, media_dir, tmp_path):
+    from montar.ui.thumbgrid import ROLE_PAYLOAD
+
+    editor = imported_editor(window, media_dir, ["redblue.mp4"])
+    grid = editor.media_panel.grid
+    item = grid.item(0)
+    original = item.data(Qt.ItemDataRole.DecorationRole)
+    rect = grid.visualItemRect(item)
+
+    def hover(x):
+        pos = QPointF(rect.left() + x, rect.center().y())
+        QApplication.sendEvent(grid.viewport(), QMouseEvent(
+            QEvent.Type.MouseMove, pos, pos, Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
+
+    hover(2)
+    assert wait_until(lambda: grid._strips.get(item.data(ROLE_PAYLOAD).path) is not None)
+    hover(2)
+    first = item.data(Qt.ItemDataRole.DecorationRole).toImage()
+    hover(rect.width() - 2)
+    last = item.data(Qt.ItemDataRole.DecorationRole).toImage()
+    c1, c2 = (im.pixelColor(im.width() // 2, im.height() // 2) for im in (first, last))
+    assert c1.red() > c1.blue() and c2.blue() > c2.red()  # début rouge, fin bleue
+    grid.leaveEvent(QEvent(QEvent.Type.Leave))
+    assert item.data(Qt.ItemDataRole.DecorationRole).cacheKey() == original.cacheKey()
+
+    # notification d'export, cloche de l'en-tête
+    editor.add_to_timeline(editor.project.media[0])
+    editor._notify_export = False
+    from montar.engine.export import ExportSettings
+    before = window.notifications.unread
+    assert editor.export_frame(ExportSettings(str(tmp_path / "i.png"), "png", "", 64, 36, 25,
+                                              range_start=5, range_end=6))
+    assert window.notifications.unread == before + 1
+    assert editor.bell.text() == str(window.notifications.unread)
+    assert "i.png" in [a.text() for a in editor.bell.build_menu().actions()][0]
+
+    # machine à écrire proposée en animation d'entrée
+    assert editor.inspector._anims["animation_in"].button("typewriter") is not None

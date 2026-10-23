@@ -74,7 +74,7 @@ from montar.ui.editor.preview import PreviewPanel
 from montar.ui.graphics import graphic_size, render_graphic
 from montar.ui.home.library import LibraryDialog
 from montar.ui.text_render import image_path as text_image_path
-from montar.ui.text_render import preset_style, text_bounds
+from montar.ui.text_render import preset_style, text_bounds, typing_sequence
 from montar.ui.timeline.panel import TimelinePanel
 from montar.ui.widgets import LogoMark, button, label, set_icon
 
@@ -146,6 +146,7 @@ class EditorPage(QWidget):
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
         self.media_panel = MediaPanel()
+        self.media_panel.grid.cache = cache
         self.text_panel = TextPanel()
         self.transitions_panel = TransitionsPanel(self.controller)
         self.effects_panel = EffectsPanel(self.controller)
@@ -250,6 +251,7 @@ class EditorPage(QWidget):
         self.autosave = True  # sinon : enregistrement par Ctrl+S, question à la fermeture
         self.backup_every = 120.0  # secondes entre deux copies de sauvegarde
         self._dirty = False
+        self.notifications = None  # montar.core.notifications.Notifications
         self._voice_pending: dict[str, tuple[int, int]] = {}  # fichier → (début, rognage)
         self._overlay_pending: dict[str, tuple[int, bool]] = {}  # fichier → (début, dessous)
         self._freeze_pending: dict[str, tuple[str, int]] = {}  # fichier → (clip, image)
@@ -662,10 +664,14 @@ class EditorPage(QWidget):
     def _text_image(self, clip, width: int, height: int) -> str:
         return text_image_path(self._cache, clip, width, height)
 
+    def _text_sequence(self, clip, width: int, height: int) -> list[tuple[str, int]]:
+        return typing_sequence(self._cache, clip, width, height, self.project.fps)
+
     def _reload_player(self) -> None:
         self._load_timer.stop()
         self.player.load(timeline_spec(self.project, self._text_image, self.modules.hook,
-                                       transition_hook=self.modules.transition_hook))
+                                       transition_hook=self.modules.transition_hook,
+                                       text_sequence=self._text_sequence))
 
     # --- modules -------------------------------------------------------------------------
 
@@ -914,6 +920,21 @@ class EditorPage(QWidget):
             QMessageBox.warning(self, _("Enregistrer l'écran"),
                                 _("L'enregistrement a échoué : {error}").format(
                                     error=recorder.error))
+
+    # --- notifications ----------------------------------------------------------------------
+
+    def set_notifications(self, notifications) -> None:
+        """Cloche dans l'en-tête ; les fins d'export et les échecs y sont signalés."""
+        from montar.ui.notifications import NotificationButton
+
+        self.notifications = notifications
+        self.bell = NotificationButton(notifications)
+        layout = self.export_button.parentWidget().layout()
+        layout.insertWidget(layout.indexOf(self.export_button), self.bell)
+
+    def notify(self, title: str, text: str = "", kind: str = "info", path: str = "") -> None:
+        if self.notifications is not None:
+            self.notifications.add(title, text, kind, path)
 
     # --- panneau Modules --------------------------------------------------------------------
 
@@ -1182,7 +1203,7 @@ class EditorPage(QWidget):
                                            hardware=False)
         size = None if settings.audio_only else (settings.width, settings.height)
         spec = timeline_spec(self.project, self._text_image, self.modules.hook, size,
-                             self.modules.transition_hook)
+                             self.modules.transition_hook, self._text_sequence)
         if settings.fps != self.project.fps and (settings.range_start or settings.range_end):
             k = settings.fps / self.project.fps  # la partie suit la nouvelle fréquence
             settings = dataclasses.replace(settings, range_start=round(settings.range_start * k),
@@ -1202,7 +1223,8 @@ class EditorPage(QWidget):
         from PyQt6.QtGui import QImage
 
         spec = timeline_spec(self.project, self._text_image, self.modules.hook,
-                             (settings.width, settings.height), self.modules.transition_hook)
+                             (settings.width, settings.height), self.modules.transition_hook,
+                             self._text_sequence)
         try:
             source = self._engine_factory().build(spec)
             try:
@@ -1221,6 +1243,7 @@ class EditorPage(QWidget):
             QMessageBox.warning(self, _("Export impossible"), str(exc))
             return False
         self.exportFinished.emit("")
+        self.notify(_("Export terminé"), Path(settings.path).name, "success", settings.path)
         if self._notify_export:
             QMessageBox.information(self, _("Export terminé"), _("{name} est prêt ({size}).")
                                     .format(name=Path(settings.path).name,
@@ -1243,6 +1266,11 @@ class EditorPage(QWidget):
         if job.cancelled:
             return
         target = Path(self._export_settings.path)
+        if job.error:
+            self.notify(_("Export impossible"), _("L'export de {name} a échoué : {error}")
+                        .format(name=target.name, error=job.error), "error")
+        else:
+            self.notify(_("Export terminé"), target.name, "success", str(target))
         if job.error:
             QMessageBox.warning(self, _("Export impossible"),
                                 _("L'export de {name} a échoué : {error}").format(
@@ -1272,6 +1300,7 @@ class EditorPage(QWidget):
             self._media_edit_done(key, error)
             return
         if error and error != CANCELLED:
+            self.notify(_("Calcul en arrière-plan échoué"), error, "error")
             self.modules.error(_("Un calcul en arrière-plan a échoué :\n{e}").format(e=error))
         self._reload_player()  # le fichier pré-calculé remplace l'aperçu provisoire
         self.timeline.view.viewport().update()

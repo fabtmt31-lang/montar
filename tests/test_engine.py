@@ -322,3 +322,40 @@ def test_reverse_playback(engine, media_dir):
         finally:
             source.close()
         assert (r > b) == (first == "red")
+
+
+def test_typing_steps():
+    pytest.importorskip("PyQt6.QtGui")
+    from montar.ui.text_render import typing_steps
+
+    steps = typing_steps(10, 125, 25)
+    assert [s for s, _f in steps] == list(range(1, 11))
+    assert sum(f for _s, f in steps) == 125 and steps[-1][1] > 100  # texte tenu jusqu'à la fin
+    long = typing_steps(300, 50, 25)  # beaucoup de texte : plusieurs caractères par étape
+    assert long[-1][0] == 300 and sum(f for _s, f in long) >= 50
+    assert sum(f for _s, f in long[:-1]) <= 50 * 0.7 + 2
+
+
+@needs_ffmpeg
+def test_typewriter_text(engine, tmp_path):
+    pytest.importorskip("PyQt6.QtGui")
+    from PyQt6.QtWidgets import QApplication
+
+    from montar.core.project import Clip, TextStyle
+    from montar.ui.text_render import typing_sequence
+
+    app = QApplication.instance() or QApplication(["t"])  # garder la référence
+    assert app is not None
+    clip = Clip("", "t", 0, 50, text=TextStyle("ABCDEFGH", color="#FFFFFF", size=120,
+                                               animation_in="typewriter"))
+    sequence = typing_sequence(tmp_path, clip, 160, 90, 25)
+    spec = ClipSpec(sequence[-1][0], "text", 0, 50, media_size=(160, 90),
+                    sequence=tuple(sequence))
+    source = engine.build(TimelineSpec(Canvas(160, 90, 25),
+                                       (TrackSpec("video", False, False, (spec,)),)))
+    try:
+        early, late = source.render(1, 160, 90), source.render(49, 160, 90)
+    finally:
+        source.close()
+    lit = [sum(1 for i in range(0, len(d), 4) if d[i] > 200) for d in (early, late)]
+    assert 0 < lit[0] < lit[1] / 3  # au début, une seule lettre est tapée

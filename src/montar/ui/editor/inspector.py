@@ -348,8 +348,10 @@ class Inspector(QFrame):
         for key, title in (("animation_in", _("Animation d'entrée")),
                            ("animation_out", _("Animation de sortie"))):
             al.addWidget(label(title))
-            seg = Segmented([("none", _("Aucune")), ("fade", _("Fondu")),
-                             ("slide", _("Glisser"))], compact=True)
+            options = [("none", _("Aucune")), ("fade", _("Fondu")), ("slide", _("Glisser"))]
+            if key == "animation_in":
+                options.append(("typewriter", _("Machine à écrire")))
+            seg = Segmented(options, compact=True)
             seg.changed.connect(lambda v, k=key, t=title: self._edit_text(t, k, **{k: v}))
             self._anims[key] = seg
             al.addWidget(seg)

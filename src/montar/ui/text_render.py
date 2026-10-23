@@ -95,7 +95,9 @@ def text_bounds(style: TextStyle, width: int, height: int) -> QRectF:
     return _layout(style, width, height)[5]
 
 
-def render(style: TextStyle, width: int, height: int) -> QImage:
+def render(style: TextStyle, width: int, height: int, visible: int | None = None) -> QImage:
+    """Image du texte ; `visible` : nombre de caractères déjà tapés (machine à écrire), les
+    autres restent à leur place mais invisibles."""
     image = QImage(width, height, QImage.Format.Format_ARGB32_Premultiplied)
     image.fill(Qt.GlobalColor.transparent)
     font, fm, lines, widths, block, box = _layout(style, width, height)
@@ -109,6 +111,7 @@ def render(style: TextStyle, width: int, height: int) -> QImage:
         painter.setBrush(QColor(style.background))
         painter.drawRoundedRect(box, radius, radius)
     path = QPainterPath()
+    left = len("".join(lines)) if visible is None else visible
     for i, (line, w) in enumerate(zip(lines, widths, strict=True)):
         if style.align == "left":
             x = block.left()
@@ -116,7 +119,8 @@ def render(style: TextStyle, width: int, height: int) -> QImage:
             x = block.right() - w
         else:
             x = block.left() + (block.width() - w) / 2
-        path.addText(QPointF(x, block.top() + i * fm.height() + fm.ascent()), font, line)
+        shown, left = line[:max(0, left)], max(0, left - len(line))
+        path.addText(QPointF(x, block.top() + i * fm.height() + fm.ascent()), font, shown)
     if style.shadow:
         offset = max(1.0, style.size * scale * 0.035)
         shadow = QColor(style.shadow_color)
@@ -152,3 +156,43 @@ def image_path(cache: Path, clip: Clip, width: int, height: int) -> str:
         render(clip.text, width, height).save(str(tmp), "PNG")
         tmp.replace(out)
     return str(out)
+
+
+TYPING_CPS = 18  # caractères par seconde de la machine à écrire
+TYPING_SHARE = 0.7  # au plus 70 % de la durée du clip pour taper le texte
+
+
+def typing_steps(chars: int, duration: int, fps: int) -> list[tuple[int, int]]:
+    """(caractères visibles, images) de chaque étape ; la dernière tient jusqu'à la fin."""
+    if chars <= 0 or duration <= 1:
+        return [(chars, max(1, duration))]
+    per_char = max(1, round(fps / TYPING_CPS))
+    budget = max(1, int(duration * TYPING_SHARE))
+    step = max(1, -(-chars * per_char // budget))  # caractères ajoutés par étape
+    steps, shown, used = [], 0, 0
+    while shown < chars:
+        shown = min(chars, shown + step)
+        frames = per_char if shown < chars else max(1, duration - used)
+        steps.append((shown, frames))
+        used += frames
+    return steps
+
+
+def typing_sequence(cache: Path, clip: Clip, width: int, height: int,
+                    fps: int) -> list[tuple[str, int]]:
+    """Images (PNG, frames) de l'animation « machine à écrire » d'un clip de texte."""
+    assert clip.text is not None
+    chars = len("".join(_lines(clip.text)))
+    key = hashlib.sha1(json.dumps([asdict(clip.text), width, height],
+                                  sort_keys=True).encode()).hexdigest()
+    folder = cache / "texts" / key
+    result = []
+    for shown, frames in typing_steps(chars, clip.duration, fps):
+        out = folder / f"{shown:05d}.png"
+        if not out.exists():
+            folder.mkdir(parents=True, exist_ok=True)
+            tmp = out.with_suffix(".tmp.png")
+            render(clip.text, width, height, shown).save(str(tmp), "PNG")
+            tmp.replace(out)
+        result.append((str(out), frames))
+    return result

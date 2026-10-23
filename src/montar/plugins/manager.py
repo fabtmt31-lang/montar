@@ -100,6 +100,7 @@ class ModuleManager:
         self.disabled = set(disabled)
         self.modules: dict[str, ModuleInfo] = {}
         self.listeners: list[Callable[[], None]] = []
+        self.failure_listeners: list[Callable[[str, str], None]] = []  # module, erreur
 
     # --- chargement ---------------------------------------------------------------
 
@@ -193,6 +194,8 @@ class ModuleManager:
         log.error("module %s désactivé après une erreur : %s", module_id, exc)
         info.error = f"{type(exc).__name__} : {exc}"
         info.loaded = None
+        for listener in list(self.failure_listeners):
+            listener(info.name, info.error)
         self._notify()
 
     def guarded(self, module_id: str, call: Callable[[], T], default: T) -> T:
