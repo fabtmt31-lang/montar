@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-API_VERSION = (1, 3)
+API_VERSION = (1, 4)
 
 # Pseudo-filtre (1.3) qu'un `VideoEffect` peut renvoyer : zoom animé du cadre du clip autour
 # de son centre. Propriétés : start, end (facteurs, 1 = normal), seconds (0 = tout le clip),
@@ -200,8 +200,11 @@ class RenderContext(Protocol):
     cache_dir: Path
 
     def schedule_job(self, key: str, title: str,
-                     work: Callable[[Callable[[float], None], Callable[[], bool]], None]) -> None:
-        """Lance une tâche de fond (une seule par clé). `work(progress, cancelled)`."""
+                     work: Callable[[Callable[[float], None], Callable[[], bool]], Any],
+                     done: Callable[[Any], None] | None = None) -> None:
+        """Lance une tâche de fond (une seule par clé). `work(progress, cancelled)` ; en 1.4,
+        `done(valeur renvoyée par work)` est appelé dans le fil principal en cas de succès
+        (on peut alors modifier le projet avec `editor.edit`)."""
 
 
 class GeneratorContext(RenderContext, Protocol):

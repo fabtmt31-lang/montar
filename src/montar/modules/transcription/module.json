@@ -1,0 +1,10 @@
+{
+  "id": "transcription",
+  "name": "Sous-titres automatiques",
+  "version": "1.0.0",
+  "api_version": "1.4",
+  "author": "montar",
+  "license": "GPL-3.0-or-later",
+  "description": "Transcrit la parole d'un clip en sous-titres, sur l'ordinateur (Whisper : faster-whisper, openai-whisper ou whisper.cpp, à installer à part).",
+  "permissions": []
+}

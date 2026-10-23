@@ -888,7 +888,9 @@ def test_apply_effect_or_module(window, media_dir, monkeypatch):
     audio = next(c for c in editor.project.clips if c.media_id == son.id)
     kinds = {(a.kind, a.key) for a in actions_for(video, True, editor.modules)}
     assert {("tool", "timelapse.apply"), ("preset", "sepia"), ("effect", "blur")} <= kinds
-    assert not actions_for(audio, False, editor.modules)  # rien pour un son
+    # pour un son : seulement les sous-titres automatiques
+    assert [a.key for a in actions_for(audio, False, editor.modules)] == \
+        ["transcription.sous_titres"]
 
     # fenêtre : recherche, catégories vides masquées
     dialog = ApplyEffectDialog(actions_for(video, True, editor.modules), "test")
@@ -1807,3 +1809,35 @@ def test_brand_kit_in_editor(window, media_dir, tmp_path):
 
     page.remove_color("#123456")  # le kit change : l'éditeur suit
     assert "#123456" not in editor.inspector.text_color._buttons
+
+
+@needs_ffmpeg
+def test_auto_subtitles_tool(window, media_dir, monkeypatch):
+    import sys
+
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    clip = editor.project.clips[0]
+    module_id, tool = next((m, t) for m, t in editor.modules.tools_for(clip)
+                           if t.id == "transcription.sous_titres")
+    package = sys.modules[type(tool).__module__]  # module chargé par montar
+    core = package.core
+
+    class Fake(core.Backend):
+        name = "faux"
+
+        def available(self):
+            return True
+
+        def transcribe(self, wav, model, language, progress, cancelled):
+            return [core.Segment(0.1, 0.9, "Bonjour tout le monde")]
+
+    monkeypatch.setattr(core, "BACKENDS", [Fake()])
+    monkeypatch.setattr(package, "_ask", lambda parent: ("base", "fr", True))
+    editor.subtitles_panel.auto_button.click()  # aucun clip sélectionné : le premier parlant
+    assert wait_until(lambda: editor.project.subtitles, 30)
+    sub = editor.project.subtitles[0]
+    assert sub.text == "Bonjour tout le monde" and sub.start == 2
+    assert editor.project.subtitles_shown
+    editor.controller.undo()
+    assert not editor.project.subtitles

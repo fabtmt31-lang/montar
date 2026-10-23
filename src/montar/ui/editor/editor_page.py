@@ -179,6 +179,7 @@ class EditorPage(QWidget):
         self.inspector.playhead = self._playhead
         self.inspector.seekRequested.connect(self.player.seek)
         self.subtitles_panel.seekRequested.connect(self.player.seek)
+        self.subtitles_panel.autoRequested.connect(self.auto_subtitles)
         body.addWidget(self.inspector)
         self.effects_panel.set_modules(self.modules)
         self.effects_panel.addRequested.connect(self.open_apply)
@@ -1192,6 +1193,20 @@ class EditorPage(QWidget):
         self._overlay_pending[str(target)] = (start, below, False)
         self.import_files([str(target)])
         return target
+
+    def auto_subtitles(self) -> bool:
+        """Sous-titres automatiques sur le clip sélectionné, sinon le premier clip parlant."""
+        candidates = [self.controller.selected_clip()] + sorted(
+            self.project.clips, key=lambda c: c.start)
+        for clip in candidates:
+            for module_id, tool in self.modules.tools_for(clip):
+                if tool.id == "transcription.sous_titres":
+                    self.modules.run_tool(module_id, tool, clip)
+                    return True
+        QMessageBox.information(self, _("Sous-titres automatiques"), _(
+            "Aucun clip avec du son à transcrire, ou le module « Sous-titres automatiques » "
+            "est désactivé (Préférences → Extensions)."))
+        return False
 
     # --- kit de marque -------------------------------------------------------------------
 

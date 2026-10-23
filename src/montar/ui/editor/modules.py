@@ -27,6 +27,7 @@ CANCELLED = "annulé"
 class _JobSignals(QObject):
     progress = pyqtSignal(str, float)
     done = pyqtSignal(str, str)  # clé, message d'erreur (vide si réussite)
+    result = pyqtSignal(str, object)  # clé, valeur renvoyée par le travail (API 1.4)
 
 
 class _Job(QRunnable):
@@ -36,8 +37,9 @@ class _Job(QRunnable):
 
     def run(self) -> None:
         try:
-            self.work(lambda r: self.signals.progress.emit(self.key, float(r)),
-                      self.cancel.is_set)
+            value = self.work(lambda r: self.signals.progress.emit(self.key, float(r)),
+                              self.cancel.is_set)
+            self.signals.result.emit(self.key, value)
             self.signals.done.emit(self.key, "")
         except Exception as exc:  # erreur du module : signalée, jamais fatale
             if self.cancel.is_set():
@@ -60,15 +62,18 @@ class JobRunner(QObject):
         self._signals = _JobSignals(self)
         self._signals.progress.connect(self._on_progress)
         self._signals.done.connect(self._on_done)
+        self._signals.result.connect(self._on_result)
+        self._results: dict[str, object] = {}
         self.jobs: dict[str, dict] = {}  # clé → {title, progress, cancel}
         self.failed: dict[str, tuple[str, str]] = {}  # clé → (titre, erreur)
 
-    def schedule(self, key: str, title: str, work) -> None:
+    def schedule(self, key: str, title: str, work, done=None) -> None:
+        """`done(résultat)` est appelé dans le fil principal après un travail réussi."""
         if key in self.jobs or key in self.failed:
             return
         cancel = threading.Event()
         self.jobs[key] = {"title": title, "progress": 0.0, "cancel": cancel,
-                          "started": time.monotonic()}
+                          "started": time.monotonic(), "done": done}
         self._pool.start(_Job(key, work, self._signals, cancel))
         self.changed.emit()
 
@@ -77,10 +82,20 @@ class JobRunner(QObject):
             self.jobs[key]["progress"] = ratio
             self.changed.emit()
 
+    def _on_result(self, key: str, value: object) -> None:
+        self._results[key] = value
+
     def _on_done(self, key: str, error: str) -> None:
         job = self.jobs.pop(key, None)
+        value = self._results.pop(key, None)
         if job is not None and job["cancel"].is_set():
             error = CANCELLED
+        if not error and job is not None and job.get("done") is not None:
+            try:
+                job["done"](value)
+            except Exception as exc:  # erreur du module : signalée, jamais fatale
+                log.exception("fin de la tâche %s", key)
+                error = f"{type(exc).__name__} : {exc}"
         if error and job is not None:
             # ni relancé automatiquement, ni oublié : « Relancer » le reprend
             self.failed[key] = (job["title"], error)
@@ -179,8 +194,8 @@ class EditorModules:
     def error(self, message: str) -> None:
         QMessageBox.warning(self.parent, _("Module"), message)
 
-    def schedule_job(self, key: str, title: str, work) -> None:
-        self.jobs.schedule(key, title, work)
+    def schedule_job(self, key: str, title: str, work, done=None) -> None:
+        self.jobs.schedule(key, title, work, done)
 
     # --- rendu ----------------------------------------------------------------------------
 

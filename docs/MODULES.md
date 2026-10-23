@@ -5,7 +5,7 @@ Ce guide explique comment ajouter à montar vos propres **effets vidéo et audio
 **outils**, puis comment les partager. Un module est un petit dossier Python ; il ne demande
 ni compilation ni outil particulier.
 
-- API publique : `montar.api`, version **1.3**.
+- API publique : `montar.api`, version **1.4**.
 - Exemples complets : les modules intégrés, dans `src/montar/modules/` (`effets`,
   `essentiels`, `graphismes`, `timelapse`), et `examples/modules/negatif/`.
 
@@ -390,6 +390,11 @@ class MaSource(ClipSource):
 `cancelled()` est vrai. La grande fenêtre d'avancement de montar s'affiche pendant le
 calcul et l'aperçu est rafraîchi à la fin. Le module `timelapse` est l'exemple complet.
 
+Depuis l'API **1.4**, `schedule_job(clé, titre, travail, done)` accepte une fonction `done`
+appelée dans le fil principal avec la valeur renvoyée par `travail`, une fois le calcul
+réussi : c'est là qu'on modifie le projet (`editor.edit(…)`), jamais dans le fil du calcul.
+Le module `transcription` (sous-titres automatiques) s'en sert.
+
 ## 12. Traduire un module
 
 Écrivez les textes (`name`, `description`, libellés des `Param`) dans votre langue, puis
@@ -445,7 +450,8 @@ activer, les désactiver ou les supprimer dans Préférences → Extensions.
 | 1.1 | `description` des outils et des effets, `icon` des effets |
 | 1.2 | `AudioEffect`, `Transition`, `Generator`, `ExportFormat`, `Param.color` |
 | 1.3 | `Graphic` (`api.add_graphic`), pseudo-filtre `ZOOM` |
+| 1.4 | `schedule_job(…, done)` : résultat d'un calcul remis au fil principal |
 
 montar charge les modules dont la version **majeure** est la sienne (`1.x`). Indiquez dans
 `api_version` la plus petite version qui contient ce que vous utilisez : un module `1.2`
-fonctionne avec montar 1.3, mais pas l'inverse.
+fonctionne avec montar 1.4, mais pas l'inverse.

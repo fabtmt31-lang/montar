@@ -30,6 +30,7 @@ POSITIONS = {"bottom": 0.88, "top": 0.12}
 
 class SubtitlesPanel(_Panel):
     seekRequested = pyqtSignal(int)
+    autoRequested = pyqtSignal()  # transcription automatique (module « transcription »)
 
     def __init__(self, controller: EditorController) -> None:
         super().__init__(_("Sous-titres"))
@@ -51,6 +52,11 @@ class SubtitlesPanel(_Panel):
         files.addWidget(self.import_button)
         files.addWidget(self.export_button)
         self.body.addLayout(files)
+        self.auto_button = button(_("Sous-titres automatiques…"), "secondary", "sparkles",
+                                  tooltip=_("Transcrire la parole du clip sélectionné "
+                                            "(ou du premier clip qui a du son)"))
+        self.auto_button.clicked.connect(self.autoRequested)
+        self.body.addWidget(self.auto_button)
 
         self.list = QListWidget()
         self.list.setObjectName("SubtitleList")
