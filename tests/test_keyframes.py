@@ -81,3 +81,34 @@ def test_keyframed_position_moves_the_image(media_dir):
     assert first != last
     i = (16 * 64 + 30) * 4
     assert first[i] > 200 and last[i] < 50  # le carré a quitté le centre
+
+
+def _over_blue(engine, media_dir, fg, frame):
+    bg = ClipSpec(str(media_dir / "blue.mp4"), "video", 0, 50, media_size=(64, 36))
+    source = engine.build(TimelineSpec(Canvas(64, 36, 25), (
+        TrackSpec("video", False, False, (bg,)), TrackSpec("video", False, False, (fg,)))))
+    try:
+        data = source.render(frame, 64, 36)
+    finally:
+        source.close()
+    i = (18 * 64 + 32) * 4
+    return tuple(data[i:i + 3])
+
+
+@needs_ffmpeg
+def test_opacity_blends_with_lower_track(media_dir):
+    pytest.importorskip("mlt7")
+    from montar.core.project import Transform
+    from montar.engine import get_engine
+
+    engine = get_engine()
+    red = str(media_dir / "red.mp4")
+    r, _g, b = _over_blue(engine, media_dir, ClipSpec(
+        red, "video", 0, 50, media_size=(64, 36), transform=Transform(opacity=0.3)), 5)
+    assert 50 < r < 110 and 150 < b < 210
+    r, _g, b = _over_blue(engine, media_dir, ClipSpec(
+        red, "video", 0, 50, media_size=(64, 36),
+        keyframes=(("opacity", ((0.0, 0.0), (40.0, 1.0))),)), 20)
+    assert 100 < r < 150 and 100 < b < 150  # moitié du chemin entre les clés
+    r, _g, b = _over_blue(engine, media_dir, ClipSpec(red, "video", 0, 50, media_size=(64, 36)), 5)
+    assert r > 240 and b < 20

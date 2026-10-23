@@ -1664,3 +1664,47 @@ def test_proxy_used_by_preview(window, tmp_path):
     assert loaded[-1].tracks[0].clips[0].path == str(proxy)
     window.preferences.switches["proxies"].setChecked(False)  # désactivés : l'original
     assert wait_until(lambda: loaded[-1].tracks[0].clips[0].path == media.path)
+
+
+# --- retours 1.2 ------------------------------------------------------------------------------
+
+
+@needs_ffmpeg
+def test_preview_drag_keeps_background_and_defers_render(window, media_dir):
+    editor = imported_editor(window, media_dir, ["red.mp4", "photo.png"])
+    red, photo = editor.project.media
+    editor.add_to_timeline(red)
+    track = editor.controller.edit("piste", lambda t: t.add_track("video")).id
+    overlay = editor.controller.edit("image", lambda t: t.add_clip(photo, track, 0, 25))
+    editor.controller.edit_clip("échelle", overlay.id, lambda c: setattr(c.transform, "scale", 0.4))
+    editor.controller.select(overlay.id)
+    frames = []
+    editor.player.frameReady.connect(lambda img, f: frames.append(f))
+    editor._reload_player()
+    editor.player.seek(5)
+    assert wait_until(lambda: 5 in frames and editor.preview.canvas.image is not None)
+    canvas = editor.preview.canvas
+    box = canvas._to_widget(canvas.selection)
+    start = box.center().toPoint()
+    loads = []
+    real_load = editor.player.load
+    editor.player.load = lambda spec: (loads.append(spec), real_load(spec))
+    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, start)
+    drag = canvas._drag
+    assert drag is not None and drag.background is not None and drag.ghost is not None
+    # le fond est rendu sans l'image déplacée : la vidéo rouge au centre du cadre
+    bg = drag.background
+    color = bg.pixelColor(bg.width() // 2, bg.height() // 2)
+    assert color.red() > 200 and color.green() < 60 and color.blue() < 60
+    for dx in (20, 40, 60):
+        point = QPointF(start.x() + dx, start.y())
+        QApplication.sendEvent(canvas, QMouseEvent(
+            QEvent.Type.MouseMove, point, point, Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ControlModifier))
+    pump(400)
+    assert editor.project.clips[1].transform.x > 0  # le projet suit (inspecteur à jour)
+    assert not loads  # mais l'aperçu n'est pas reconstruit pendant le glisser
+    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+                       QPoint(start.x() + 60, start.y()))
+    assert wait_until(lambda: loads)
+    editor.player.load = real_load

@@ -429,10 +429,10 @@ class _TimelineGraph:
             self._attach_keyframed(producer, clip, keys, motions, span)
         elif not t.is_identity() or animated or motions:
             (x, y, w, h), distort = affine_rect(cw, ch, mw, mh, t)
-            opacity = max(0.0, min(1.0, t.opacity))
+            opacity = 1  # l'opacité du cadre affine est ignorée par MLT : filtre à part
             rect = f"{x:g} {y:g} {w:g} {h:g} {opacity:g}"
             if animated:
-                rect = self._slide_rect(clip, x, y, w, h, t.opacity)
+                rect = self._slide_rect(clip, x, y, w, h, 1.0)
             elif motions:  # zoom autour du centre du cadre
                 cx, cy = x + w / 2, y + h / 2
                 rect = ";".join(
@@ -444,6 +444,13 @@ class _TimelineGraph:
                 "transition.fill": 1, "transition.distort": 1 if distort else 0,
                 "transition.fix_rotate_x": t.rotation,
             }, span)
+        opacity = keys.get("opacity")
+        if opacity:  # opacité animée par les images clés
+            values = ";".join(f"{round(f)}={max(0.0, min(1.0, v)):g}" for f, v in opacity)
+            self._attach(producer, "brightness", {"level": 1, "alpha": values}, span)
+        elif t.opacity < 1:
+            self._attach(producer, "brightness",
+                         {"level": 1, "alpha": max(0.0, min(1.0, t.opacity))}, span)
         fade_in, fade_out = clip.fade_in, clip.fade_out
         if clip.kind == "text":
             step = max(1, self.canvas.fps // 2)
@@ -474,7 +481,7 @@ class _TimelineGraph:
             k = zoom_value(zoom, f) if zoom else 1.0
             cx, cy = x + w / 2, y + h / 2
             rects.append(f"{f}={cx - w * k / 2:.2f} {cy - h * k / 2:.2f} {w * k:.2f} "
-                         f"{h * k:.2f} {max(0.0, min(1.0, t.opacity)):g}")
+                         f"{h * k:.2f} 1")
             rotations.append(f"{f}={t.rotation:g}")
         props = {"background": "color:#00000000", "transition.rect": ";".join(rects),
                  "transition.fill": 1, "transition.distort": 1 if distorted else 0,

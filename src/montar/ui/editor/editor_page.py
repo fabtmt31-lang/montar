@@ -11,7 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from PyQt6.QtCore import QRectF, Qt, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QDesktopServices, QKeySequence, QShortcut
+from PyQt6.QtGui import QDesktopServices, QImage, QKeySequence, QPainter, QShortcut, QTransform
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QDialog,
@@ -72,7 +72,7 @@ from montar.ui.editor.modules import CANCELLED, EditorModules
 from montar.ui.editor.modules_panel import ModuleEntry, ModulesPanel
 from montar.ui.editor.panels import EffectsPanel, FiltersPanel, TextPanel, TransitionsPanel
 from montar.ui.editor.player import Player
-from montar.ui.editor.preview import PreviewPanel
+from montar.ui.editor.preview import PreviewPanel, crop_box
 from montar.ui.editor.subtitles_panel import SubtitlesPanel
 from montar.ui.graphics import graphic_size, render_graphic
 from montar.ui.home.library import LibraryDialog
@@ -230,7 +230,8 @@ class EditorPage(QWidget):
         self.controller.selectionChanged.connect(self._on_clip_selected)
         self.controller.transitionSelected.connect(self._on_transition_selected)
         self.preview.canvas.boxChanged.connect(self._on_preview_box)
-        self.preview.canvas.dragFinished.connect(lambda: setattr(self, "_drag_origin", None))
+        self.preview.canvas.dragFinished.connect(self._on_drag_finished)
+        self.preview.canvas.drag_images = self._drag_images
         self._drag_origin: tuple | None = None
         self.controller.historyChanged.connect(self._update_history_buttons)
         self.controller.error.connect(
@@ -1476,8 +1477,89 @@ class EditorPage(QWidget):
         self.timeline.view.viewport().update()
 
     def _schedule_reload(self) -> None:
+        if self.preview.canvas.dragging:  # l'aperçu suit le glisser ; rendu au lâcher
+            self._reload_after_drag = True
+            return
         if not self._load_timer.isActive():
             self._load_timer.start()
+
+    def _on_drag_finished(self) -> None:
+        self._drag_origin = None
+        if getattr(self, "_reload_after_drag", False):
+            self._reload_after_drag = False
+            self._schedule_reload()
+
+    def _render_still(self, project: Project, size: tuple[int, int]) -> QImage | None:
+        """Image de la tête de lecture pour une variante du projet (glisser dans l'aperçu)."""
+        spec = timeline_spec(project, self._text_image, self.modules.hook,
+                             transition_hook=self.modules.transition_hook,
+                             text_sequence=self._text_sequence, proxy=self._proxy_for)
+        try:
+            source = self._engine_factory().build(spec)
+            try:
+                data = source.render(self.timeline.view.playhead, *size)
+            finally:
+                source.close()
+        except Exception as exc:  # le glisser reste possible avec le fantôme simple
+            log.warning("rendu pour le glisser impossible : %s", exc)
+            return None
+        return QImage(data, size[0], size[1], size[0] * 4,
+                      QImage.Format.Format_RGBA8888).copy()
+
+    def _drag_images(self, rect: QRectF) -> tuple[QImage | None, QImage | None]:
+        """Élément sélectionné seul (dans son cadre) et image sans lui, au début d'un
+        glisser : le fond ne suit plus la souris."""
+        clip = self.controller.selected_clip()
+        shown = self.preview.canvas.image
+        if clip is None or shown is None:
+            return None, None
+        size = (shown.width(), shown.height())
+        others = dataclasses.replace(self.project, clips=[
+            c for c in self.project.clips if c.id != clip.id])
+        background = self._render_still(others, size)
+        if background is None:
+            return None, None
+        cw, ch = self.project.canvas_size
+        rotation = self.preview.canvas.rotation
+        media = None if clip.is_text else self.project.find_media(clip.media_id)
+        if clip.is_text:
+            layer = QImage(self._text_image(clip, cw, ch))
+        elif media is not None and media.kind == "image":
+            layer = self._image_layer(clip, media, size)
+        else:  # vidéo : rendue seule, son contenu est opaque
+            alone = dataclasses.replace(self.project, clips=[clip], subtitles=[])
+            layer = self._render_still(alone, size)
+        if layer is None or layer.isNull():
+            return None, None
+        return crop_box(layer, (cw, ch), rect, rotation), background
+
+    def _image_layer(self, clip, media: MediaItem, size: tuple[int, int]) -> QImage | None:
+        """Image fixe placée comme au rendu (recadrage compris), sur fond transparent."""
+        source = QImage(media.path)
+        if source.isNull():
+            return None
+        cw, ch = self.project.canvas_size
+        k = size[0] / cw
+        t = self._clip_transform(clip)
+        p = placement(cw, ch, media.width, media.height, t)
+        layer = QImage(size[0], size[1], QImage.Format.Format_ARGB32_Premultiplied)
+        layer.fill(0)
+        painter = QPainter(layer)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        painter.setOpacity(max(0.0, min(1.0, t.opacity)))
+        transform = QTransform()
+        transform.translate((p.left + p.width / 2) * k, (p.top + p.height / 2) * k)
+        transform.rotate(t.rotation)
+        transform.scale(-1 if t.flip_h else 1, -1 if t.flip_v else 1)
+        painter.setTransform(transform)
+        w, h = p.width * k, p.height * k
+        sw, sh = source.width(), source.height()
+        visible = QRectF(t.crop_left * sw, t.crop_top * sh,
+                         sw * (1 - t.crop_left - t.crop_right),
+                         sh * (1 - t.crop_top - t.crop_bottom))
+        painter.drawImage(QRectF(-w / 2, -h / 2, w, h), source, visible)
+        painter.end()
+        return layer
 
     def _on_project_changed(self) -> None:
         self.mark_dirty()

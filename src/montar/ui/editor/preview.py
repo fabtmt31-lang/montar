@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from PyQt6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, pyqtSignal
@@ -63,6 +64,15 @@ def _bounds(points: list[QPointF]) -> QRectF:
     return QRectF(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
 
 
+def crop_box(image: QImage, canvas_size: tuple[int, int], rect: QRectF,
+             rotation: float) -> QImage:
+    """Partie de `image` (toile entière, à toute résolution) couverte par le cadre tourné."""
+    k = image.width() / canvas_size[0]
+    b = _bounds(box_corners(rect, rotation))
+    return image.copy(round(b.left() * k), round(b.top() * k),
+                      max(1, round(b.width() * k)), max(1, round(b.height() * k)))
+
+
 @dataclass
 class _Drag:
     mode: str  # « move » ou « scale »
@@ -71,6 +81,7 @@ class _Drag:
     rect: QRectF  # cadre au départ
     ghost: QImage | None  # contenu du cadre au départ, déplacé sans attendre le rendu
     current: QRectF  # cadre voulu
+    background: QImage | None = None  # image sans l'élément déplacé
 
 
 class PreviewCanvas(QWidget):
@@ -103,6 +114,9 @@ class PreviewCanvas(QWidget):
         self._panning: QPointF | None = None
         self.background = ""  # couleur de fond (plein écran) ; vide : transparent
         self.safe_zone = False  # cadres « action » (95 %) et « titres » (90 %)
+        # fournit (élément seul dans son cadre, image sans l'élément) au début d'un glisser ;
+        # sans lui, le fantôme est découpé dans l'image affichée
+        self.drag_images: Callable[[QRectF], tuple[QImage | None, QImage | None]] | None = None
         theme().changed.connect(self.update)
 
     def set_selection(self, rect: QRectF | None, rotation: float = 0.0) -> None:
@@ -166,10 +180,7 @@ class PreviewCanvas(QWidget):
     def _grab_ghost(self, rect: QRectF) -> QImage | None:
         if self._image is None:
             return None
-        k = self._image.width() / self.canvas_size[0]
-        b = _bounds(box_corners(rect, self.rotation))
-        return self._image.copy(round(b.left() * k), round(b.top() * k),
-                                max(1, round(b.width() * k)), max(1, round(b.height() * k)))
+        return crop_box(self._image, self.canvas_size, rect, self.rotation)
 
     def set_zoom(self, zoom: float | None) -> None:
         self.zoom = zoom
@@ -209,8 +220,11 @@ class PreviewCanvas(QWidget):
         hit = self._hit(event.position())
         if hit and event.button() == Qt.MouseButton.LeftButton:
             rect = QRectF(self.selection)
+            ghost, background = self.drag_images(rect) if self.drag_images else (None, None)
+            if ghost is None:
+                ghost, background = self._grab_ghost(rect), None
             self._drag = _Drag(hit[0], hit[1], self._to_canvas(event.position()), rect,
-                               self._grab_ghost(rect), QRectF(rect))
+                               ghost, QRectF(rect), background)
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
         if self._panning is not None:
@@ -349,8 +363,11 @@ class PreviewCanvas(QWidget):
         path.addRoundedRect(rect, 6, 6)
         painter.setClipPath(path)
         painter.fillRect(rect, QColor("#0B120E") if self._image is not None else QColor(p.mint))
-        if self._image is not None:
-            painter.drawImage(rect, self._image)
+        drag = self._drag
+        shown = drag.background if drag is not None and drag.background is not None \
+            else self._image
+        if shown is not None:
+            painter.drawImage(rect, shown)
         elif self._message:
             painter.setPen(QColor(p.forest))
             painter.drawText(rect.adjusted(20, 20, -20, -20),
@@ -362,8 +379,8 @@ class PreviewCanvas(QWidget):
         if box is not None and self._image is not None:
             polygon = QPolygonF([self._to_widget_point(pt)
                                  for pt in box_corners(box, self.rotation)])
-            drag = self._drag
-            if drag is not None and drag.ghost is not None and drag.current != drag.rect:
+            if drag is not None and drag.ghost is not None and (
+                    drag.current != drag.rect or drag.background is not None):
                 # aperçu immédiat : le contenu suit la souris pendant le calcul du rendu
                 ratio = drag.current.width() / max(1e-6, drag.rect.width())
                 b = _bounds(box_corners(drag.rect, self.rotation))

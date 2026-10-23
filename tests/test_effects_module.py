@@ -79,3 +79,40 @@ def test_every_effect_renders(effects, media_dir):
         data = _render(engine, clip, effect.filters(effect.defaults()), 5, size=(640, 360))
         assert data != base, effect.id
         assert sum(data[0::4]) > 0, effect.id  # pas d'image noire
+
+
+def test_vhs_and_comic_options(effects):
+    vhs = effects["effets.vhs"]
+    names = [n for n, _p in vhs.filters(vhs.defaults())]
+    assert "avfilter.drawtext" in names and "frei0r.glitch0r" in names
+    plain = [n for n, _p in vhs.filters({**vhs.defaults(), "affichage": "aucun",
+                                         "defauts": False})]
+    assert "avfilter.drawtext" not in plain and "frei0r.glitch0r" not in plain
+    dated = [p for n, p in vhs.filters({**vhs.defaults(), "affichage": "lecture_date"})
+             if n == "avfilter.drawtext"]
+    assert len(dated) == 2 and dated[0]["av.text"] == "PLAY ▶"
+    comic = effects["effets.bd"]
+    calm = [n for n, _p in comic.filters(comic.defaults())]
+    alive = [n for n, _p in comic.filters({**comic.defaults(), "vivant": True})]
+    assert "frei0r.distort0r" not in calm and alive[0] == "avfilter.noise"
+
+
+@needs_ffmpeg
+def test_vhs_display_and_living_line_render(effects, media_dir):
+    pytest.importorskip("mlt7")
+    from montar.engine import get_engine
+
+    engine = get_engine()
+    clip = media_dir / "clip.mp4"
+    vhs = effects["effets.vhs"]
+    with_text = _render(engine, clip, vhs.filters(vhs.defaults()), 5, size=(640, 360))
+    without = _render(engine, clip, vhs.filters({**vhs.defaults(), "affichage": "aucun"}), 5,
+                      size=(640, 360))
+    top_left = [_pixel(d, x, y) for d in (with_text, without) for x in range(4, 16)
+                for y in range(3, 7)]
+    assert max(sum(p) for p in top_left[:48]) > max(sum(p) for p in top_left[48:])
+    comic = effects["effets.bd"]
+    alive = comic.filters({**comic.defaults(), "vivant": True})
+    image = media_dir / "photo.png"
+    assert _render(engine, image, alive, 3, "image", (320, 240)) != \
+        _render(engine, image, alive, 4, "image", (320, 240))
