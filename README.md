@@ -8,6 +8,22 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
 
 ## État d'avancement
 
+**Version 1.3** (1.3.0) : exigences P3, étalonnage et suivi de mouvement.
+
+- **son** : réduction de bruit, volume régulier, « s'efface sous les voix » (clic droit sur
+  une piste → Piste de voix), et dans l'onglet Audio des **options avancées** : égaliseur,
+  coupe-bas / coupe-haut, compresseur, hauteur, panoramique, écho, réverbération ;
+- **fond vert** (effet du module Studio) et **stabilisation** (outil « Stabiliser… ») ;
+- **kit de marque** (Accueil) : logos dans le panneau Graphiques, couleurs et polices dans
+  les textes ;
+- **sous-titres automatiques**, transcrits sur l'ordinateur par Whisper (installez par
+  exemple `pip install --user faster-whisper`) ;
+- **catalogue de modules** en ligne, à activer dans les Préférences ;
+- **étalonnage** (onglet Couleur) : roues ombres / tons moyens / hautes lumières, courbes,
+  teinte, vibrance, LUT `.cube`, fenêtre **Scopes** ;
+- **suivi de mouvement** (« Suivre un objet… ») : un graphisme ou un logo suit l'objet, ou
+  l'objet est pixelisé.
+
 **Version 1.2.1** : corrections et retours — opacité appliquée, déplacement fluide dans
 l'aperçu, effets **VHS** et **bande dessinée** refaits (option « Trait vivant »), timeline
 **agrandie** ou dans une **fenêtre séparée** (boutons à droite de sa barre d'outils).

@@ -1,3 +1,22 @@
+montar (1.3.0) unstable; urgency=medium
+
+  * Son : réduction de bruit, volume régulier, atténuation automatique sous
+    les pistes de voix ; options avancées (égaliseur, coupe-bas / haut,
+    compresseur, hauteur, panoramique, écho, réverbération).
+  * Module « Studio » : fond vert et stabilisation des vidéos.
+  * Kit de marque : logos, couleurs et polices pour tous les projets.
+  * Sous-titres automatiques par transcription locale (Whisper, à installer).
+  * Catalogue de modules en ligne, facultatif et désactivé par défaut.
+  * Étalonnage : roues ombres / tons moyens / hautes lumières, courbes,
+    teinte, vibrance, LUT .cube et scopes (forme d'onde, parade,
+    vecteurscope, histogramme).
+  * Suivi de mouvement : un graphisme suit un objet, ou l'objet est
+    pixelisé.
+  * Aperçu : l'inspecteur ne saccade plus pendant un déplacement.
+  * API des modules 1.4.
+
+ -- Fabien <admin@appsdoc.fr>  Sun, 01 Nov 2026 10:00:00 +0100
+
 montar (1.2.1) unstable; urgency=medium
 
   * Opacité des clips appliquée au rendu (elle était sans effet).

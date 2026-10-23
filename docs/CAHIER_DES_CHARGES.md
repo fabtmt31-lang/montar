@@ -197,7 +197,7 @@ L'effet Timelapse doit permettre d'**accélérer fortement une partie seulement 
 | F-EXP-08 | Le fichier est écrit localement ; **aucun téléversement automatique**. L'onglet « Lien de partage » et le bouton « Partager » de la maquette sont **hors v1** : en v1, « Partager » ouvre le dossier contenant le fichier exporté (ou le menu de partage du bureau) ; un vrai partage en ligne ne pourra être qu'un module optionnel (P3). | P1 | 02, 05 |
 | F-EXP-09 | Export d'une plage seulement de la timeline ; export d'une image fixe au curseur. | P2 | — |
 
-> **Réalisé en 0.5.0** : MP4 et MOV (H.264 / H.265 + AAC), WebM (VP9 + Opus), GIF animé (palette optimisée, 480p au plus, 15 i/s au plus : au-delà, le fichier pèse vite des centaines de Mo), audio seul MP3 / WAV / AAC ; 480p à 4K au format de la toile ; i/s du projet ou 24 / 25 / 30 / 60 ; qualité Légère / Équilibrée (recommandée) / Maximale ; accélération matérielle NVENC ou VA-API essayée sur une image, avec repli logiciel automatique ; export dans le dossier `exports/` du projet par défaut, en tâche de fond (progression, temps restant, annulation), puis « Lire » ou « Ouvrir le dossier ». L'onglet « Lien de partage » de la maquette n'est pas proposé (F-EXP-08). F-EXP-09 reste à faire.
+> **Réalisé en 0.5.0** : MP4 et MOV (H.264 / H.265 + AAC), WebM (VP9 + Opus), GIF animé (palette optimisée, 480p au plus, 15 i/s au plus : au-delà, le fichier pèse vite des centaines de Mo), audio seul MP3 / WAV / AAC ; 480p à 4K au format de la toile ; i/s du projet ou 24 / 25 / 30 / 60 ; qualité Légère / Équilibrée (recommandée) / Maximale ; accélération matérielle NVENC ou VA-API essayée sur une image, avec repli logiciel automatique ; export dans le dossier `exports/` du projet par défaut, en tâche de fond (progression, temps restant, annulation), puis « Lire » ou « Ouvrir le dossier ». L'onglet « Lien de partage » de la maquette n'est pas proposé (F-EXP-08). F-EXP-09 (partie ou image) est arrivé en 1.2.
 
 ### 3.11 Modules (extensibilité)
 | ID | Exigence | Prio |
@@ -516,7 +516,17 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
 - ✅ raccourcis personnalisables (F-UX-07) ; proxys des vidéos 4K (F-MED-05) ;
 - ◐ accélération matérielle (F-UX-05) : encodage matériel à l'export (déjà présent) ; le décodage de l'aperçu reste logiciel, les proxys le rendant fluide.
 
-**Suite prévue (J6+, exigences P3)** : kit de marque, sous-titres automatiques, ducking, réduction de bruit, fond vert, stabilisation, catalogue de modules en ligne ; enfin le portage Windows (D9).
+**Jalon J7 — exigences P3, étalonnage et suivi** (version 1.3) :
+- ✅ kit de marque (F-PRJ-13, F-PRJ-06) : logos, couleurs et polices réutilisables ;
+- ✅ sous-titres automatiques (F-TXT-06) : module de transcription locale (Whisper : faster-whisper, openai-whisper ou whisper.cpp, installés à part) ;
+- ✅ son (F-AUD-05 / 06) : normalisation, atténuation sous les pistes de voix (ducking), réduction de bruit ; options avancées (égaliseur, filtres, compresseur, hauteur, panoramique, écho, réverbération) ;
+- ✅ fond vert (F-EDT-11) et stabilisation (F-EDT-12, vid.stab en deux passes) : module intégré « Studio » ;
+- ✅ catalogue de modules en ligne (F-MOD-08), facultatif et désactivé par défaut, archives vérifiées (SHA-256) ;
+- ✅ étalonnage avancé (hors cahier initial) : roues lift / gamma / gain, courbes, teinte, vibrance, LUT 3D, scopes ;
+- ✅ suivi de mouvement (hors cahier initial) : un élément suit un objet, ou l'objet est pixelisé ;
+- ◐ partage en ligne (F-EXP-08) : non fait, il ne pourra être qu'un module optionnel.
+
+**Suite prévue** : portage Windows (D9) ; Flatpak, `.rpm`, arm64 ; dépôt APT signé.
 
 ---
 
