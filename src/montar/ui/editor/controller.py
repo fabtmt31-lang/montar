@@ -16,6 +16,9 @@ T = TypeVar("T")
 
 class EditorController(QObject):
     changed = pyqtSignal()  # pistes, clips ou médias modifiés
+    # modification pendant un geste continu (glisser dans l'aperçu) : `changed` est retardé
+    # jusqu'à `end_live()`, seuls les abonnés légers sont prévenus
+    liveChanged = pyqtSignal()
     selectionChanged = pyqtSignal(object)  # identifiant du clip sélectionné ou None
     transitionSelected = pyqtSignal(object)  # identifiant de la transition ou None
     historyChanged = pyqtSignal()
@@ -28,6 +31,8 @@ class EditorController(QObject):
         self.history = History()
         self.selected: str | None = None
         self.selected_transition: str | None = None
+        self.live = False
+        self._live_pending = False
 
     def edit(self, label: str, operation: Callable[[Timeline], T],
              merge: object = None) -> T | None:
@@ -80,8 +85,22 @@ class EditorController(QObject):
         if self.selected_transition and not any(
                 t.id == self.selected_transition for t in self.project.transitions):
             self.select_transition(None)
-        self.changed.emit()
+        if self.live:
+            self._live_pending = True
+            self.liveChanged.emit()
+        else:
+            self.changed.emit()
         self.historyChanged.emit()
+
+    def begin_live(self) -> None:
+        self.live = True
+
+    def end_live(self) -> None:
+        """Fin du geste : une seule notification complète."""
+        self.live = False
+        if self._live_pending:
+            self._live_pending = False
+            self.changed.emit()
 
     def select(self, clip_id: str | None) -> None:
         if clip_id is not None:

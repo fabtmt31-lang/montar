@@ -245,6 +245,7 @@ class EditorPage(QWidget):
         self.text_panel.addRequested.connect(self.add_text)
         self.transitions_panel.applyRequested.connect(self.add_transition)
         self.controller.changed.connect(self._on_project_changed)
+        self.controller.liveChanged.connect(self._on_live_change)
         self.controller.selectionChanged.connect(self._on_clip_selected)
         self.controller.transitionSelected.connect(self._on_transition_selected)
         self.preview.canvas.boxChanged.connect(self._on_preview_box)
@@ -1522,6 +1523,8 @@ class EditorPage(QWidget):
             keyframes.set_property(c, "y", round(y, 4), local)
 
         label_ = _("Déplacer") if mode == "move" else _("Redimensionner")
+        if self.preview.canvas.dragging and not self.controller.live:
+            self.controller.begin_live()
         self.controller.edit_clip(label_, clip.id, change, merge=(clip.id, f"preview:{mode}"))
 
     def add_text(self, preset: str) -> None:
@@ -1559,6 +1562,7 @@ class EditorPage(QWidget):
 
     def _on_drag_finished(self) -> None:
         self._drag_origin = None
+        self.controller.end_live()
         if getattr(self, "_reload_after_drag", False):
             self._reload_after_drag = False
             self._schedule_reload()
@@ -1634,6 +1638,13 @@ class EditorPage(QWidget):
         painter.drawImage(QRectF(-w / 2, -h / 2, w, h), source, visible)
         painter.end()
         return layer
+
+    def _on_live_change(self) -> None:
+        """Glisser dans l'aperçu : seules les valeurs de l'inspecteur et le cadre suivent ;
+        panneaux, timeline et aperçu sont remis à jour au lâcher."""
+        self.mark_dirty()
+        self.inspector.refresh_values()
+        self._update_preview_selection()
 
     def _on_project_changed(self) -> None:
         self.mark_dirty()

@@ -576,6 +576,17 @@ class Inspector(QFrame):
         self.remove_key_button.setEnabled(current in frames)
         self.key_hint.setVisible(not frames)
 
+    def refresh_values(self) -> None:
+        """Mise à jour légère des curseurs (pendant un glisser dans l'aperçu), sans
+        reconstruire les boutons ni la mise en page."""
+        clip = self._clip_obj()
+        if clip is None or self.pages.currentWidget() is not self._clip:
+            return
+        self._refreshing = True
+        for row in self._sliders:
+            row.set_value(row.getter(clip))
+        self._refreshing = False
+
     def refresh_playhead(self) -> None:
         """La tête de lecture a bougé : valeurs animées et clé courante à jour."""
         clip = self._clip_obj() if self.pages.currentWidget() is self._clip else None

@@ -1704,8 +1704,12 @@ def test_preview_drag_keeps_background_and_defers_render(window, media_dir):
     pump(400)
     assert editor.project.clips[1].transform.x > 0  # le projet suit (inspecteur à jour)
     assert not loads  # mais l'aperçu n'est pas reconstruit pendant le glisser
+    x_row = editor.inspector._animated[0]
+    assert x_row.getter(editor.project.clips[1]) == x_row._value  # curseur à jour
+    assert editor.controller._live_pending and editor.controller.live
     QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
                        QPoint(start.x() + 60, start.y()))
+    assert not editor.controller.live and not editor.controller._live_pending
     assert wait_until(lambda: loads)
     editor.player.load = real_load
 
