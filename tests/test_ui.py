@@ -1610,3 +1610,57 @@ def test_subtitles_panel_and_export(window, media_dir, tmp_path, monkeypatch):
     panel.position.changed.emit("top")
     assert editor.project.subtitle_style.size == 60 and editor.project.subtitle_style.y < 0.5
     assert isinstance(panel, SubtitlesPanel)
+
+
+# --- P2-7 -------------------------------------------------------------------------------------
+
+
+@needs_ffmpeg
+def test_custom_shortcuts(window, media_dir):
+    from PyQt6.QtGui import QKeySequence
+
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    card = window.preferences.shortcuts
+    card.edits["split"].setKeySequence(QKeySequence("X"))
+    card._edited("split")
+    assert window.settings.shortcuts == {"split": "X"}
+    keys = {sc.key().toString() for sc in editor._shortcuts}
+    assert "X" in keys and "S" not in keys
+    card.set_key("marker", "X")
+    assert card.conflict.isVisibleTo(card) and "X" in card.conflict.text()
+    card.edits["marker"].clear()  # bouton d'effacement : raccourci désactivé
+    assert window.settings.shortcuts["marker"] == ""
+    assert not card.conflict.isVisibleTo(card)
+    card.set_key("play", "P")
+    assert "P" in {sc.key().toString() for sc in editor.preview._shortcuts}
+    card.reset_all.click()
+    assert window.settings.shortcuts == {}
+    assert "S" in {sc.key().toString() for sc in editor._shortcuts}
+    assert card.edits["split"].keySequence().toString() == "S"
+
+
+@needs_ffmpeg
+def test_proxy_used_by_preview(window, tmp_path):
+    import subprocess
+
+    from montar.media.proxies import existing_proxy
+
+    folder = tmp_path / "uhd"
+    folder.mkdir()
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                    "testsrc2=size=3840x2160:rate=25:duration=0.4", "-c:v", "libx264",
+                    "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(folder / "uhd.mp4")],
+                   check=True)
+    editor = imported_editor(window, folder, ["uhd.mp4"])
+    media = editor.project.media[0]
+    assert wait_until(lambda: editor.importer.pending_proxies == 0, 60)
+    proxy = existing_proxy(editor._cache, media)
+    assert proxy is not None
+    loaded = []
+    editor.player.load = loaded.append
+    editor.add_to_timeline(media)
+    assert wait_until(lambda: loaded)
+    assert loaded[-1].tracks[0].clips[0].path == str(proxy)
+    window.preferences.switches["proxies"].setChecked(False)  # désactivés : l'original
+    assert wait_until(lambda: loaded[-1].tracks[0].clips[0].path == media.path)

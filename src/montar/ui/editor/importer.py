@@ -8,6 +8,7 @@ from pathlib import Path
 from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal
 
 from montar.media.probe import ProbeError, probe
+from montar.media.proxies import make_proxy, proxy_path
 from montar.media.store import CopyCancelled, copy_media
 from montar.media.thumbnails import make_thumbnail
 from montar.media.waveform import load_or_compute
@@ -89,6 +90,18 @@ class _WaveformTask(QRunnable):
         self._signals.done.emit(self._path, None, peaks, "")
 
 
+class _ProxyTask(QRunnable):
+    def __init__(self, item, cache: Path, signals: _Signals, stopping) -> None:
+        super().__init__()
+        self._item, self._cache, self._signals, self._stopping = item, cache, signals, stopping
+
+    def run(self) -> None:
+        out = proxy_path(self._cache, self._item.path)
+        ok = out.exists() or make_proxy(self._item, out, self._stopping)
+        if not self._stopping():
+            self._signals.done.emit(self._item.path, self._item, str(out) if ok else None, "")
+
+
 class MediaImporter(QObject):
     """Émet `finished` pour chaque fichier : (chemin, MediaItem ou None, vignette, erreur)."""
 
@@ -97,6 +110,7 @@ class MediaImporter(QObject):
     waveformReady = pyqtSignal(str, object)  # chemin du média, crêtes (bytes) ou None
     copyProgress = pyqtSignal(str, float)  # fichier d'origine, avancement de sa copie
     gathered = pyqtSignal(str, object, str)  # identifiant du média, copie ou None, erreur
+    proxyReady = pyqtSignal(str, object)  # chemin du média, proxy ou None (échec)
 
     def __init__(self, cache: Path, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -117,6 +131,12 @@ class MediaImporter(QObject):
         self._thumb_signals.done.connect(self._thumbnail_done)
         self._wave_signals = _Signals(self)
         self._wave_signals.done.connect(self._waveform_done)
+        # proxys : longs à calculer, un seul à la fois pour ne pas ralentir le montage
+        self._proxy_pool = QThreadPool(self)
+        self._proxy_pool.setMaxThreadCount(1)
+        self._proxy_signals = _Signals(self)
+        self._proxy_signals.done.connect(self._proxy_done)
+        self._proxies: set[str] = set()
 
     def _gathered_done(self, media_id: str, copy, _thumb, error: str) -> None:
         self.gathered.emit(media_id, copy, error)
@@ -126,6 +146,14 @@ class MediaImporter(QObject):
 
     def _waveform_done(self, path: str, _item, peaks, _error: str) -> None:
         self.waveformReady.emit(path, peaks)
+
+    def _proxy_done(self, path: str, _item, proxy, _error: str) -> None:
+        self._proxies.discard(path)
+        self.proxyReady.emit(path, proxy)
+
+    @property
+    def pending_proxies(self) -> int:
+        return len(self._proxies)
 
     def import_files(self, paths: list[str], copy_to: Path | None = None) -> None:
         """Importe les fichiers, copiés d'abord dans `copy_to` s'il est donné."""
@@ -143,7 +171,15 @@ class MediaImporter(QObject):
     def ensure_waveform(self, path: str) -> None:
         self._pool.start(_WaveformTask(path, self._cache, self._wave_signals))
 
+    def ensure_proxy(self, item) -> None:
+        if item.path in self._proxies:
+            return
+        self._proxies.add(item.path)
+        self._proxy_pool.start(_ProxyTask(item, self._cache, self._proxy_signals,
+                                          lambda: self._stopping))
+
     def wait(self, msecs: int = -1) -> bool:
-        """Arrête les copies en cours et attend la fin des tâches."""
+        """Arrête les copies et les proxys en cours et attend la fin des tâches."""
         self._stopping = True
-        return self._pool.waitForDone(msecs)
+        copies = self._pool.waitForDone(msecs)
+        return self._proxy_pool.waitForDone(msecs) and copies

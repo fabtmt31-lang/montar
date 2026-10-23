@@ -6,6 +6,7 @@ import json
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
+from montar.core.shortcuts import cleaned as cleaned_shortcuts
 from montar.i18n import LANGUAGES
 from montar.platform import paths
 
@@ -25,6 +26,7 @@ class Settings:
     preview_quality: str = "medium"
     disabled_modules: list[str] = field(default_factory=list)
     hardware_export: bool = False  # accélération matérielle proposée à l'export
+    proxies: bool = True  # proxys légers des vidéos 4K pour un aperçu fluide (F-MED-05)
     video_waveforms: bool = True  # forme d'onde sous les vignettes des clips vidéo
     snap: bool = True  # magnétisme de la timeline à l'ouverture d'un projet
     preview_volume: float = 1.0  # volume d'écoute de l'aperçu (0 à 1)
@@ -32,6 +34,7 @@ class Settings:
     autosave: bool = True  # enregistrement à chaque modification (sinon Ctrl+S)
     backup_minutes: int = 2  # intervalle des copies datées dans « sauvegardes/ »
     trash_days: int = 30  # projets effacés de la corbeille après ce nombre de jours
+    shortcuts: dict[str, str] = field(default_factory=dict)  # touches personnalisées (F-UX-07)
 
     @property
     def projects_path(self) -> Path:
@@ -53,6 +56,7 @@ class Settings:
         if isinstance(disabled, list):
             values["disabled_modules"] = [m for m in disabled if isinstance(m, str)]
         settings = cls(**values)
+        settings.shortcuts = cleaned_shortcuts(data.get("shortcuts"))
         if settings.language not in ("system", *LANGUAGES):
             settings.language = "system"
         if settings.theme not in THEMES:

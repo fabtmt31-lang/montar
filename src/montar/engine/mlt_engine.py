@@ -407,7 +407,8 @@ class _TimelineGraph:
         mw, mh = clip.media_size
         cw, ch = self.canvas.width, self.canvas.height
         if clip.kind in ("video", "image"):
-            left, right, top, bottom = crop_pixels(mw or cw, mh or ch, t)
+            sw, sh = clip.source_size if clip.source_size[0] else (mw, mh)
+            left, right, top, bottom = crop_pixels(sw or cw, sh or ch, t)
             if left or right or top or bottom:
                 self._attach(producer, "crop", {"left": left, "right": right, "top": top,
                                                 "bottom": bottom})

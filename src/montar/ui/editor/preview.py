@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QWidgetAction,
 )
 
+from montar.core import shortcuts
 from montar.core.settings import PREVIEW_QUALITIES
 from montar.core.timecode import frames_to_timecode
 from montar.i18n import _
@@ -445,10 +446,13 @@ class FullscreenPreview(QWidget):
         for keys, slot in panel.transport_keys():
             sc = QShortcut(QKeySequence(keys), self)
             sc.activated.connect(slot)
+        self.exit_keys = {QKeySequence(k).toString() for k in
+                          shortcuts.keys_for(panel.shortcut_overrides, "fullscreen")}
         panel.player.frameReady.connect(self._on_frame)
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
-        if event.key() in (Qt.Key.Key_Escape, Qt.Key.Key_F, Qt.Key.Key_F11):
+        pressed = QKeySequence(event.keyCombination()).toString()
+        if event.key() == Qt.Key.Key_Escape or pressed in self.exit_keys:
             self.close()
         else:
             super().keyPressEvent(event)
@@ -594,23 +598,41 @@ class PreviewPanel(QFrame):
         self.set_quality(quality)
         self.set_zoom(None)
 
-        for key, slot in self.transport_keys() + [("F", self.toggle_fullscreen),
-                                                  ("F11", self.toggle_fullscreen)]:
+        self.shortcut_overrides: dict[str, str] = {}
+        self._shortcuts: list[QShortcut] = []
+        self.apply_shortcuts({})
+
+    def transport_actions(self) -> dict:
+        return {
+            "play": self.player.toggle,
+            "start": lambda: self.player.seek(0),
+            "end": lambda: self.player.seek(self.player.length - 1),
+            "previous_frame": lambda: self.step(-1),
+            "next_frame": lambda: self.step(1),
+            "shuttle_back": lambda: self._shuttle(-1),
+            "pause": self.player.pause,
+            "shuttle_forward": lambda: self._shuttle(1),
+        }
+
+    def transport_keys(self) -> list:
+        return [(key, slot) for action, slot in self.transport_actions().items()
+                for key in shortcuts.keys_for(self.shortcut_overrides, action)]
+
+    def apply_shortcuts(self, overrides: dict[str, str]) -> None:
+        """Touches de lecture et du plein écran (personnalisables dans les préférences)."""
+        self.shortcut_overrides = dict(overrides)
+        for sc in self._shortcuts:
+            sc.setEnabled(False)
+            sc.setParent(None)
+            sc.deleteLater()
+        self._shortcuts = []
+        keys = self.transport_keys() + [
+            (k, self.toggle_fullscreen) for k in shortcuts.keys_for(overrides, "fullscreen")]
+        for key, slot in keys:
             sc = QShortcut(QKeySequence(key), self)
             sc.setContext(Qt.ShortcutContext.WindowShortcut)
             sc.activated.connect(slot)
-
-    def transport_keys(self) -> list:
-        return [
-            (Qt.Key.Key_Space, self.player.toggle),
-            (Qt.Key.Key_Home, lambda: self.player.seek(0)),
-            (Qt.Key.Key_End, lambda: self.player.seek(self.player.length - 1)),
-            (Qt.Key.Key_Left, lambda: self.step(-1)),
-            (Qt.Key.Key_Right, lambda: self.step(1)),
-            ("J", lambda: self._shuttle(-1)),
-            ("K", self.player.pause),
-            ("L", lambda: self._shuttle(1)),
-        ]
+            self._shortcuts.append(sc)
 
     def _shuttle(self, direction: int) -> None:
         if self.player.length:

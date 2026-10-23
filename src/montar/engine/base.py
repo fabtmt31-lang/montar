@@ -52,6 +52,8 @@ class ClipSpec:
     sequence: tuple[tuple[str, int], ...] = ()  # textes animés : (image, durée) successives
     # images clés de la transformation : ((propriété, ((image, valeur), …)), …)
     keyframes: tuple[tuple[str, tuple[tuple[float, float], ...]], ...] = ()
+    # taille réelle du fichier lu quand il diffère du média (proxy de l'aperçu)
+    source_size: tuple[int, int] = (0, 0)
 
 
 @dataclass(frozen=True)
@@ -105,6 +107,8 @@ class ClipOverride:
 
 
 ClipHook = Callable[[Clip, MediaItem], ClipOverride | None]
+# média -> (fichier allégé, sa taille) ou None
+ProxyHook = Callable[[MediaItem], tuple[str, tuple[int, int]] | None]
 # transition d'un module : (type, durée) -> (service MLT, propriétés) ou None si inconnue
 TransitionHook = Callable[[str, int], tuple[str, dict] | None]
 
@@ -131,12 +135,14 @@ def timeline_spec(project: Project, text_image: TextImage | None = None,
                   size: tuple[int, int] | None = None,
                   transition_hook: TransitionHook | None = None,
                   text_sequence: TextSequence | None = None,
-                  subtitles: bool | None = None) -> TimelineSpec:
+                  subtitles: bool | None = None,
+                  proxy: ProxyHook | None = None) -> TimelineSpec:
     """Description de la timeline pour le moteur. Sans `text_image`, les textes sont ignorés.
     `size` remplace la taille de la toile (export à une autre résolution). Une transition
     d'un module absent devient un fondu enchaîné. Les sous-titres sont incrustés sur une
     piste au-dessus de toutes les autres ; `subtitles` (par défaut : affichés dans le projet)
-    les inclut ou non."""
+    les inclut ou non. `proxy` donne, pour l'aperçu, une copie légère d'un média et sa
+    taille."""
     w, h = size or project.canvas_size
     media = {m.id: m for m in project.media}
     by_kind = {k: [t for t in project.tracks if t.kind == k] for k in ("video", "text", "audio")}
@@ -161,6 +167,10 @@ def timeline_spec(project: Project, text_image: TextImage | None = None,
                 override = hook(c, m) if hook is not None and c.modules else None
                 spec = _clip_spec(c, m.path, kind, (m.width, m.height), override,
                                   m.length_frames(project.fps) or 0)
+                light = proxy(m) if proxy is not None and kind == "video" \
+                    and (override is None or override.path is None) else None
+                if light is not None:
+                    spec = dataclasses.replace(spec, path=light[0], source_size=light[1])
             clips.append(spec)
             ids.append(c.id)
         transitions = tuple(

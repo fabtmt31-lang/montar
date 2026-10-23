@@ -24,6 +24,7 @@ from montar.core import storage
 from montar.core.settings import ACCENTS, BACKUP_INTERVALS, TRASH_DAYS, Settings
 from montar.engine.export import human_size
 from montar.i18n import LANGUAGES, _
+from montar.ui.home.shortcuts_card import ShortcutsCard
 from montar.ui.widgets import Segmented, Switch, button, label, shrink
 
 _THEME_PREVIEW = {
@@ -175,6 +176,9 @@ class PreferencesPage(QWidget):
         for key, title, subtitle in (
             ("hardware_export", _("Accélération matérielle"),
              _("Encodage de l'export par la carte graphique, si elle le permet")),
+            ("proxies", _("Proxys pour les vidéos 4K"),
+             _("Copie légère calculée en tâche de fond pour un aperçu fluide ; l'export "
+               "utilise toujours l'original")),
             ("video_waveforms", _("Ondes audio sur les clips vidéo"),
              _("Affiche la forme d'onde sous les vignettes")),
             ("snap", _("Magnétisme par défaut"),
@@ -186,6 +190,9 @@ class PreferencesPage(QWidget):
             gl.addWidget(_row(title, subtitle, switch))
         layout.addWidget(general)
         layout.addWidget(self._saving_card(settings))
+        self.shortcuts = ShortcutsCard(settings)
+        self.shortcuts.changed.connect(self.settingsChanged)
+        layout.addWidget(self.shortcuts)
         if cache is not None:
             layout.addWidget(self._storage_card(cache))
         if modules is not None:

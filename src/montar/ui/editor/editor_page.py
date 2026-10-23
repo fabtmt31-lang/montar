@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from montar.core import keyframes, subtitles
+from montar.core import keyframes, shortcuts, subtitles
 from montar.core.project import EXPORT_DIR, MediaItem, Project, ProjectError, new_id
 from montar.core.project_files import backup
 from montar.core.timecode import frames_to_timecode
@@ -49,6 +49,7 @@ from montar.media.probe import (
     is_supported,
     probe,
 )
+from montar.media.proxies import existing_proxy, needs_proxy, proxy_size
 from montar.media.recorder import Recorder, pick_window, session_problem
 from montar.media.store import is_inside
 from montar.media.thumbnails import thumbnail_path
@@ -205,6 +206,7 @@ class EditorPage(QWidget):
         self.importer.finished.connect(self._on_imported)
         self.importer.thumbnailReady.connect(self._on_thumbnail)
         self.importer.waveformReady.connect(self._on_waveform)
+        self.importer.proxyReady.connect(self._on_proxy)
         self.importer.copyProgress.connect(self._on_copy_progress)
         self.importer.gathered.connect(self._on_gathered)
         self._copies: dict[str, float] = {}  # fichier d'origine → avancement de la copie
@@ -247,6 +249,7 @@ class EditorPage(QWidget):
         self._export_started = 0.0
         self._notify_export = True  # message de fin (désactivé par les tests)
         self._hardware = False  # accélération matérielle proposée par défaut
+        self.use_proxies = True  # proxys des vidéos 4K pour l'aperçu (F-MED-05)
         self._recorder: Recorder | None = None
         self._record_bar: RecordingBar | None = None
         self._record_timer = QTimer(self)
@@ -399,32 +402,45 @@ class EditorPage(QWidget):
         return rail
 
     def _install_shortcuts(self) -> None:
+        self._shortcuts: list[QShortcut] = []
+        self.apply_shortcuts({})
+
+    def _shortcut_actions(self) -> dict:
         tl = self.timeline
-        for keys, slot in (
-            ("S", tl.split),
-            (QKeySequence.StandardKey.Delete, lambda: tl.delete(ripple=False)),
-            ("Backspace", lambda: tl.delete(ripple=False)),
-            ("Shift+Delete", lambda: tl.delete(ripple=True)),
-            ("Ctrl+D", tl.duplicate),
-            ("Ctrl+E", self.open_export),
-            ("Ctrl+S", self.save),
-            (QKeySequence.StandardKey.Undo, self.controller.undo),
-            (QKeySequence.StandardKey.Redo, self.controller.redo),
-            ("Ctrl+Y", self.controller.redo),
-            ("Ctrl++", lambda: tl.view.set_zoom(tl.view.pps * 1.5)),
-            ("Ctrl+=", lambda: tl.view.set_zoom(tl.view.pps * 1.5)),
-            ("Ctrl+-", lambda: tl.view.set_zoom(tl.view.pps / 1.5)),
-            ("Ctrl+0", tl.view.zoom_to_fit),
-            ("I", tl.view.mark_in),
-            ("O", tl.view.mark_out),
-            ("Escape", tl.view.clear_range),
-            ("M", tl.toggle_marker),
-            ("Ctrl+Left", lambda: tl.go_to_marker(-1)),
-            ("Ctrl+Right", lambda: tl.go_to_marker(1)),
-        ):
-            sc = QShortcut(QKeySequence(keys), self)
-            sc.setContext(Qt.ShortcutContext.WindowShortcut)
-            sc.activated.connect(slot)
+        return {
+            "split": tl.split,
+            "delete": lambda: tl.delete(ripple=False),
+            "ripple_delete": lambda: tl.delete(ripple=True),
+            "duplicate": tl.duplicate,
+            "export": self.open_export,
+            "save": self.save,
+            "undo": self.controller.undo,
+            "redo": self.controller.redo,
+            "zoom_in": lambda: tl.view.set_zoom(tl.view.pps * 1.5),
+            "zoom_out": lambda: tl.view.set_zoom(tl.view.pps / 1.5),
+            "zoom_fit": tl.view.zoom_to_fit,
+            "mark_in": tl.view.mark_in,
+            "mark_out": tl.view.mark_out,
+            "clear_range": tl.view.clear_range,
+            "marker": tl.toggle_marker,
+            "previous_marker": lambda: tl.go_to_marker(-1),
+            "next_marker": lambda: tl.go_to_marker(1),
+        }
+
+    def apply_shortcuts(self, overrides: dict[str, str]) -> None:
+        """Raccourcis clavier, avec les touches personnalisées des préférences (F-UX-07)."""
+        for sc in self._shortcuts:
+            sc.setEnabled(False)
+            sc.setParent(None)
+            sc.deleteLater()
+        self._shortcuts = []
+        for action, slot in self._shortcut_actions().items():
+            for key in shortcuts.keys_for(overrides, action):
+                sc = QShortcut(QKeySequence(key), self)
+                sc.setContext(Qt.ShortcutContext.WindowShortcut)
+                sc.activated.connect(slot)
+                self._shortcuts.append(sc)
+        self.preview.apply_shortcuts(overrides)
 
     # --- projet -------------------------------------------------------------
 
@@ -435,7 +451,7 @@ class EditorPage(QWidget):
                 self.thumbnails[m.path] = str(thumb)
             elif m.exists and m.kind != "audio":
                 self.importer.ensure_thumbnail(m)
-            self._ensure_waveform(m)
+            self._ensure_derived(m)
         self.media_panel.set_media(self.project.media, self.thumbnails)
         self._shown_media = [m.id for m in self.project.media]
         self._used_media: set[str] = set()
@@ -503,7 +519,7 @@ class EditorPage(QWidget):
         if moved is not None:
             if moved.kind != "audio":
                 self.importer.ensure_thumbnail(moved)
-            self._ensure_waveform(moved)
+            self._ensure_derived(moved)
             if relink:
                 for clip in [c for c in self.project.clips if c.media_id == media_id]:
                     self.controller.timeline.fit_to_media(clip.id)
@@ -553,6 +569,26 @@ class EditorPage(QWidget):
         if path in self._copies:
             self._copies[path] = ratio
             self._update_jobs()
+
+    def _ensure_derived(self, media: MediaItem) -> None:
+        """Fichiers calculés d'un média : forme d'onde et, pour la 4K, proxy de l'aperçu."""
+        self._ensure_waveform(media)
+        if self.use_proxies and media.exists and needs_proxy(media) \
+                and existing_proxy(self._cache, media) is None:
+            self.importer.ensure_proxy(media)
+            self._update_jobs()
+
+    def _proxy_for(self, media: MediaItem):
+        """Proxy de l'aperçu (fichier, taille) s'il est prêt."""
+        if not self.use_proxies or not needs_proxy(media):
+            return None
+        path = existing_proxy(self._cache, media)
+        return (str(path), proxy_size(media.width, media.height)) if path else None
+
+    def _on_proxy(self, path: str, proxy) -> None:
+        self._update_jobs()
+        if proxy and any(m.path == path for m in self.project.media):
+            self._schedule_reload()
 
     def _ensure_waveform(self, media: MediaItem) -> None:
         if not media.has_audio or not media.exists:
@@ -683,7 +719,8 @@ class EditorPage(QWidget):
         self._load_timer.stop()
         self.player.load(timeline_spec(self.project, self._text_image, self.modules.hook,
                                        transition_hook=self.modules.transition_hook,
-                                       text_sequence=self._text_sequence))
+                                       text_sequence=self._text_sequence,
+                                       proxy=self._proxy_for))
 
     # --- modules -------------------------------------------------------------------------
 
@@ -763,8 +800,14 @@ class EditorPage(QWidget):
                 overlay.hide()
             self._set_shortcuts_enabled(busy is None)
         copying = getattr(self, "_copies", None)
-        self.jobs_box.setVisible(bool(copying))
+        importer = getattr(self, "importer", None)
+        proxies = importer.pending_proxies if importer is not None else 0
+        self.jobs_box.setVisible(bool(copying) or bool(proxies))
+        if not copying and proxies:  # durée inconnue : barre animée
+            self.jobs_label.setText(_("Préparation des proxys 4K ({n})").format(n=proxies))
+            self.jobs_bar.setRange(0, 0)
         if copying:
+            self.jobs_bar.setRange(0, 100)
             ratio = sum(copying.values()) / len(copying)
             title = (_("Copie des médias ({n})").format(n=len(copying)) if len(copying) > 1
                      else _("Copie des médias"))
@@ -862,7 +905,7 @@ class EditorPage(QWidget):
                                  lambda t, new=new: t.project.media.append(new))
         if new.kind != "audio":
             self.importer.ensure_thumbnail(new)
-        self._ensure_waveform(new)
+        self._ensure_derived(new)
         self.media_panel.set_media(self.project.media, self.thumbnails)
         self.media_panel.select(new.id)
         self._reload_player()
@@ -1153,7 +1196,7 @@ class EditorPage(QWidget):
 
     def _add_voice_over(self, item: MediaItem, thumb: str | None, start: int,
                         trim: int) -> None:
-        self._ensure_waveform(item)
+        self._ensure_derived(item)
 
         def add(t):
             t.project.media.append(item)
@@ -1432,6 +1475,10 @@ class EditorPage(QWidget):
             self.inspector.show_project(self.project)
         self.timeline.view.viewport().update()
 
+    def _schedule_reload(self) -> None:
+        if not self._load_timer.isActive():
+            self._load_timer.start()
+
     def _on_project_changed(self) -> None:
         self.mark_dirty()
         media_ids = [m.id for m in self.project.media]
@@ -1439,8 +1486,7 @@ class EditorPage(QWidget):
             self._shown_media = media_ids
             self.media_panel.set_media(self.project.media, self.thumbnails)
         self._update_used_media()
-        if not self._load_timer.isActive():
-            self._load_timer.start()
+        self._schedule_reload()
         if self.controller.selected_transition:
             self._on_transition_selected(self.controller.selected_transition)
         else:
@@ -1502,7 +1548,7 @@ class EditorPage(QWidget):
     def _add_media(self, item: MediaItem, thumb: str | None) -> None:
         if thumb:
             self.thumbnails[item.path] = thumb
-        self._ensure_waveform(item)
+        self._ensure_derived(item)
         self.controller.edit(_("Importer {name}").format(name=item.name),
                              lambda t: t.project.media.append(item))
 
@@ -1576,10 +1622,16 @@ class EditorPage(QWidget):
         """Préférences de l'utilisateur ; le magnétisme n'est réglé qu'à l'ouverture (il se
         change ensuite dans la barre de la timeline)."""
         self._hardware = settings.hardware_export
+        if settings.proxies != self.use_proxies:
+            self.use_proxies = settings.proxies
+            for m in self.project.media:
+                self._ensure_derived(m)
+            self._schedule_reload()
         self.autosave = settings.autosave
         self.backup_every = settings.backup_minutes * 60.0
         if self.autosave and self._dirty:
             self._save_timer.start()
+        self.apply_shortcuts(settings.shortcuts)
         view = self.timeline.view
         view.video_waveforms = settings.video_waveforms
         view.viewport().update()
