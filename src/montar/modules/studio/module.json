@@ -1,0 +1,10 @@
+{
+  "id": "studio",
+  "name": "Studio",
+  "version": "1.0.0",
+  "api_version": "1.1",
+  "author": "montar",
+  "license": "GPL-3.0-or-later",
+  "description": "Fond vert (incrustation d'une couleur) et stabilisation des vidéos qui tremblent, calculée en arrière-plan.",
+  "permissions": []
+}

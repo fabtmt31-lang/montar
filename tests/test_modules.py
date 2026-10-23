@@ -38,7 +38,7 @@ def test_builtin_timelapse_is_loaded(manager):
     info = manager.modules["timelapse"]
     assert info.builtin and info.active
     assert {t.id for _m, t in manager.tools()} >= {"timelapse.apply", "timelapse.remove"}
-    assert [m for m, _s in manager.sources()] == ["timelapse"]
+    assert "timelapse" in [m for m, _s in manager.sources()]
 
 
 def test_install_example_module_from_archive(manager, tmp_path):
@@ -88,7 +88,8 @@ def test_enable_disable(manager):
     calls = []
     manager.listeners.append(lambda: calls.append(1))
     manager.set_enabled("timelapse", False)
-    assert manager.tools() == [] and "timelapse" in manager.disabled
+    assert all(m != "timelapse" for m, _t in manager.tools())
+    assert "timelapse" in manager.disabled
     manager.set_enabled("timelapse", True)
     assert manager.is_active("timelapse") and len(calls) == 2
     reloaded = ModuleManager(builtin_modules_dir(), manager.user_dir, ["timelapse"])

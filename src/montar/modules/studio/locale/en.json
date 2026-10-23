@@ -1,0 +1,23 @@
+{
+ "Bleu": "Blue",
+ "Corrige les tremblements d'une vidéo filmée à la main (analyse en arrière-plan ; les bords sont légèrement rognés).": "Removes the shake of handheld footage (analysed in the background; edges are slightly cropped).",
+ "Couleur du fond": "Background colour",
+ "Douceur des bords": "Edge softness",
+ "Fond vert": "Green screen",
+ "Fond vert (incrustation d'une couleur) et stabilisation des vidéos qui tremblent, calculée en arrière-plan.": "Green screen (colour keying) and stabilisation of shaky videos, computed in the background.",
+ "Force de la stabilisation :": "Stabilisation strength:",
+ "Forte": "Strong",
+ "La stabilisation demande ffmpeg avec vid.stab (paquet ffmpeg de Debian ou d'Ubuntu).": "Stabilisation needs ffmpeg with vid.stab (Debian or Ubuntu ffmpeg package).",
+ "Légère": "Light",
+ "Moyenne": "Medium",
+ "Rend transparente la couleur du fond (vert ou bleu) : la piste du dessous apparaît derrière le sujet.": "Makes the background colour (green or blue) transparent: the track below shows behind the subject.",
+ "Retirer la stabilisation": "Remove stabilisation",
+ "Revient à la vidéo d'origine.": "Goes back to the original video.",
+ "Stabilisation": "Stabilisation",
+ "Stabiliser": "Stabilise",
+ "Stabiliser…": "Stabilise…",
+ "Studio": "Studio",
+ "Suppression du reflet coloré": "Colour spill removal",
+ "Tolérance": "Tolerance",
+ "Vert": "Green"
+}
