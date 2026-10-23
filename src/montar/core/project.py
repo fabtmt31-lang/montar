@@ -177,6 +177,8 @@ class Clip:
     # Réglages propres aux modules, par identifiant de module (ex. "timelapse").
     # Un module absent est ignoré au rendu mais ses réglages sont conservés.
     modules: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # images clés : propriété (x, y, scale, rotation, opacity) → [[image, valeur], …]
+    keyframes: dict[str, list[list[float]]] = field(default_factory=dict)
     id: str = field(default_factory=new_id)
 
     @property

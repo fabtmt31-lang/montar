@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.util
+import dataclasses
 import locale
 import logging
 import math
@@ -157,6 +158,18 @@ def zoom_curve(duration: int, fps: int, motions: list[dict]) -> list[tuple[int, 
             k *= a + (b - a) * (_smooth(t) if smooth else t)
         result.append((f, k))
     return result
+
+
+def zoom_value(curve: dict[int, float], frame: int) -> float:
+    """Facteur de zoom à `frame`, interpolé entre les points de `zoom_curve`."""
+    if frame in curve:
+        return curve[frame]
+    before = max((f for f in curve if f < frame), default=None)
+    after = min((f for f in curve if f > frame), default=None)
+    if before is None or after is None:
+        return curve[before if after is None else after]
+    t = (frame - before) / (after - before)
+    return curve[before] + (curve[after] - curve[before]) * t
 
 
 def _anim(points: list[tuple[int, float]]) -> str:
@@ -409,8 +422,11 @@ class _TimelineGraph:
                 self._attach(producer, name, props)
         motions = [props for name, props in clip.extra_filters if name == MOTION] \
             if clip.kind in ("video", "image") else []
+        keys = dict(clip.keyframes) if clip.kind in ("video", "image") else {}
         animated = clip.kind == "text" and "slide" in (clip.animation_in, clip.animation_out)
-        if not t.is_identity() or animated or motions:
+        if keys:  # images clés : cadre, opacité et rotation animés
+            self._attach_keyframed(producer, clip, keys, motions, span)
+        elif not t.is_identity() or animated or motions:
             (x, y, w, h), distort = affine_rect(cw, ch, mw, mh, t)
             opacity = max(0.0, min(1.0, t.opacity))
             rect = f"{x:g} {y:g} {w:g} {h:g} {opacity:g}"
@@ -435,6 +451,35 @@ class _TimelineGraph:
         points = _fade_points(clip.duration, fade_in, fade_out, 0.0, 1.0)
         if points is not None:
             self._attach(producer, "brightness", {"level": _anim(points), "alpha": -1}, span)
+
+    def _attach_keyframed(self, producer, clip: ClipSpec, keys: dict, motions: list,
+                          span: tuple[int, int]) -> None:
+        from montar.core.keyframes import value_at
+
+        cw, ch = self.canvas.width, self.canvas.height
+        mw, mh = clip.media_size
+        last = max(0, clip.duration - 1)
+        frames = {0, last} | {min(last, max(0, round(f))) for points in keys.values()
+                              for f, _v in points}
+        zoom = dict(zoom_curve(clip.duration, self.canvas.fps, motions)) if motions else {}
+        frames |= set(zoom)
+        points = {k: [list(p) for p in v] for k, v in keys.items()}
+        rects, rotations, distorted = [], [], False
+        for f in sorted(frames):
+            t = dataclasses.replace(clip.transform, **{
+                k: value_at(points[k], f, getattr(clip.transform, k)) for k in points})
+            (x, y, w, h), distort = affine_rect(cw, ch, mw, mh, t)
+            distorted = distorted or distort
+            k = zoom_value(zoom, f) if zoom else 1.0
+            cx, cy = x + w / 2, y + h / 2
+            rects.append(f"{f}={cx - w * k / 2:.2f} {cy - h * k / 2:.2f} {w * k:.2f} "
+                         f"{h * k:.2f} {max(0.0, min(1.0, t.opacity)):g}")
+            rotations.append(f"{f}={t.rotation:g}")
+        props = {"background": "color:#00000000", "transition.rect": ";".join(rects),
+                 "transition.fill": 1, "transition.distort": 1 if distorted else 0,
+                 "transition.fix_rotate_x": ";".join(rotations) if "rotation" in keys
+                 else clip.transform.rotation}
+        self._attach(producer, "affine", props, span)
 
     def _slide_rect(self, clip: ClipSpec, x: float, y: float, w: float, h: float,
                     opacity: float) -> str:

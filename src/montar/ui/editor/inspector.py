@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from montar.core import keyframes
 from montar.core.project import Clip, ColorAdjust, MediaItem, Project, Transform, Transition
 from montar.core.timecode import frames_to_timecode, seconds_to_short
 from montar.core.timeline import AUDIO_TRANSITIONS, VIDEO_TRANSITIONS
@@ -50,6 +51,7 @@ def _signed(v: float) -> str:
 
 class Inspector(QFrame):
     freezeRequested = pyqtSignal(str)  # clip : image fixe à la tête de lecture
+    seekRequested = pyqtSignal(int)  # image de la timeline (clé choisie)
 
     def __init__(self, controller: EditorController, modules=None) -> None:
         super().__init__()
@@ -58,6 +60,7 @@ class Inspector(QFrame):
         self.setFixedWidth(340)
         self.controller = controller
         self.clip_id: str | None = None
+        self.playhead: Callable[[], int] = lambda: 0  # fourni par l'éditeur
         self._refreshing = False
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -135,18 +138,39 @@ class Inspector(QFrame):
 
         image, il = page()
         il.addWidget(section(_("TRANSFORMATION")))
-        self._slider(il, _("Position horizontale"), -100, 100, "x",
-                     lambda c: c.transform.x * 100,
-                     lambda c, v: setattr(c.transform, "x", v / 100), _signed)
-        self._slider(il, _("Position verticale"), -100, 100, "y",
-                     lambda c: c.transform.y * 100,
-                     lambda c, v: setattr(c.transform, "y", v / 100), _signed)
-        self._slider(il, _("Échelle"), 10, 400, "scale", lambda c: c.transform.scale * 100,
-                     lambda c, v: setattr(c.transform, "scale", v / 100))
-        self._slider(il, _("Rotation"), -180, 180, "rotation", lambda c: c.transform.rotation,
-                     lambda c, v: setattr(c.transform, "rotation", v), lambda v: f"{v:.0f}°")
-        self._slider(il, _("Opacité"), 0, 100, "opacity", lambda c: c.transform.opacity * 100,
-                     lambda c, v: setattr(c.transform, "opacity", v / 100))
+        # valeurs à la tête de lecture : un clip animé reçoit une clé à cet instant
+        self._animated: list[SliderRow] = []
+        for prop, title, low, high, factor, fmt in (
+            ("x", _("Position horizontale"), -100, 100, 100, _signed),
+            ("y", _("Position verticale"), -100, 100, 100, _signed),
+            ("scale", _("Échelle"), 10, 400, 100, _pct),
+            ("rotation", _("Rotation"), -180, 180, 1, lambda v: f"{v:.0f}°"),
+            ("opacity", _("Opacité"), 0, 100, 100, _pct),
+        ):
+            self._animated.append(self._slider(
+                il, title, low, high, prop,
+                lambda c, p=prop, k=factor: getattr(
+                    keyframes.transform_at(c, self._local(c)), p) * k,
+                lambda c, v, p=prop, k=factor: keyframes.set_property(
+                    c, p, v / k, self._local(c)), fmt))
+        il.addWidget(section(_("IMAGES CLÉS")))
+        self.key_hint = label(_("Ajoutez une image clé, déplacez la tête de lecture puis "
+                                "changez la position, l'échelle, la rotation ou l'opacité : "
+                                "le clip s'anime entre les clés."), "small")
+        self.key_hint.setWordWrap(True)
+        il.addWidget(self.key_hint)
+        key_tools = QHBoxLayout()
+        self.add_key_button = button(_("Ajouter une image clé"), "secondary", "plus")
+        self.add_key_button.clicked.connect(self._add_keyframe)
+        key_tools.addWidget(self.add_key_button)
+        self.remove_key_button = button("", "secondary", "trash-2",
+                                        tooltip=_("Retirer l'image clé"))
+        self.remove_key_button.clicked.connect(self._remove_keyframe)
+        key_tools.addWidget(shrink(self.remove_key_button))
+        il.addLayout(key_tools)
+        self.key_chips = QGridLayout()
+        self.key_chips.setSpacing(6)
+        il.addLayout(self.key_chips)
         il.addWidget(section(_("AJUSTEMENTS")))
         self.fit = Segmented([("fit", _("Ajuster")), ("fill", _("Remplir")),
                               ("stretch", _("Étirer"))], compact=True)
@@ -162,7 +186,7 @@ class Inspector(QFrame):
             ("flip-vertical-2", _("Retourner verticalement"),
              lambda c: setattr(c.transform, "flip_v", not c.transform.flip_v)),
             ("rotate-ccw", _("Réinitialiser la transformation"),
-             lambda c: setattr(c, "transform", Transform())),
+             lambda c: (setattr(c, "transform", Transform()), c.keyframes.clear())),
         ):
             b = button("", "secondary", icon, tooltip=tip)
             set_icon(b, icon, "ink", 18)
@@ -512,6 +536,65 @@ class Inspector(QFrame):
         for b in self._speed_buttons.buttons():
             b.setEnabled(not locked)
 
+    # --- images clés ----------------------------------------------------------------
+
+    def _local(self, clip: Clip) -> int:
+        """Tête de lecture relative au clip (bornée à sa durée)."""
+        return max(0, min(clip.duration - 1, self.playhead() - clip.start))
+
+    def _add_keyframe(self) -> None:
+        clip = self._clip_obj()
+        if clip is not None:
+            frame = self._local(clip)
+            self._edit(_("Ajouter une image clé"), f"key:{frame}",
+                       lambda c: keyframes.add_keyframe(c, frame))
+
+    def _remove_keyframe(self) -> None:
+        clip = self._clip_obj()
+        if clip is not None:
+            frame = self._local(clip)
+            self._edit(_("Retirer l'image clé"), f"unkey:{frame}",
+                       lambda c: keyframes.remove_keyframe(c, frame))
+
+    def _refresh_keys(self, clip: Clip) -> None:
+        while self.key_chips.count():
+            w = self.key_chips.takeAt(0).widget()
+            if w is not None:
+                w.deleteLater()
+        frames = keyframes.key_frames(clip)
+        current = self._local(clip)
+        fps = self.controller.project.fps
+        for i, f in enumerate(frames):
+            b = QPushButton(f"◆ {frames_to_timecode(max(0, f), fps)}", self)
+            b.setProperty("variant", "chip")
+            b.setCheckable(True)
+            b.setChecked(f == current)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            at = clip.start + max(0, f)
+            b.clicked.connect(lambda _=False, at=at: self.seekRequested.emit(at))
+            self.key_chips.addWidget(b, i // 3, i % 3)
+        self.remove_key_button.setEnabled(current in frames)
+        self.key_hint.setVisible(not frames)
+
+    def refresh_playhead(self) -> None:
+        """La tête de lecture a bougé : valeurs animées et clé courante à jour."""
+        clip = self._clip_obj() if self.pages.currentWidget() is self._clip else None
+        if clip is None or not clip.keyframes:
+            if clip is not None:
+                self.remove_key_button.setEnabled(False)
+            return
+        self._refreshing = True
+        for row in self._animated:
+            row.set_value(row.getter(clip))
+        self._refreshing = False
+        current = self._local(clip)
+        frames = keyframes.key_frames(clip)
+        self.remove_key_button.setEnabled(current in frames)
+        for i in range(self.key_chips.count()):
+            w = self.key_chips.itemAt(i).widget()
+            if w is not None:
+                w.setChecked(frames[i] == current)
+
     def _refresh_missing(self, clip: Clip) -> None:
         missing = self.modules.missing(clip) if self.modules else []
         self.missing.setVisible(bool(missing))
@@ -523,6 +606,7 @@ class Inspector(QFrame):
     def _refresh_clip(self, clip: Clip, media: MediaItem | None) -> None:
         self._refresh_tools(clip)
         self._refresh_missing(clip)
+        self._refresh_keys(clip)
         self._refreshing = True
         for row in self._sliders:
             row.set_value(row.getter(clip))

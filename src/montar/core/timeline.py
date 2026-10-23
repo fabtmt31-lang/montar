@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import copy
 
+from montar.core import keyframes
 from montar.core.project import (
     Clip,
     Marker,
@@ -284,6 +285,7 @@ class Timeline:
         if edge == "start":
             delta = frame - clip.start
             clip.start, clip.duration = frame, clip.duration - delta
+            keyframes.shift(clip, -delta)  # les clés restent au même instant de la vidéo
             if self.available_before(clip) is not None and not clip.reverse:
                 clip.source_in = max(0, clip.source_in + round(delta * clip.speed))
         elif edge == "end":
@@ -310,6 +312,7 @@ class Timeline:
         second = copy.deepcopy(clip)
         second.id = new_id()
         second.start, second.duration = frame, clip.duration - offset
+        keyframes.shift(second, -offset)
         if clip.reverse and self.media_of(clip) is not None:
             # à l'envers : la première partie montre le haut de la plage, la seconde le bas
             clip.source_in += round(second.duration * clip.speed)

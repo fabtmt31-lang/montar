@@ -27,6 +27,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import QAbstractScrollArea, QApplication, QInputDialog, QMenu, QToolTip
 
+from montar.core import keyframes
 from montar.core.project import Clip, Marker, MediaItem, Track
 from montar.i18n import _
 from montar.media.waveform import PEAKS_PER_SECOND
@@ -380,6 +381,7 @@ class TimelineView(QAbstractScrollArea):
         for badge in badges:
             x = self._paint_badge(painter, badge, x, rect.top() + 5)
         self._paint_fades(painter, clip, rect)
+        self._paint_keys(painter, clip, rect)
         if media is not None and not media.exists:
             icon = icon_pixmap("triangle-alert", "#B4452F", 16)
             painter.drawPixmap(int(rect.left()) + 6, int(rect.top()) + 4, icon)
@@ -395,6 +397,21 @@ class TimelineView(QAbstractScrollArea):
             cy = rect.center().y()
             for x in (rect.left() + 3, rect.right() - 6):
                 painter.drawRoundedRect(QRectF(x, cy - 9, 3, 18), 1.5, 1.5)
+
+    def _paint_keys(self, painter: QPainter, clip: Clip, rect: QRectF) -> None:
+        """Losanges des images clés, en bas du clip."""
+        frames = keyframes.key_frames(clip)
+        if not frames:
+            return
+        step = rect.width() / max(1, clip.duration)
+        y = rect.bottom() - 8
+        painter.setPen(QPen(QColor("#FFFFFF"), 1))
+        painter.setBrush(QColor(theme().palette.forest))
+        for f in frames:
+            if 0 <= f < clip.duration:
+                x = rect.left() + (f + 0.5) * step
+                painter.drawPolygon(QPolygonF([QPointF(x, y - 5), QPointF(x + 5, y),
+                                               QPointF(x, y + 5), QPointF(x - 5, y)]))
 
     def _badges(self, clip: Clip, media: MediaItem | None) -> list[str]:
         badges = list(self.badge_provider(clip))

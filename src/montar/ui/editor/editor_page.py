@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from montar.core import keyframes
 from montar.core.project import EXPORT_DIR, MediaItem, Project, ProjectError, new_id
 from montar.core.project_files import backup
 from montar.core.timecode import frames_to_timecode
@@ -170,6 +171,8 @@ class EditorPage(QWidget):
         body.addWidget(self.preview, 1)
         self.inspector = Inspector(self.controller, self.modules)
         self.inspector.freezeRequested.connect(self.freeze_frame)
+        self.inspector.playhead = self._playhead
+        self.inspector.seekRequested.connect(self.player.seek)
         body.addWidget(self.inspector)
         self.effects_panel.set_modules(self.modules)
         self.effects_panel.addRequested.connect(self.open_apply)
@@ -1325,6 +1328,14 @@ class EditorPage(QWidget):
     def _on_frame(self, _image, frame: int) -> None:
         self.timeline.set_playhead(frame, follow=self.player.playing)
         self._update_preview_selection()
+        self.inspector.refresh_playhead()
+
+    def _playhead(self) -> int:
+        return self.timeline.view.playhead
+
+    def _clip_transform(self, clip):
+        """Transformation du clip à la tête de lecture (images clés comprises)."""
+        return keyframes.transform_at(clip, self.timeline.view.playhead - clip.start)
 
     def _selection_rect(self) -> QRectF | None:
         """Cadre de l'élément sélectionné dans la toile, s'il est visible à la tête de lecture."""
@@ -1338,12 +1349,12 @@ class EditorPage(QWidget):
         if media is None or media.kind == "audio" or \
                 self.controller.timeline.track(clip.track_id).kind != "video":
             return None
-        p = placement(cw, ch, media.width, media.height, clip.transform)
+        p = placement(cw, ch, media.width, media.height, self._clip_transform(clip))
         return QRectF(p.left, p.top, p.width, p.height)
 
     def _update_preview_selection(self) -> None:
         clip = self.controller.selected_clip()
-        rotation = 0.0 if clip is None or clip.is_text else clip.transform.rotation
+        rotation = 0.0 if clip is None or clip.is_text else self._clip_transform(clip).rotation
         self.preview.canvas.set_selection(self._selection_rect(), rotation)
 
     def _on_preview_box(self, mode: str, rect: QRectF) -> None:
@@ -1355,7 +1366,7 @@ class EditorPage(QWidget):
             start = self._selection_rect()
             if start is None:
                 return
-            size = clip.text.size if clip.is_text else clip.transform.scale
+            size = clip.text.size if clip.is_text else self._clip_transform(clip).scale
             self._drag_origin = (clip.id, size, start.width())
         _cid, s0, w0 = self._drag_origin
         ratio = rect.width() / max(1e-6, w0)
@@ -1370,12 +1381,15 @@ class EditorPage(QWidget):
                 c.text.x = round(max(0.0, min(1.0, center.x() / cw)), 4)
                 c.text.y = round(max(0.0, min(1.0, center.y() / ch)), 4)
                 return
-            t = c.transform
+            local = self.timeline.view.playhead - c.start
+            t = copy.copy(keyframes.transform_at(c, local))
             if mode == "scale":
                 t.scale = round(max(0.05, min(8.0, s0 * ratio)), 4)
+                keyframes.set_property(c, "scale", t.scale, local)
             mw, mh = (media.width, media.height) if media is not None else (cw, ch)
             x, y = offset_for_center(cw, ch, mw, mh, t, center.x(), center.y())
-            t.x, t.y = round(x, 4), round(y, 4)
+            keyframes.set_property(c, "x", round(x, 4), local)
+            keyframes.set_property(c, "y", round(y, 4), local)
 
         label_ = _("Déplacer") if mode == "move" else _("Redimensionner")
         self.controller.edit_clip(label_, clip.id, change, merge=(clip.id, f"preview:{mode}"))

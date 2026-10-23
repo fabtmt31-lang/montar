@@ -13,6 +13,7 @@ from PyQt6.QtGui import QMouseEvent, QShortcut  # noqa: E402
 from PyQt6.QtTest import QTest  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
+from montar.core import keyframes  # noqa: E402
 from montar.core.project import Project  # noqa: E402
 from montar.core.settings import Settings  # noqa: E402
 from montar.ui.dialogs.new_project import NewProjectDialog, NewProjectParams  # noqa: E402
@@ -1497,3 +1498,42 @@ def test_templates(window, media_dir, isolated_home):
     window.show_home()
     window.delete_template(mine, confirm=False)
     assert page.grid.count() == 3
+
+
+@needs_ffmpeg
+def test_keyframes_from_inspector(window, media_dir):
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    clip = editor.project.clips[0]
+    editor.controller.select(clip.id)
+    inspector = editor.inspector
+    x_row = inspector._animated[0]
+    assert inspector.key_hint.isVisibleTo(inspector) and \
+        not inspector.remove_key_button.isEnabled()
+
+    editor.timeline.set_playhead(0)
+    inspector.add_key_button.click()
+    editor.timeline.set_playhead(40)
+    x_row.moved.emit(50)  # clip animé : la valeur devient une clé à la tête de lecture
+    clip = editor.project.clips[0]
+    assert keyframes.key_frames(clip) == [0, 40]
+    assert clip.transform.x == 0.0
+    assert inspector.key_chips.count() == 2 and inspector.remove_key_button.isEnabled()
+
+    editor.timeline.set_playhead(20)
+    inspector.refresh_playhead()
+    assert abs(x_row.getter(clip) - 25) < 1e-6 and not inspector.remove_key_button.isEnabled()
+    rect = editor._selection_rect()
+    assert rect is not None and rect.center().x() > editor.project.canvas_size[0] / 2
+
+    seeks = []
+    inspector.seekRequested.connect(seeks.append)
+    inspector.key_chips.itemAt(1).widget().click()
+    assert seeks == [clip.start + 40]
+
+    editor.timeline.set_playhead(40)
+    inspector.refresh_playhead()
+    inspector.remove_key_button.click()
+    assert keyframes.key_frames(editor.project.clips[0]) == [0]
+    editor.controller.undo()
+    assert keyframes.key_frames(editor.project.clips[0]) == [0, 40]

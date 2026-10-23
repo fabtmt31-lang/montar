@@ -50,6 +50,8 @@ class ClipSpec:
     reverse: bool = False  # lecture inversée
     media_length: int = 0  # images du média à la fréquence du projet (lecture inversée)
     sequence: tuple[tuple[str, int], ...] = ()  # textes animés : (image, durée) successives
+    # images clés de la transformation : ((propriété, ((image, valeur), …)), …)
+    keyframes: tuple[tuple[str, tuple[tuple[float, float], ...]], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -119,7 +121,9 @@ def _clip_spec(clip: Clip, path: str, kind: str, size: tuple[int, int],
         copy.deepcopy(clip.color), clip.preset, clip.preset_amount, copy.deepcopy(clip.effects),
         text.animation_in if text else "none", text.animation_out if text else "none",
         tuple(o.extra_filters), tuple(o.audio_filters),
-        clip.reverse and o.path is None, media_length)
+        clip.reverse and o.path is None, media_length, (),
+        tuple(sorted((k, tuple((float(f), float(v)) for f, v in points))
+                     for k, points in clip.keyframes.items() if points)))
 
 
 def timeline_spec(project: Project, text_image: TextImage | None = None,
