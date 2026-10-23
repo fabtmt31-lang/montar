@@ -1,3 +1,22 @@
+montar (1.2.0) unstable; urgency=medium
+
+  * Images clés : position, échelle, rotation et opacité animées entre des
+    clés posées à la tête de lecture (inspecteur, losanges sur la timeline).
+  * Sous-titres : panneau dédié, import / export SRT, incrustés à l'export
+    ou fichier .srt séparé, taille et position réglables.
+  * Raccourcis clavier personnalisables dans les préférences, conflits
+    signalés.
+  * Proxys 540p des vidéos 4K pour un aperçu fluide (l'export lit
+    l'original).
+  * Modèles de projet (intro, fin de vidéo, story verticale, ou les
+    vôtres), notifications, aperçu des vidéos au survol, animation
+    « machine à écrire ».
+  * Verrouillage des pistes, zone de sécurité, lecture inversée, image
+    fixe, export d'une plage ou d'une image, couleur d'accent, durée de la
+    corbeille.
+
+ -- Fabien <admin@appsdoc.fr>  Fri, 30 Oct 2026 10:00:00 +0100
+
 montar (1.1.0) unstable; urgency=medium
 
   * Rail « Modules » : ce qu'apportent les modules actifs (outils, effets

@@ -506,7 +506,17 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
 - ✅ rail **Graphiques** : annotations, figures, formes, arrière-plans, superpositions, cadres, stickers ; module intégré **Graphismes** (35 dessins) et type `Graphic` pour en ajouter (F-MOD-08, modules de ressources) ;
 - ✅ **guide du développeur** de modules (docs/MODULES.md), `montar --new-module` et `--pack-module`, installation depuis un fichier, un dossier ou un dossier lié (développement), « Recharger ».
 
-**Suite prévue (J6+, exigences P2 puis P3)** : modèles de projet (F-PRJ-12), notifications locales (F-PRJ-14), proxys pour les fichiers 4K (F-MED-05), aperçu au survol (F-MED-03), verrouillage de piste (F-TL-09), zone de sécurité (F-PRV-05), lecture inversée (F-EDT-03), image fixe (F-EDT-09), images clés (F-EDT-10), animation « machine à écrire » (F-TXT-03), sous-titres SRT (F-TXT-05), export d'une plage ou d'une image (F-EXP-09), couleur d'accent (F-UX-01), raccourcis personnalisables (F-UX-07), accélération matérielle du rendu (F-UX-05) ; puis P3 : kit de marque, sous-titres automatiques, ducking, réduction de bruit, fond vert, stabilisation, catalogue de modules en ligne ; enfin le portage Windows (D9).
+**Jalon J6 — exigences P2** (version 1.2) :
+- ✅ verrouillage de piste (F-TL-09), zone de sécurité (F-PRV-05), lecture inversée (F-EDT-03), image fixe (F-EDT-09) ;
+- ✅ export d'une plage ou d'une image (F-EXP-09), couleur d'accent (F-UX-01), durée de la corbeille ;
+- ✅ animation « machine à écrire » (F-TXT-03), aperçu au survol (F-MED-03), notifications locales (F-PRJ-14) ;
+- ✅ modèles de projet (F-PRJ-12) : trois modèles fournis et modèles de l'utilisateur ;
+- ✅ images clés (F-EDT-10) : position, échelle, rotation, opacité, interpolation linéaire ;
+- ✅ sous-titres (F-TXT-05) : édition, import / export SRT, incrustés ou fichier séparé à l'export ;
+- ✅ raccourcis personnalisables (F-UX-07) ; proxys des vidéos 4K (F-MED-05) ;
+- ◐ accélération matérielle (F-UX-05) : encodage matériel à l'export (déjà présent) ; le décodage de l'aperçu reste logiciel, les proxys le rendant fluide.
+
+**Suite prévue (J6+, exigences P3)** : kit de marque, sous-titres automatiques, ducking, réduction de bruit, fond vert, stabilisation, catalogue de modules en ligne ; enfin le portage Windows (D9).
 
 ---
 

@@ -8,6 +8,22 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
 
 ## État d'avancement
 
+**Version 1.2** (1.2.0) : exigences P2 du cahier des charges.
+
+- **images clés** : dans l'inspecteur (onglet Image), « Ajouter une image clé », déplacez la
+  tête de lecture puis changez la position, l'échelle, la rotation ou l'opacité — le clip
+  s'anime entre les clés (losanges sur le clip dans la timeline) ;
+- **sous-titres** (rail Sous-titres) : ajout à la tête de lecture, début / fin, import et
+  export **SRT**, taille et position ; à l'export, incrustés dans l'image ou fichier `.srt`
+  à côté de la vidéo ;
+- **modèles de projet** (Accueil → Modèles) : intro, fin de vidéo, story verticale, ou vos
+  projets enregistrés comme modèles (menu « ⋯ ») ;
+- **raccourcis clavier personnalisables** (Préférences), **proxys** des vidéos 4K pour un
+  aperçu fluide, **notifications** (cloche), aperçu des vidéos **au survol** ;
+- texte animé **« machine à écrire »**, **verrouillage** des pistes, **zone de sécurité**,
+  **lecture inversée**, **image fixe**, export d'une **plage** (I / O) ou d'une **image**,
+  **couleur d'accent**, durée de la corbeille.
+
 **Version 1.1** (1.1.0) : modules, effets et graphismes.
 
 - rail **Modules** : tout ce qu'apportent les modules actifs, avec recherche ; un clic
