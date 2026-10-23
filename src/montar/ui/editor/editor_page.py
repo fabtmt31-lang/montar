@@ -73,6 +73,7 @@ from montar.ui.editor.modules_panel import ModuleEntry, ModulesPanel
 from montar.ui.editor.panels import EffectsPanel, FiltersPanel, TextPanel, TransitionsPanel
 from montar.ui.editor.player import Player
 from montar.ui.editor.preview import PreviewPanel, crop_box
+from montar.ui.editor.scopes import ScopesWindow
 from montar.ui.editor.subtitles_panel import SubtitlesPanel
 from montar.ui.graphics import graphic_size, render_graphic
 from montar.ui.home.library import LibraryDialog
@@ -178,6 +179,12 @@ class EditorPage(QWidget):
         self.inspector.freezeRequested.connect(self.freeze_frame)
         self.inspector.playhead = self._playhead
         self.inspector.seekRequested.connect(self.player.seek)
+        self.inspector.scopesRequested.connect(self.open_scopes)
+        self.scopes: ScopesWindow | None = None
+        self._scope_timer = QTimer(self)
+        self._scope_timer.setSingleShot(True)
+        self._scope_timer.setInterval(150)  # scopes recalculés au plus ~7 fois par seconde
+        self._scope_timer.timeout.connect(self._update_scopes)
         self.subtitles_panel.seekRequested.connect(self.player.seek)
         self.subtitles_panel.autoRequested.connect(self.auto_subtitles)
         body.addWidget(self.inspector)
@@ -1519,7 +1526,22 @@ class EditorPage(QWidget):
         self.graphics_panel.set_graphics(self.module_manager.graphics())
         self._on_clip_selected(self.controller.selected)
 
+    def open_scopes(self) -> ScopesWindow:
+        if self.scopes is None:
+            self.scopes = ScopesWindow(self)
+        self.scopes.show()
+        self.scopes.raise_()
+        self.scopes.update_frame(self.preview.canvas.image)
+        return self.scopes
+
+    def _update_scopes(self) -> None:
+        if self.scopes is not None and self.scopes.isVisible():
+            self.scopes.update_frame(self.preview.canvas.image)
+
     def _on_frame(self, _image, frame: int) -> None:
+        if self.scopes is not None and self.scopes.isVisible() and \
+                not self._scope_timer.isActive():
+            self._scope_timer.start()
         self.timeline.set_playhead(frame, follow=self.player.playing)
         self._update_preview_selection()
         self.inspector.refresh_playhead()

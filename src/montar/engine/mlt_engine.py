@@ -27,6 +27,7 @@ from montar.engine.base import (
     TrackSpec,
 )
 from montar.engine.geometry import affine_rect, crop_pixels, placement
+from montar.engine.grading import grade_filters
 from montar.engine.looks import color_filters, effect_filters, preset_filters
 from montar.engine.sound import audio_filters
 
@@ -420,6 +421,7 @@ class _TimelineGraph:
             for name, props in (color_filters(clip.color)
                                 + preset_filters(clip.preset, clip.preset_amount)
                                 + effect_filters(clip.effects)
+                                + grade_filters(clip.grade, clip.lut)
                                 + [f for f in clip.extra_filters if f[0] != MOTION]):
                 self._attach(producer, name, props)
         motions = [props for name, props in clip.extra_filters if name == MOTION] \

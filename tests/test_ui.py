@@ -1872,3 +1872,48 @@ def test_module_catalogue_card(window, monkeypatch, tmp_path):
     assert wait_until(lambda: not card.rows()[0].action.isEnabled())  # « Installé »
     card.enabled.setChecked(False)
     assert not card.rows()
+
+
+@needs_ffmpeg
+def test_grading_panel_and_scopes(window, media_dir, tmp_path):
+    from montar.ui.editor.grading import spline
+    from montar.ui.editor.scopes import SCOPES
+
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    clip = editor.project.clips[0]
+    editor.controller.select(clip.id)
+    inspector = editor.inspector
+    wheel, level = inspector._wheels["gain"]
+    for x in (0.2, 0.4, 0.6):  # glisser la roue : une seule étape d'annulation
+        wheel.moved.emit(x, 0.0)
+    level.setValue(30)
+    inspector.curves.changed.emit("master", [[0, 0], [0.5, 0.65], [1, 1]])
+    clip = editor.project.clips[0]
+    assert clip.grade.gain == [0.6, 0.0] and clip.grade.gain_level == 0.3
+    assert clip.grade.curves["master"][1] == [0.5, 0.65]
+    cube = tmp_path / "look.cube"
+    cube.write_text("LUT_3D_SIZE 2\n" + "0.5 0.5 0.5\n" * 8)
+    assert inspector.set_lut(cube)
+    clip = editor.project.clips[0]
+    assert clip.grade.lut == "medias/look.cube" and inspector.lut_label.text() == "look"
+    assert (editor.project.media_dir / "look.cube").exists()
+    editor.controller.undo()  # la LUT
+    editor.controller.undo()  # la courbe
+    assert "master" not in editor.project.clips[0].grade.curves
+
+    curve = spline([[0, 0], [0.5, 0.8], [1, 1]])
+    assert curve[0] == (0.0, 0.0) and abs(dict(curve)[0.5] - 0.8) < 1e-6
+
+    frames = []
+    editor.player.frameReady.connect(lambda img, f: frames.append(f))
+    editor._reload_player()
+    editor.player.seek(5)
+    assert wait_until(lambda: 5 in frames and editor.preview.canvas.image is not None)
+    scopes = editor.open_scopes()
+    pytest.importorskip("numpy")
+    for key, _t in SCOPES:
+        scopes.kind.set_current(key)
+        scopes.update_frame(editor.preview.canvas.image)
+        assert scopes.view.pixmap() is not None and not scopes.view.pixmap().isNull()
+    scopes.close()

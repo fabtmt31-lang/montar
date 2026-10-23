@@ -127,6 +127,28 @@ class ColorAdjust:
 
 
 @dataclass
+class Grade:
+    """Étalonnage avancé : roues (position x, y dans le disque, et niveau de -1 à 1) pour
+    les ombres (lift), les tons moyens (gamma) et les hautes lumières (gain), courbes,
+    teinte, vibrance et LUT."""
+
+    lift: list[float] = field(default_factory=lambda: [0.0, 0.0])
+    lift_level: float = 0.0
+    gamma: list[float] = field(default_factory=lambda: [0.0, 0.0])
+    gamma_level: float = 0.0
+    gain: list[float] = field(default_factory=lambda: [0.0, 0.0])
+    gain_level: float = 0.0
+    # courbes : "master", "red", "green", "blue" → points [entrée, sortie] de 0 à 1
+    curves: dict[str, list[list[float]]] = field(default_factory=dict)
+    hue: float = 0.0  # rotation de teinte, en degrés
+    vibrance: float = 0.0  # -1 à 1 : saturation des couleurs ternes surtout
+    lut: str = ""  # fichier .cube, relatif au dossier du projet
+
+    def is_identity(self) -> bool:
+        return self == Grade()
+
+
+@dataclass
 class Effects:
     """Effets simples, chacun de 0 (absent) à 1."""
 
@@ -208,6 +230,7 @@ class Clip:
     preset_amount: float = 1.0
     effects: Effects = field(default_factory=Effects)
     audio: AudioAdjust = field(default_factory=AudioAdjust)
+    grade: Grade = field(default_factory=Grade)
     text: TextStyle | None = None
     # Réglages propres aux modules, par identifiant de module (ex. "timelapse").
     # Un module absent est ignoré au rendu mais ses réglages sont conservés.
@@ -240,7 +263,7 @@ class Transition:
 
 
 _NESTED = {"transform": Transform, "color": ColorAdjust, "effects": Effects, "text": TextStyle,
-           "audio": AudioAdjust}
+           "audio": AudioAdjust, "grade": Grade}
 
 
 def default_subtitle_style() -> TextStyle:

@@ -7,12 +7,14 @@ import dataclasses
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from montar.core.project import (
     AudioAdjust,
     Clip,
     ColorAdjust,
     Effects,
+    Grade,
     MediaItem,
     Project,
     Transform,
@@ -65,6 +67,8 @@ class ClipSpec:
     source_size: tuple[int, int] = (0, 0)
     audio: AudioAdjust = field(default_factory=AudioAdjust)  # réglages du son
     duck: tuple[tuple[int, float], ...] = ()  # atténuation sous la voix : (image, dB)
+    grade: Grade = field(default_factory=Grade)  # étalonnage avancé
+    lut: str = ""  # chemin absolu de la LUT de l'étalonnage
 
 
 @dataclass(frozen=True)
@@ -181,6 +185,9 @@ def timeline_spec(project: Project, text_image: TextImage | None = None,
                                   m.length_frames(project.fps) or 0)
                 if not c.audio.is_identity():
                     spec = dataclasses.replace(spec, audio=copy.deepcopy(c.audio))
+                if not c.grade.is_identity():
+                    spec = dataclasses.replace(spec, grade=copy.deepcopy(c.grade),
+                                               lut=lut_path(project, c.grade.lut))
                 if c.audio.duck and voices and m.has_audio:
                     points = duck_points(voices, c.start, c.duration, c.audio.duck_depth,
                                          project.fps)
@@ -225,6 +232,16 @@ def timeline_spec(project: Project, text_image: TextImage | None = None,
         tracks.insert(len([t for t in tracks if t.kind == "video"]),
                       TrackSpec("video", False, False, tuple(cleaned)))
     return TimelineSpec(Canvas(w, h, project.fps), tuple(tracks))
+
+
+def lut_path(project: Project, lut: str) -> str:
+    """Chemin absolu d'une LUT rangée dans le dossier du projet (vide si introuvable)."""
+    if not lut:
+        return ""
+    path = Path(lut)
+    if not path.is_absolute() and project.path is not None:
+        path = project.path.parent / path
+    return str(path) if path.is_file() else ""
 
 
 def _transition_spec(left: int, kind: str, duration: int,

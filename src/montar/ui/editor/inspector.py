@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -17,6 +18,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSlider,
     QSpinBox,
     QStackedWidget,
     QVBoxLayout,
@@ -28,6 +30,7 @@ from montar.core.project import (
     AudioAdjust,
     Clip,
     ColorAdjust,
+    Grade,
     MediaItem,
     Project,
     Transform,
@@ -38,6 +41,7 @@ from montar.core.timeline import AUDIO_TRANSITIONS, VIDEO_TRANSITIONS
 from montar.i18n import _
 from montar.ui.editor.controller import EditorController
 from montar.ui.editor.controls import ColorSwatches, SliderRow, Tabs, page, section
+from montar.ui.editor.grading import ColorWheel, CurvesEditor, import_lut
 from montar.ui.labels import TRANSITIONS
 from montar.ui.text_render import FAMILIES
 from montar.ui.widgets import Segmented, button, label, set_icon, shrink
@@ -59,6 +63,7 @@ def _signed(v: float) -> str:
 
 class Inspector(QFrame):
     freezeRequested = pyqtSignal(str)  # clip : image fixe à la tête de lecture
+    scopesRequested = pyqtSignal()  # fenêtre des scopes de l'étalonnage
     seekRequested = pyqtSignal(int)  # image de la timeline (clé choisie)
 
     def __init__(self, controller: EditorController, modules=None) -> None:
@@ -277,10 +282,120 @@ class Inspector(QFrame):
         reset.clicked.connect(lambda: self._edit(_("Couleurs"), "color-reset",
                                                  lambda c: setattr(c, "color", ColorAdjust())))
         cl.addWidget(reset)
+        self._build_grading(cl)
 
         self.clip_tabs = Tabs([("image", _("Image"), image), ("audio", _("Audio"), audio),
                                ("speed", _("Vitesse"), speed), ("color", _("Couleur"), color)])
         return self.clip_tabs
+
+    # --- étalonnage avancé ----------------------------------------------------------------
+
+    def _build_grading(self, cl) -> None:
+        cl.addWidget(section(_("ÉTALONNAGE")))
+        scopes = button(_("Scopes…"), "secondary", "activity",
+                        tooltip=_("Forme d'onde, parade RVB, vecteurscope, histogramme"))
+        scopes.clicked.connect(self.scopesRequested)
+        cl.addWidget(scopes)
+        wheels = QGridLayout()
+        wheels.setHorizontalSpacing(6)
+        self._wheels: dict[str, tuple[ColorWheel, QSlider]] = {}
+        for col, (key, title) in enumerate((("lift", _("Ombres")), ("gamma", _("Tons moyens")),
+                                            ("gain", _("Hautes lumières")))):
+            name = label(title, "small")
+            name.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            wheel = ColorWheel(92)
+            wheel.setToolTip(_("Glissez vers une couleur pour l'ajouter ; Maj : réglage fin ; "
+                               "double-clic : neutre"))
+            wheel.moved.connect(lambda x, y, k=key: self._edit(
+                _("Étalonnage"), f"grade:{k}", lambda c: setattr(c.grade, k, [x, y])))
+            level = QSlider(Qt.Orientation.Horizontal)
+            level.setRange(-100, 100)
+            level.setFixedWidth(92)
+            level.setToolTip(_("Niveau : plus sombre ↔ plus clair"))
+            level.valueChanged.connect(lambda v, k=key: self._edit(
+                _("Étalonnage"), f"grade:{k}_level",
+                lambda c: setattr(c.grade, f"{k}_level", v / 100)))
+            wheels.addWidget(name, 0, col)
+            wheels.addWidget(wheel, 1, col, Qt.AlignmentFlag.AlignHCenter)
+            wheels.addWidget(level, 2, col, Qt.AlignmentFlag.AlignHCenter)
+            self._wheels[key] = (wheel, level)
+        cl.addLayout(wheels)
+        cl.addWidget(section(_("COURBES")))
+        self.curve_channel = Segmented([("master", _("Lum.")), ("red", _("Rouge")),
+                                        ("green", _("Vert")), ("blue", _("Bleu"))],
+                                       "master", compact=True)
+        cl.addWidget(self.curve_channel)
+        self.curves = CurvesEditor()
+        self.curves.setToolTip(_("Clic : ajouter un point ; glisser : déplacer ; double-clic "
+                                 "sur un point : le retirer"))
+        self.curve_channel.changed.connect(self.curves.set_channel)
+        self.curves.changed.connect(lambda ch, pts: self._edit(
+            _("Courbes"), f"grade:curve:{ch}", lambda c: c.grade.curves.__setitem__(
+                ch, [list(p) for p in pts])))
+        cl.addWidget(self.curves)
+        reset_curve = button(_("Réinitialiser la courbe"), "secondary", "rotate-ccw")
+        reset_curve.clicked.connect(lambda: self._edit(
+            _("Courbes"), "grade:curve-reset",
+            lambda c: c.grade.curves.pop(self.curves.channel, None)))
+        cl.addWidget(reset_curve)
+        self._slider(cl, _("Teinte"), -180, 180, "grade:hue", lambda c: c.grade.hue,
+                     lambda c, v: setattr(c.grade, "hue", round(v)), lambda v: f"{v:+.0f}°")
+        self._slider(cl, _("Vibrance"), -100, 100, "grade:vibrance",
+                     lambda c: c.grade.vibrance * 100,
+                     lambda c, v: setattr(c.grade, "vibrance", v / 100), _signed)
+        cl.addWidget(section(_("LUT")))
+        lut_row = QHBoxLayout()
+        self.lut_label = label(_("Aucune"), "small")
+        lut_row.addWidget(self.lut_label, 1)
+        self.lut_button = button(_("Importer (.cube)…"), "secondary", "upload")
+        self.lut_button.clicked.connect(self._choose_lut)
+        self.lut_remove = button("", "secondary", "trash-2", tooltip=_("Retirer la LUT"))
+        self.lut_remove.clicked.connect(lambda: self._edit(
+            _("LUT"), "grade:lut", lambda c: setattr(c.grade, "lut", "")))
+        lut_row.addWidget(self.lut_button)
+        self.lut_remove.setFixedSize(38, 34)
+        lut_row.addWidget(self.lut_remove)
+        cl.addLayout(lut_row)
+        reset = button(_("Réinitialiser l'étalonnage"), "secondary", "rotate-ccw")
+        reset.clicked.connect(lambda: self._edit(_("Étalonnage"), "grade:reset",
+                                                 lambda c: setattr(c, "grade", Grade())))
+        cl.addWidget(reset)
+
+    def _choose_lut(self) -> None:
+        from PyQt6.QtWidgets import QFileDialog
+
+        folder = self.controller.project.media_dir
+        if folder is None:
+            return
+        name, _f = QFileDialog.getOpenFileName(self, _("Importer une LUT"), str(Path.home()),
+                                               _("LUT 3D") + " (*.cube)")
+        if name:
+            self.set_lut(Path(name))
+
+    def set_lut(self, path: Path) -> bool:
+        from PyQt6.QtWidgets import QMessageBox
+
+        folder = self.controller.project.media_dir
+        if folder is None:
+            return False
+        try:
+            relative = import_lut(path, folder)
+        except OSError as exc:
+            QMessageBox.warning(self, _("LUT"), str(exc))
+            return False
+        self._edit(_("LUT"), "grade:lut", lambda c: setattr(c.grade, "lut", relative))
+        return True
+
+    def _refresh_grade(self, clip: Clip) -> None:
+        g = clip.grade
+        for key, (wheel, level) in self._wheels.items():
+            wheel.set_value(*getattr(g, key))
+            level.blockSignals(True)
+            level.setValue(round(getattr(g, f"{key}_level") * 100))
+            level.blockSignals(False)
+        self.curves.set_curves(g.curves)
+        self.lut_label.setText(Path(g.lut).stem if g.lut else _("Aucune"))
+        self.lut_remove.setEnabled(bool(g.lut))
 
     def _audio_slider(self, layout, title: str, low: float, high: float, prop: str,
                       fmt, factor: float = 1.0, off: float | None = None) -> SliderRow:
@@ -716,6 +831,7 @@ class Inspector(QFrame):
             b.setChecked(b.text() == f"×{clip.speed:g}")
         self._speed_buttons.setExclusive(True)
         self.speed_row.set_value(clip.speed)
+        self._refresh_grade(clip)
         for box, prop in self._audio_checks:
             box.setChecked(bool(getattr(clip.audio, prop)))
         self.duck_row.setEnabled(clip.audio.duck)
