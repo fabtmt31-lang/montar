@@ -187,6 +187,8 @@ class EditorPage(QWidget):
         self.modules_panel.manageRequested.connect(self.manage_modules)
         self.graphics_panel.set_graphics(self.module_manager.graphics())
         self.graphics_panel.graphicRequested.connect(self.insert_graphic)
+        self.graphics_panel.logoRequested.connect(self.insert_logo)
+        self.brand = None
         self.transitions_panel.set_module_transitions(self.module_manager.transitions())
 
         self.timeline = TimelinePanel(self.controller, self.thumbnails.get, self.waveforms.get)
@@ -284,7 +286,8 @@ class EditorPage(QWidget):
         self._dirty = False
         self.notifications = None  # montar.core.notifications.Notifications
         self._voice_pending: dict[str, tuple[int, int]] = {}  # fichier → (début, rognage)
-        self._overlay_pending: dict[str, tuple[int, bool]] = {}  # fichier → (début, dessous)
+        # fichier → (début, sous la vidéo, logo du kit de marque)
+        self._overlay_pending: dict[str, tuple[int, bool, bool]] = {}
         self._freeze_pending: dict[str, tuple[str, int]] = {}  # fichier → (clip, image)
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
@@ -1186,12 +1189,49 @@ class EditorPage(QWidget):
         except OSError as exc:
             QMessageBox.warning(self, _("Graphiques"), str(exc))
             return None
-        self._overlay_pending[str(target)] = (start, below)
+        self._overlay_pending[str(target)] = (start, below, False)
+        self.import_files([str(target)])
+        return target
+
+    # --- kit de marque -------------------------------------------------------------------
+
+    def set_brand(self, kit) -> None:
+        """Kit de marque : logos dans le panneau Graphiques, couleurs et polices des textes."""
+        from montar.ui.home.brand import brand_families
+
+        self.brand = kit
+        self.graphics_panel.set_brand_logos(kit.logos())
+        self.inspector.set_brand(kit.colors, brand_families(kit))
+
+    def insert_logo(self, logo: Path) -> Path | None:
+        """Logo du kit placé en haut à droite, à la tête de lecture (copie dans medias/,
+        convertie en PNG si besoin)."""
+        if self.project.media_dir is None:
+            return None
+        logo = Path(logo)
+        keep = logo.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")
+        suffix = logo.suffix if keep else ".png"
+        target = self.project.media_dir / f"{_('Logo')} {logo.stem}{suffix}"
+        start = self.timeline.view.playhead
+        existing = next((m for m in self.project.media if Path(m.path) == target), None)
+        if existing is not None:
+            self._place_overlay(existing, None, start, False, add_media=False, logo=True)
+            return target
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if keep:
+                shutil.copy2(logo, target)
+            elif not QImage(str(logo)).save(str(target), "PNG"):
+                raise OSError(_("image illisible : {name}").format(name=logo.name))
+        except OSError as exc:
+            QMessageBox.warning(self, _("Kit de marque"), str(exc))
+            return None
+        self._overlay_pending[str(target)] = (start, False, True)
         self.import_files([str(target)])
         return target
 
     def _place_overlay(self, item: MediaItem, thumb: str | None, start: int, below: bool,
-                       add_media: bool = True) -> None:
+                       logo: bool = False, add_media: bool = True) -> None:
         if add_media:
             if thumb:
                 self.thumbnails[item.path] = thumb
@@ -1203,8 +1243,16 @@ class EditorPage(QWidget):
             # une image est ajustée à la toile : l'élément garde sa taille prévue
             cw, ch = self.project.canvas_size
             if item.width and item.height:
-                clip.transform.scale = round(min(1.0, 1 / min(cw / item.width,
-                                                              ch / item.height)), 4)
+                fit = min(cw / item.width, ch / item.height)
+                if logo:  # 18 % de la largeur, en haut à droite avec une marge
+                    shown = min(0.18 * cw, item.width * fit)
+                    clip.transform.scale = round(shown / (item.width * fit), 4)
+                    h = item.height * fit * clip.transform.scale
+                    margin = 0.04 * min(cw, ch)
+                    clip.transform.x = round((cw - margin - shown / 2 - cw / 2) / cw, 4)
+                    clip.transform.y = round((margin + h / 2 - ch / 2) / ch, 4)
+                else:
+                    clip.transform.scale = round(min(1.0, 1 / fit), 4)
             return clip
 
         clip = self.controller.edit(_("Ajouter un graphisme"), add)

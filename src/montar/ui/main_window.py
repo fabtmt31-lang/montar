@@ -9,6 +9,7 @@ from PyQt6.QtCore import QSize
 from PyQt6.QtWidgets import QDialog, QFileDialog, QMainWindow, QMessageBox, QStackedWidget
 
 from montar import __version__
+from montar.core.brand import BrandKit
 from montar.core.library import library
 from montar.core.notifications import Notifications
 from montar.core.project import Project, ProjectError, unique_project_folder
@@ -24,6 +25,7 @@ from montar.platform import paths
 from montar.plugins import default_manager
 from montar.ui.dialogs.new_project import NewProjectDialog, NewProjectParams
 from montar.ui.editor.editor_page import EditorPage, media_file_filter
+from montar.ui.home.brand import BrandPage
 from montar.ui.home.home_page import HomePage, HomeShell
 from montar.ui.home.library import LibraryPage, TrashPage
 from montar.ui.home.preferences_page import PreferencesPage
@@ -71,9 +73,13 @@ class MainWindow(QMainWindow):
         self.templates_page = TemplatesPage()
         self.templates_page.useRequested.connect(self.use_template)
         self.templates_page.deleteRequested.connect(self.delete_template)
+        self.brand = BrandKit.load(paths.data_dir() / "marque")
+        self.brand_page = BrandPage(self.brand)
+        self.brand_page.changed.connect(self._brand_changed)
         self.shell = HomeShell(self.home, self.projects, self.preferences, [
             ("templates", _("Modèles"), "layout-grid", self.templates_page),
             ("library", _("Médiathèque"), "library", self.library_page),
+            ("brand", _("Kit de marque"), "palette", self.brand_page),
             ("trash", _("Corbeille"), "trash-2", self.trash_page),
         ])
         self.shell.pageShown.connect(self._page_shown)
@@ -122,6 +128,10 @@ class MainWindow(QMainWindow):
 
     def _module_failed(self, name: str, error: str) -> None:
         self.notifications.add(_("Module « {m} » désactivé").format(m=_(name)), error, "error")
+
+    def _brand_changed(self) -> None:
+        if self.editor is not None:
+            self.editor.set_brand(self.brand)
 
     def _accent_changed(self, color: str) -> None:
         theme().apply(accent=color)
@@ -202,6 +212,7 @@ class MainWindow(QMainWindow):
         editor = EditorPage(project, get_engine, self.cache, self.settings.preview_quality,
                             self.modules)
         editor.apply_preferences(self.settings, opening=True)
+        editor.set_brand(self.brand)
         editor.set_notifications(self.notifications)
         editor.backRequested.connect(self.show_home)
         editor.saved.connect(lambda _p: None)

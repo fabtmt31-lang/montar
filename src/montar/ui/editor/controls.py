@@ -92,7 +92,10 @@ class ColorSwatches(QWidget):
             layout.addWidget(none)
         for c in colors:
             layout.addWidget(self._swatch(c, c))
+        self._layout = layout
+        self._extra: list[QPushButton] = []
         custom = QPushButton("+")
+        self._custom_button = custom
         custom.setFixedSize(30, 30)
         custom.setToolTip(_("Couleur personnalisée"))
         custom.setStyleSheet("QPushButton { border-radius: 15px; border: 1.5px dashed #9CCBB0;"
@@ -101,6 +104,23 @@ class ColorSwatches(QWidget):
         layout.addWidget(custom)
         layout.addStretch()
         self._current = ""
+
+    def set_extra(self, colors: Sequence[str]) -> None:
+        """Couleurs supplémentaires (kit de marque), avant le bouton « + »."""
+        for b in self._extra:
+            self._buttons.pop(str(b.property("color")).upper(), None)
+            b.deleteLater()
+        self._extra = []
+        index = self._layout.indexOf(self._custom_button)
+        for c in colors:
+            if c.upper() in self._buttons:
+                continue
+            b = self._swatch(c, _("{color} (kit de marque)").format(color=c))
+            b.setProperty("color", c)
+            self._layout.insertWidget(index, b)
+            index += 1
+            self._extra.append(b)
+        self.set_current(self._current)
 
     def _swatch(self, color: str, tooltip: str) -> QPushButton:
         b = QPushButton()

@@ -4,6 +4,8 @@ arrière-plans, cadres, stickers…), rangés par rubrique. Un clic place l'él�
 de lecture."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QGridLayout, QLineEdit, QPushButton, QWidget
 
@@ -22,6 +24,7 @@ CATEGORY_LABELS = {
 
 class GraphicsPanel(_Panel):
     graphicRequested = pyqtSignal(str, object)  # module, montar.api.Graphic
+    logoRequested = pyqtSignal(object)  # Path d'un logo du kit de marque
 
     def __init__(self) -> None:
         super().__init__(_("Graphiques"), scroll=True)
@@ -33,6 +36,14 @@ class GraphicsPanel(_Panel):
         self.body.addWidget(self.hint(_("Un clic place l'élément à la tête de lecture, sur une "
                                         "piste au-dessus de la vidéo (les arrière-plans en "
                                         "dessous).")))
+        # logos du kit de marque, au-dessus des graphismes des modules
+        self._brand = QWidget()
+        self._brand_layout = QGridLayout(self._brand)
+        self._brand_layout.setContentsMargins(0, 0, 0, 0)
+        self._brand_layout.setSpacing(8)
+        self._brand.setVisible(False)
+        self.body.addWidget(self._brand)
+        self._logo_tiles: list[tuple[QPushButton, Path]] = []
         self._content = QWidget()
         self._layout = QGridLayout(self._content)
         self._layout.setContentsMargins(0, 0, 0, 0)
@@ -44,6 +55,30 @@ class GraphicsPanel(_Panel):
         self.body.addStretch()
         self._tiles: list[tuple[QPushButton, str, object]] = []
         self._sections: dict[str, QWidget] = {}
+
+    def set_brand_logos(self, logos: list[Path]) -> None:
+        from montar.ui.home.brand import logo_pixmap
+
+        while self._brand_layout.count():
+            w = self._brand_layout.takeAt(0).widget()
+            if w is not None:
+                w.deleteLater()
+        self._logo_tiles = []
+        if logos:
+            head = section(_("KIT DE MARQUE"))
+            head.setParent(self._brand)
+            self._brand_layout.addWidget(head, 0, 0, 1, 2)
+        for i, logo in enumerate(logos):
+            tile = _tile(logo_pixmap(logo, TILE), logo.stem)
+            tile.setParent(self._brand)
+            tile.setCheckable(False)
+            tile.setToolTip(_("Logo « {name} » : placé en haut à droite").format(
+                name=logo.stem))
+            tile.clicked.connect(lambda _=False, p=logo: self.logoRequested.emit(p))
+            self._brand_layout.addWidget(tile, 1 + i // 2, i % 2)
+            self._logo_tiles.append((tile, logo))
+        self._brand.setVisible(bool(logos))
+        self.empty.setVisible(not self._tiles and not logos)
 
     def set_graphics(self, graphics: list) -> None:
         """`graphics` : liste de (module, Graphic)."""
@@ -69,7 +104,7 @@ class GraphicsPanel(_Panel):
                 tile.clicked.connect(
                     lambda _=False, m=module_id, gr=g: self.graphicRequested.emit(m, gr))
                 self._tiles.append((tile, category, g))
-        self.empty.setVisible(not graphics)
+        self.empty.setVisible(not graphics and not self._logo_tiles)
         self._filter()
 
     def _filter(self) -> None:

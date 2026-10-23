@@ -1778,3 +1778,32 @@ def test_sound_settings_in_inspector(window, media_dir):
     assert not track.voice
     editor.controller.edit("voix", lambda t: setattr(t.track(track.id), "voice", True))
     assert editor.controller.timeline.track(track.id).voice
+
+
+@needs_ffmpeg
+def test_brand_kit_in_editor(window, media_dir, tmp_path):
+    from PyQt6.QtGui import QColor, QImage
+
+    logo = tmp_path / "logo.png"
+    image = QImage(200, 100, QImage.Format.Format_ARGB32)
+    image.fill(QColor("#FF8800"))
+    image.save(str(logo))
+    page = window.brand_page
+    assert page.add_logo(logo) and page.add_color("#123456")
+    assert window.shell is not None and page.logos.count() == 1
+
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    panel = editor.graphics_panel
+    assert panel._brand.isVisibleTo(panel) and len(panel._logo_tiles) == 1
+    assert "#123456" in editor.inspector.text_color._buttons
+    panel._logo_tiles[0][0].click()
+    assert wait_until(lambda: any(m.name.startswith("Logo") for m in editor.project.media))
+    clip = editor.project.clips[-1]
+    w, _h = editor.project.canvas_size
+    assert clip.transform.x > 0.25 and clip.transform.y < -0.25  # en haut à droite
+    rect = editor._selection_rect() if editor.controller.selected == clip.id else None
+    assert rect is None or abs(rect.width() - 0.18 * w) < 2
+
+    page.remove_color("#123456")  # le kit change : l'éditeur suit
+    assert "#123456" not in editor.inspector.text_color._buttons

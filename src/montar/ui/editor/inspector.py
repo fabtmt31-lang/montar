@@ -654,6 +654,17 @@ class Inspector(QFrame):
         self.remove_key_button.setEnabled(current in frames)
         self.key_hint.setVisible(not frames)
 
+    def set_brand(self, colors: list[str], families: list[str]) -> None:
+        """Kit de marque : couleurs ajoutées aux pastilles, polices à la liste."""
+        for swatches in (self.text_color, self.outline_color, self.background):
+            swatches.set_extra(colors)
+        current = self.family.currentText()
+        self.family.blockSignals(True)
+        self.family.clear()
+        self.family.addItems(list(FAMILIES) + [f for f in families if f not in FAMILIES])
+        self.family.setCurrentText(current)
+        self.family.blockSignals(False)
+
     def refresh_values(self) -> None:
         """Mise à jour légère des curseurs (pendant un glisser dans l'aperçu), sans
         reconstruire les boutons ni la mise en page."""
