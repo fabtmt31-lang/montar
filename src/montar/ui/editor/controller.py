@@ -35,9 +35,12 @@ class EditorController(QObject):
 
         `merge` regroupe les modifications successives de même clé en une seule étape."""
         before = snapshot(self.project)
+        locked = self._locked_state()
         try:
             result = operation(self.timeline)
             self.timeline.sanitize()
+            if locked and self._locked_state(set(locked[0])) != locked:
+                raise TimelineError("cette piste est verrouillée : déverrouillez-la d'abord")
         except TimelineError as exc:
             restore(self.project, before)
             self.error.emit(str(exc))
@@ -46,6 +49,17 @@ class EditorController(QObject):
             self.history.record(label, before, merge)
             self._after_change()
         return result
+
+    def _locked_state(self, track_ids: set[str] | None = None) -> tuple:
+        """Clips et transitions des pistes verrouillées (avant l'opération : `track_ids`)."""
+        if track_ids is None:
+            track_ids = {t.id for t in self.project.tracks if t.locked}
+        if not track_ids:
+            return ()
+        clips = sorted(repr(c) for c in self.project.clips if c.track_id in track_ids)
+        transitions = sorted(repr(t) for t in self.project.transitions
+                             if t.track_id in track_ids)
+        return tuple(sorted(track_ids)), tuple(clips), tuple(transitions)
 
     def edit_clip(self, label: str, clip_id: str, change: Callable[[Clip], None],
                   merge: object = None) -> None:

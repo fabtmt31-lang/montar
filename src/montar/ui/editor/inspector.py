@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -49,6 +49,8 @@ def _signed(v: float) -> str:
 
 
 class Inspector(QFrame):
+    freezeRequested = pyqtSignal(str)  # clip : image fixe à la tête de lecture
+
     def __init__(self, controller: EditorController, modules=None) -> None:
         super().__init__()
         self.setObjectName("Inspector")
@@ -210,6 +212,15 @@ class Inspector(QFrame):
         sl.addWidget(self.speed_row)
         self.duration_label = label("", "small")
         sl.addWidget(self.duration_label)
+        self.reverse_check = QCheckBox(_("Lecture inversée"))
+        self.reverse_check.toggled.connect(self._set_reverse)
+        sl.addWidget(self.reverse_check)
+        self.freeze_button = button(_("Image fixe à la tête de lecture"), "secondary", "image")
+        self.freeze_button.setToolTip(_("Insère l'image affichée pendant 2 s ; la suite du "
+                                        "clip est décalée"))
+        self.freeze_button.clicked.connect(
+            lambda: self.clip_id and self.freezeRequested.emit(self.clip_id))
+        sl.addWidget(self.freeze_button)
         self.speed_tools_title = section(_("EFFETS DE VITESSE"))
         sl.addWidget(self.speed_tools_title)
         self.speed_tools = QVBoxLayout()
@@ -493,6 +504,9 @@ class Inspector(QFrame):
         self.speed_hint.setVisible(bool(tools))
         locked = self.controller.timeline.timing_locked(clip)
         self.speed_row.setEnabled(not locked)
+        self.reverse_check.setEnabled(not locked)
+        media = self.controller.project.find_media(clip.media_id) if clip.media_id else None
+        self.freeze_button.setVisible(media is not None and media.kind == "video")
         for b in self._speed_buttons.buttons():
             b.setEnabled(not locked)
 
@@ -516,6 +530,9 @@ class Inspector(QFrame):
             b.setChecked(b.text() == f"×{clip.speed:g}")
         self._speed_buttons.setExclusive(True)
         self.speed_row.set_value(clip.speed)
+        self.reverse_check.blockSignals(True)
+        self.reverse_check.setChecked(clip.reverse)
+        self.reverse_check.blockSignals(False)
         self.duration_label.setText(_("Durée du clip : {d}").format(
             d=frames_to_timecode(clip.duration, self.controller.project.fps)))
         self.mute_button.setText(_("Rétablir le son du clip") if clip.volume == 0
@@ -601,6 +618,12 @@ class Inspector(QFrame):
         clip_id = self.clip_id
         self.controller.edit(_("Vitesse"), lambda t: t.set_speed(clip_id, speed),
                              merge=(clip_id, "speed") if merge else None)
+
+    def _set_reverse(self, on: bool) -> None:
+        if self._refreshing or self.clip_id is None:
+            return
+        clip_id = self.clip_id
+        self.controller.edit(_("Lecture inversée"), lambda t: t.set_reverse(clip_id, on))
 
     def _detach_audio(self) -> None:
         clip_id = self.clip_id

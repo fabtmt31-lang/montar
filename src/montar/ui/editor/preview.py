@@ -101,6 +101,7 @@ class PreviewCanvas(QWidget):
         self._pan = QPointF(0, 0)  # décalage du cadre zoomé (pixels écran)
         self._panning: QPointF | None = None
         self.background = ""  # couleur de fond (plein écran) ; vide : transparent
+        self.safe_zone = False  # cadres « action » (95 %) et « titres » (90 %)
         theme().changed.connect(self.update)
 
     def set_selection(self, rect: QRectF | None, rotation: float = 0.0) -> None:
@@ -354,6 +355,8 @@ class PreviewCanvas(QWidget):
             painter.drawText(rect.adjusted(20, 20, -20, -20),
                              Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap,
                              self._message)
+        if self.safe_zone and self._image is not None:
+            self._paint_safe_zone(painter, rect)
         box = self._box()
         if box is not None and self._image is not None:
             polygon = QPolygonF([self._to_widget_point(pt)
@@ -392,6 +395,22 @@ class PreviewCanvas(QWidget):
             for h in self._handles():
                 painter.drawRect(h)
         painter.end()
+
+    def _paint_safe_zone(self, painter: QPainter, rect: QRectF) -> None:
+        """Zone de sécurité (F-PRV-05) : action à 95 %, titres à 90 % de l'image."""
+        painter.save()
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        for share, alpha in ((0.95, 150), (0.90, 220)):
+            inner = QRectF(rect)
+            inner.setSize(rect.size() * share)
+            inner.moveCenter(rect.center())
+            painter.setPen(QPen(QColor(255, 255, 255, alpha), 1, Qt.PenStyle.DashLine))
+            painter.drawRect(inner)
+        c, arm = rect.center(), min(rect.width(), rect.height()) * 0.03
+        painter.setPen(QPen(QColor(255, 255, 255, 200), 1))
+        painter.drawLine(QPointF(c.x() - arm, c.y()), QPointF(c.x() + arm, c.y()))
+        painter.drawLine(QPointF(c.x(), c.y() - arm), QPointF(c.x(), c.y() + arm))
+        painter.restore()
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
@@ -447,6 +466,7 @@ ZOOMS = ((None, "Ajuster"), (0.5, "50 %"), (1.0, "100 %"), (2.0, "200 %"))
 
 class PreviewPanel(QFrame):
     volumeChanged = pyqtSignal(float)  # niveau d'écoute choisi (0 à 1)
+    safeZoneChanged = pyqtSignal(bool)
 
     def __init__(self, player: Player, quality: str = "medium") -> None:
         super().__init__()
@@ -461,6 +481,12 @@ class PreviewPanel(QFrame):
         head = QHBoxLayout()
         head.addWidget(label(_("Aperçu"), "muted"))
         head.addStretch()
+        self.safe_button = button("", "ghost", "layout-grid",
+                                  tooltip=_("Zone de sécurité (cadres des titres)"))
+        self.safe_button.setCheckable(True)
+        self.safe_button.setProperty("variant", "toggle")
+        self.safe_button.toggled.connect(self._toggle_safe_zone)
+        head.addWidget(self.safe_button)
         self.zoom_button = button("", "secondary")
         self.zoom_button.setStyleSheet("padding: 5px 10px; font-weight: 500;")
         self.zoom_button.setToolTip(_("Zoom de l'aperçu (la molette ou le bouton du milieu "
@@ -600,6 +626,18 @@ class PreviewPanel(QFrame):
         self.quality = key
         self.quality_button.setText(_("Qualité : {q}").format(q=_(QUALITY_LABELS[key]).lower()))
         self._push_render_size()
+
+    def _toggle_safe_zone(self, on: bool) -> None:
+        self.canvas.safe_zone = on
+        self.canvas.update()
+        self.safeZoneChanged.emit(on)
+
+    def set_safe_zone(self, on: bool) -> None:
+        self.safe_button.blockSignals(True)
+        self.safe_button.setChecked(on)
+        self.safe_button.blockSignals(False)
+        self.canvas.safe_zone = on
+        self.canvas.update()
 
     def set_zoom(self, zoom: float | None) -> None:
         self.canvas.set_zoom(zoom)

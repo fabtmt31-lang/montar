@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from PyQt6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import (
+    QBrush,
     QColor,
     QContextMenuEvent,
     QFont,
@@ -265,6 +266,13 @@ class TimelineView(QAbstractScrollArea):
                 self._paint_clip(painter, clip, rect, clip.id == self.controller.selected)
         for transition in self.controller.project.transitions:
             self._paint_transition(painter, transition)
+        hatch = QColor(p.ink)
+        hatch.setAlpha(40)
+        for row in rows:
+            if row.track.locked:
+                painter.fillRect(QRect(HEADER_W, self._row_rect(row).top(), w - HEADER_W,
+                                       self._row_rect(row).height()),
+                                 QBrush(hatch, Qt.BrushStyle.BDiagPattern))
         self._paint_range(painter)
         if dragged:
             d = self._drag
@@ -667,13 +675,10 @@ class TimelineView(QAbstractScrollArea):
     def _header_buttons(self, row: _Row) -> list[tuple[str, QRect]]:
         r = self._row_rect(row)
         cy = r.top() + r.height() // 2
-        x = HEADER_W - 34
-        if row.track.kind == "text":
-            return [("hide", QRect(x, cy - 13, 26, 26))]
-        buttons = [("mute", QRect(x, cy - 13, 26, 26))]
-        if row.track.kind == "video":
-            buttons.append(("hide", QRect(x - 28, cy - 13, 26, 26)))
-        return buttons
+        keys = {"text": ("hide", "lock"), "video": ("mute", "hide", "lock")}.get(
+            row.track.kind, ("mute", "lock"))
+        return [(key, QRect(HEADER_W - 32 - 24 * i, cy - 12, 24, 24))
+                for i, key in enumerate(keys)]
 
     def _paint_headers(self, painter: QPainter, rows: list[_Row], h: int) -> None:
         p = theme().palette
@@ -699,19 +704,23 @@ class TimelineView(QAbstractScrollArea):
             f.setWeight(QFont.Weight.DemiBold)
             painter.setFont(f)
             painter.setPen(QColor(p.ink))
-            name = QFontMetrics(f).elidedText(_(row.track.name), Qt.TextElideMode.ElideRight, 64)
-            painter.drawText(QRect(48, r.top(), 70, r.height()),
+            buttons = self._header_buttons(row)
+            room = min(rect.left() for _k, rect in buttons) - 50
+            name = QFontMetrics(f).elidedText(_(row.track.name), Qt.TextElideMode.ElideRight,
+                                              room)
+            painter.drawText(QRect(48, r.top(), room, r.height()),
                              Qt.AlignmentFlag.AlignVCenter, name)
-            for key, rect in self._header_buttons(row):
-                off = row.track.muted if key == "mute" else row.track.hidden
-                icon = {"mute": ("volume-x", "volume-2"),
-                        "hide": ("eye-off", "eye")}[key][0 if off else 1]
+            for key, rect in buttons:
+                off = {"mute": row.track.muted, "hide": row.track.hidden,
+                       "lock": row.track.locked}[key]
+                icon = {"mute": ("volume-x", "volume-2"), "hide": ("eye-off", "eye"),
+                        "lock": ("lock", "lock-open")}[key][0 if off else 1]
                 if self._hover_header == (row.track.id, key):
                     painter.setPen(Qt.PenStyle.NoPen)
                     painter.setBrush(QColor(p.mist))
                     painter.drawRoundedRect(QRectF(rect), 6, 6)
                 color = "#B4452F" if off else p.text_muted
-                painter.drawPixmap(rect.left() + 4, rect.top() + 4, icon_pixmap(icon, color, 18))
+                painter.drawPixmap(rect.left() + 4, rect.top() + 4, icon_pixmap(icon, color, 16))
         painter.restore()
         painter.fillRect(HEADER_W - 1, RULER_H, 1, h, QColor(p.border))
         painter.fillRect(0, 0, HEADER_W, RULER_H, QColor(p.surface))
@@ -844,6 +853,8 @@ class TimelineView(QAbstractScrollArea):
             return
         clip, zone = hit
         self.controller.select(clip.id)
+        if self.controller.timeline.track(clip.track_id).locked:
+            return  # piste verrouillée : sélection seulement, ni déplacement ni rognage
         shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
         if zone == "body" and (shift or self.range_tool):
             # sélection d'une partie du clip (pour couper ou appliquer un module)
@@ -1018,6 +1029,10 @@ class TimelineView(QAbstractScrollArea):
             label = _("Réactiver le son") if track.muted else _("Couper le son de la piste")
             self.controller.edit(label, lambda t: setattr(t.track(track_id), "muted",
                                                           not t.track(track_id).muted))
+        elif key == "lock":
+            label = _("Déverrouiller la piste") if track.locked else _("Verrouiller la piste")
+            self.controller.edit(label, lambda t: setattr(t.track(track_id), "locked",
+                                                          not t.track(track_id).locked))
         else:
             label = _("Afficher la piste") if track.hidden else _("Masquer la piste")
             self.controller.edit(label, lambda t: setattr(t.track(track_id), "hidden",

@@ -46,6 +46,8 @@ class ClipSpec:
     animation_out: str = "none"
     extra_filters: tuple[tuple[str, dict], ...] = ()  # filtres ajoutés par des modules
     audio_filters: tuple[tuple[str, dict], ...] = ()  # filtres audio des modules
+    reverse: bool = False  # lecture inversée
+    media_length: int = 0  # images du média à la fréquence du projet (lecture inversée)
 
 
 @dataclass(frozen=True)
@@ -102,7 +104,7 @@ TransitionHook = Callable[[str, int], tuple[str, dict] | None]
 
 
 def _clip_spec(clip: Clip, path: str, kind: str, size: tuple[int, int],
-               override: ClipOverride | None = None) -> ClipSpec:
+               override: ClipOverride | None = None, media_length: int = 0) -> ClipSpec:
     text = clip.text
     o = override or ClipOverride()
     return ClipSpec(
@@ -112,7 +114,8 @@ def _clip_spec(clip: Clip, path: str, kind: str, size: tuple[int, int],
         clip.fade_in, clip.fade_out, size, copy.deepcopy(clip.transform),
         copy.deepcopy(clip.color), clip.preset, clip.preset_amount, copy.deepcopy(clip.effects),
         text.animation_in if text else "none", text.animation_out if text else "none",
-        tuple(o.extra_filters), tuple(o.audio_filters))
+        tuple(o.extra_filters), tuple(o.audio_filters),
+        clip.reverse and o.path is None, media_length)
 
 
 def timeline_spec(project: Project, text_image: TextImage | None = None,
@@ -142,7 +145,8 @@ def timeline_spec(project: Project, text_image: TextImage | None = None,
                     continue
                 kind = "audio" if track.kind == "audio" else m.kind
                 override = hook(c, m) if hook is not None and c.modules else None
-                spec = _clip_spec(c, m.path, kind, (m.width, m.height), override)
+                spec = _clip_spec(c, m.path, kind, (m.width, m.height), override,
+                                  m.length_frames(project.fps) or 0)
             clips.append(spec)
             ids.append(c.id)
         transitions = tuple(

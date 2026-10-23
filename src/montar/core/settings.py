@@ -25,6 +25,7 @@ class Settings:
     video_waveforms: bool = True  # forme d'onde sous les vignettes des clips vidéo
     snap: bool = True  # magnétisme de la timeline à l'ouverture d'un projet
     preview_volume: float = 1.0  # volume d'écoute de l'aperçu (0 à 1)
+    safe_zone: bool = False  # zone de sécurité affichée dans l'aperçu
     autosave: bool = True  # enregistrement à chaque modification (sinon Ctrl+S)
     backup_minutes: int = 2  # intervalle des copies datées dans « sauvegardes/ »
 

@@ -428,3 +428,55 @@ def test_overlay_placement(tl):
     background = tl.add_overlay(image, 0, below=True)  # sous la vidéo principale
     video = [t for t in tl.project.tracks if t.kind == "video"]
     assert background.track_id == video[-1].id and video[-2].id == main.id
+
+
+# --- P2-1 : lecture inversée, image fixe, verrou -------------------------------------------------
+
+
+def test_reverse_split_and_trim(tl):
+    video = media(tl, "video")  # 4 s = 100 images
+    clip = tl.add_clip(video, None, 0)
+    clip.source_in, clip.duration = 10, 60  # plage 10 → 70, lue à l'envers
+    tl.set_reverse(clip.id, True)
+    second = tl.split(clip.id, 20)
+    # première partie : le haut de la plage (50 → 70) ; seconde : le bas (10 → 50)
+    assert (clip.source_in, clip.duration) == (50, 20)
+    assert (second.source_in, second.duration) == (10, 40)
+    tl.trim(second.id, "end", 50)  # retire 10 images du bas
+    assert (second.source_in, second.duration) == (20, 30)
+    tl.trim(clip.id, "start", 5)  # retire 5 images du haut : le point d'entrée ne bouge pas
+    assert (clip.source_in, clip.duration) == (50, 15)
+    with pytest.raises(TimelineError):
+        tl.set_reverse(tl.add_clip(media(tl, "image")).id, True)
+
+
+def test_insert_freeze(tl):
+    video = media(tl, "video")
+    first = tl.add_clip(video, None, 0)
+    after = tl.add_clip(video, None, 100)
+    still_media = MediaItem("/f.png", "image", width=640, height=360, id="still")
+    tl.project.media.append(still_media)
+    still = tl.insert_freeze(first.id, 40, still_media, 50)
+    assert (still.start, still.duration) == (40, 50)
+    parts = sorted((c for c in tl.project.clips if c.media_id == "video"), key=lambda c: c.start)
+    assert [(c.start, c.duration) for c in parts] == [(0, 40), (90, 60), (150, 100)]
+    assert after.start == 150
+
+
+def test_locked_track_refuses_changes(project):
+    from montar.ui.editor.controller import EditorController
+
+    pytest.importorskip("PyQt6.QtCore")
+    controller = EditorController(project)
+    errors = []
+    controller.error.connect(errors.append)
+    clip = controller.edit("ajout", lambda t: t.add_clip(t.project.find_media("video")))
+    track_id = clip.track_id
+    controller.edit("verrou", lambda t: setattr(t.track(track_id), "locked", True))
+    assert controller.edit("couper", lambda t: t.split(clip.id, 10)) is None
+    assert errors and "verrouillée" in errors[-1] and len(project.clips) == 1
+    controller.edit("ailleurs", lambda t: t.add_clip(t.project.find_media("audio")))
+    assert len(project.clips) == 2  # les autres pistes restent modifiables
+    controller.edit("déverrou", lambda t: setattr(t.track(track_id), "locked", False))
+    controller.edit("couper", lambda t: t.split(project.clips[0].id, 10))
+    assert len(project.clips) == 3

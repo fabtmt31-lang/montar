@@ -65,6 +65,7 @@ class Track:
     name: str
     muted: bool = False
     hidden: bool = False  # pistes vidéo et texte : image masquée
+    locked: bool = False  # clips protégés contre toute modification
     volume: float = 1.0  # gain linéaire de la piste (0 à 2)
     id: str = field(default_factory=new_id)
 
@@ -163,6 +164,7 @@ class Clip:
     duration: int
     source_in: int = 0  # première image utilisée dans le média (à vitesse normale)
     speed: float = 1.0
+    reverse: bool = False  # lecture inversée (la plage source_in… est lue à l'envers)
     volume: float = 1.0  # gain linéaire (0 = muet, 2 = +6 dB)
     fade_in: int = 0  # images
     fade_out: int = 0

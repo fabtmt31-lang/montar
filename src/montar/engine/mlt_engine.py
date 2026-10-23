@@ -76,8 +76,8 @@ def _structure(spec: TimelineSpec) -> tuple:
     """Ce qui impose de reconstruire le graphe ; les réglages des clips en sont exclus."""
     tracks = []
     for t in spec.tracks:
-        clips = tuple((c.path, c.kind, c.start, c.duration, c.source_in, c.speed, c.media_size)
-                      for c in t.clips)
+        clips = tuple((c.path, c.kind, c.start, c.duration, c.source_in, c.speed, c.media_size,
+                       c.reverse) for c in t.clips)
         tracks.append((t.kind, t.muted, t.hidden, t.volume, t.transitions, clips))
     return spec.canvas, tuple(tracks)
 
@@ -340,7 +340,12 @@ class _TimelineGraph:
 
     def _clip_producer(self, clip: ClipSpec, track_kind: str, key: tuple[int, int]):
         """Producteur propre au clip, avec ses filtres ; renvoie (producteur, image d'entrée)."""
-        if clip.kind in ("video", "audio") and clip.speed != 1.0:
+        if clip.kind in ("video", "audio") and clip.reverse and clip.media_length:
+            # timewarp négatif : l'image j montre l'image L-1-j·k du média
+            k = abs(clip.speed)
+            producer = mlt.Producer(self.profile, f"timewarp:{-k:g}:{clip.path}")
+            cut_in = max(0, round((clip.media_length - clip.source_in - clip.duration * k) / k))
+        elif clip.kind in ("video", "audio") and clip.speed != 1.0:
             producer = mlt.Producer(self.profile, f"timewarp:{clip.speed:g}:{clip.path}")
             cut_in = round(clip.source_in / clip.speed)
         else:

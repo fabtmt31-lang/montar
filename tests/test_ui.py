@@ -1332,3 +1332,47 @@ def test_extensions_install_folder_and_reload(window, tmp_path):
     assert window.modules.modules["dev"].loaded.effects[0].name == "Inversé"
     assert [a.text() for a in card.install_button.menu().actions()][1:] == [
         "Depuis un dossier…", "Lier un dossier (développement)…"]
+
+
+# --- P2-1 -------------------------------------------------------------------------------------
+
+
+@needs_ffmpeg
+def test_freeze_frame_safe_zone_and_lock(window, media_dir):
+    editor = imported_editor(window, media_dir, ["redblue.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    clip = editor.project.clips[0]
+    assert wait_until(lambda: editor.player.length == 50)
+    editor.player.seek(30)
+    assert wait_until(lambda: editor.timeline.view.playhead == 30)
+    editor.controller.select(clip.id)
+    editor.inspector.freeze_button.click()
+    assert wait_until(lambda: len(editor.project.clips) == 3)
+    still = editor.controller.selected_clip()
+    media = editor.project.find_media(still.media_id)
+    assert media.kind == "image" and (still.start, still.duration) == (30, 50)
+    from PyQt6.QtGui import QImage
+    image = QImage(media.path)
+    color = image.pixelColor(image.width() // 2, image.height() // 2)
+    assert color.blue() > color.red()  # à 1,2 s la vidéo est bleue
+    assert sorted(c.start for c in editor.project.clips) == [0, 30, 80]
+
+    # lecture inversée depuis l'inspecteur
+    editor.controller.select(editor.project.clips[0].id)
+    editor.inspector.reverse_check.setChecked(True)
+    assert editor.project.clips[0].reverse
+
+    # zone de sécurité mémorisée
+    editor.preview.safe_button.click()
+    assert editor.preview.canvas.safe_zone and window.settings.safe_zone
+
+    # verrou : clic sur le cadenas de l'en-tête, puis plus de modification possible
+    view = editor.timeline.view
+    row = next(r for r in view.rows() if r.track.id == still.track_id)
+    lock = dict(view._header_buttons(row))["lock"]
+    QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=lock.center())
+    assert editor.controller.timeline.track(still.track_id).locked
+    count = len(editor.project.clips)
+    editor.controller.select(still.id)
+    editor.timeline.delete()
+    assert len(editor.project.clips) == count

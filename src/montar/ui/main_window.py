@@ -85,6 +85,13 @@ class MainWindow(QMainWindow):
         self.home.set_entries(entries)
         self.projects.set_entries(entries)
 
+    def _safe_zone_changed(self, on: bool) -> None:
+        self.settings.safe_zone = on
+        try:
+            self.settings.save(self._settings_file)
+        except OSError as exc:
+            log.warning("préférences non enregistrées : %s", exc)
+
     def _volume_changed(self, volume: float) -> None:
         self.settings.preview_volume = round(volume, 2)
         try:
@@ -172,6 +179,7 @@ class MainWindow(QMainWindow):
         editor.saveAsRequested.connect(self.save_project_as)
         editor.disabledModulesChanged.connect(self.preferences.set_disabled_modules)
         editor.preview.volumeChanged.connect(self._volume_changed)
+        editor.preview.safeZoneChanged.connect(self._safe_zone_changed)
         editor.library_provider = lambda: self.library_items(project.path)
         editor.thumbnail_provider = self._thumbnail_for
         self.editor = editor

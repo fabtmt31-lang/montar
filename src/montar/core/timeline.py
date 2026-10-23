@@ -132,6 +132,8 @@ class Timeline:
         length = media.length_frames(self.fps)
         if length is None:
             return None
+        if clip.reverse:  # le haut de la plage est fixe : on peut descendre jusqu'à 0
+            return max(1, int((clip.source_in + clip.duration * clip.speed) / clip.speed))
         return max(1, int((length - clip.source_in) / clip.speed))
 
     def available_before(self, clip: Clip) -> int | None:
@@ -139,6 +141,9 @@ class Timeline:
         media = self.media_of(clip)
         if media is None or media.length_frames(self.fps) is None:
             return None
+        if clip.reverse:  # reculer le début montre des images plus loin dans le média
+            top = clip.source_in + clip.duration * clip.speed
+            return max(0, int((media.length_frames(self.fps) - top) / clip.speed))
         return int(clip.source_in / clip.speed)
 
     def free_start(self, track_id: str, start: int, duration: int,
@@ -279,9 +284,12 @@ class Timeline:
         if edge == "start":
             delta = frame - clip.start
             clip.start, clip.duration = frame, clip.duration - delta
-            if self.available_before(clip) is not None:
+            if self.available_before(clip) is not None and not clip.reverse:
                 clip.source_in = max(0, clip.source_in + round(delta * clip.speed))
         elif edge == "end":
+            if clip.reverse and self.media_of(clip) is not None:  # la fin montre le bas
+                removed = clip.duration - (frame - clip.start)
+                clip.source_in = max(0, clip.source_in + round(removed * clip.speed))
             clip.duration = frame - clip.start
         else:
             raise TimelineError(f"bord inconnu : {edge}")
@@ -302,7 +310,10 @@ class Timeline:
         second = copy.deepcopy(clip)
         second.id = new_id()
         second.start, second.duration = frame, clip.duration - offset
-        if self.available_before(clip) is not None:
+        if clip.reverse and self.media_of(clip) is not None:
+            # à l'envers : la première partie montre le haut de la plage, la seconde le bas
+            clip.source_in += round(second.duration * clip.speed)
+        elif self.available_before(clip) is not None:
             second.source_in = clip.source_in + round(offset * clip.speed)
         clip.duration, clip.fade_out, second.fade_in = offset, 0, 0
         if after is not None:
@@ -368,6 +379,33 @@ class Timeline:
         self._shift_from(clip.track_id, old_end, clip.end - old_end, ignore=clip.id)
         return clip
 
+    def set_reverse(self, clip_id: str, reverse: bool) -> Clip:
+        clip = self.clip(clip_id)
+        media = self.media_of(clip)
+        if media is None or media.kind == "image":
+            raise TimelineError("la lecture inversée ne s'applique qu'aux vidéos et aux sons")
+        if self.timing_locked(clip):
+            raise TimelineError("retirez d'abord l'effet qui fixe la vitesse de ce clip")
+        clip.reverse = reverse
+        return clip
+
+    def insert_freeze(self, clip_id: str, frame: int, image: MediaItem,
+                      duration: int) -> Clip:
+        """Image fixe : coupe le clip à `frame`, décale la suite de `duration` images et place
+        l'image à cet endroit."""
+        clip = self.clip(clip_id)
+        if self.track(clip.track_id).kind != "video":
+            raise TimelineError("une image fixe se place sur une piste vidéo")
+        if not clip.start <= frame < clip.end:
+            raise TimelineError("placez la tête de lecture sur le clip")
+        if frame > clip.start and self.split(clip_id, frame) is None:
+            raise TimelineError("impossible de couper ici (transition)")
+        self._shift_from(clip.track_id, frame, duration)
+        still = Clip(image.id, clip.track_id, frame, max(1, duration))
+        still.transform = copy.deepcopy(clip.transform)
+        self.project.clips.append(still)
+        return still
+
     def detach_audio(self, clip_id: str) -> Clip:
         """Place le son d'un clip vidéo sur une piste audio et coupe le son du clip vidéo."""
         clip = self.clip(clip_id)
@@ -375,8 +413,9 @@ class Timeline:
         if media is None or media.kind != "video" or not media.has_audio:
             raise TimelineError("ce clip n'a pas de son à détacher")
         track = self.first_track("audio") or self.add_track("audio")
-        audio = Clip(media.id, track.id, 0, clip.duration, clip.source_in, clip.speed,
-                     clip.volume, clip.fade_in, clip.fade_out)
+        audio = Clip(media.id, track.id, 0, clip.duration, source_in=clip.source_in,
+                     speed=clip.speed, reverse=clip.reverse, volume=clip.volume,
+                     fade_in=clip.fade_in, fade_out=clip.fade_out)
         if any(c.start < clip.end and clip.start < c.end for c in self.clips_on(track.id)):
             track = self.add_track("audio")
             audio.track_id = track.id

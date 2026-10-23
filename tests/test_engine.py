@@ -306,3 +306,19 @@ def test_comma_locale_does_not_break_placement(media_dir):
         assert near(inside, BLUE) and outside == BLACK
     finally:
         locale.setlocale(locale.LC_NUMERIC, "C")
+
+
+@needs_ffmpeg
+def test_reverse_playback(engine, media_dir):
+    # rouge pendant 1 s puis bleu : à l'envers, le clip commence en bleu
+    path = str(media_dir / "redblue.mp4")
+    normal = ClipSpec(path, "video", 0, 50, media_size=(64, 36), media_length=50)
+    reverse = ClipSpec(path, "video", 0, 50, media_size=(64, 36), reverse=True, media_length=50)
+    for clip, first in ((normal, "red"), (reverse, "blue")):
+        source = engine.build(TimelineSpec(Canvas(64, 36, 25),
+                                           (TrackSpec("video", False, False, (clip,)),)))
+        try:
+            r, _g, b, _a = pixel(source.render(5, 64, 36), 64, 32, 18)
+        finally:
+            source.close()
+        assert (r > b) == (first == "red")

@@ -188,6 +188,7 @@ def retime(spec: TimelineSpec, fps: int) -> TimelineSpec:
             start, end = conv(c.start), conv(c.start + c.duration)
             clips.append(dataclasses.replace(
                 c, start=start, duration=max(1, end - start), source_in=conv(c.source_in),
+                media_length=conv(c.media_length),
                 fade_in=conv(c.fade_in), fade_out=conv(c.fade_out)))
         transitions = tuple(dataclasses.replace(t, duration=max(1, conv(t.duration)))
                             for t in track.transitions)

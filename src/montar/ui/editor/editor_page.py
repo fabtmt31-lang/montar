@@ -39,6 +39,7 @@ from montar.engine.geometry import offset_for_center, placement
 from montar.i18n import _
 from montar.media.edit import MediaEdit, output_suffix, updated_media
 from montar.media.edit import apply as apply_edit
+from montar.media.frames import FrameError, extract_frame, source_seconds
 from montar.media.probe import (
     AUDIO_EXTENSIONS,
     IMAGE_EXTENSIONS,
@@ -166,6 +167,7 @@ class EditorPage(QWidget):
         self.preview = PreviewPanel(self.player, preview_quality)
         body.addWidget(self.preview, 1)
         self.inspector = Inspector(self.controller, self.modules)
+        self.inspector.freezeRequested.connect(self.freeze_frame)
         body.addWidget(self.inspector)
         self.effects_panel.set_modules(self.modules)
         self.effects_panel.addRequested.connect(self.open_apply)
@@ -250,6 +252,7 @@ class EditorPage(QWidget):
         self._dirty = False
         self._voice_pending: dict[str, tuple[int, int]] = {}  # fichier → (début, rognage)
         self._overlay_pending: dict[str, tuple[int, bool]] = {}  # fichier → (début, dessous)
+        self._freeze_pending: dict[str, tuple[str, int]] = {}  # fichier → (clip, image)
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
         self._save_timer.setInterval(800)
@@ -971,6 +974,44 @@ class EditorPage(QWidget):
         layout.addWidget(close, 0, Qt.AlignmentFlag.AlignRight)
         dialog.exec()
 
+    # --- image fixe ------------------------------------------------------------------------
+
+    FREEZE_SECONDS = 2
+
+    def freeze_frame(self, clip_id: str) -> Path | None:
+        """Image fixe : l'image affichée à la tête de lecture est extraite dans medias/ puis
+        insérée dans le clip, pendant FREEZE_SECONDS secondes."""
+        clip = self.controller.timeline.clip(clip_id)
+        media = self.project.find_media(clip.media_id) if clip.media_id else None
+        frame = self.timeline.view.playhead
+        if media is None or media.kind != "video" or self.project.media_dir is None:
+            return None
+        if not clip.start <= frame < clip.end:
+            QMessageBox.information(self, _("Image fixe"),
+                                    _("Placez la tête de lecture sur le clip."))
+            return None
+        stamp = time.strftime("%Y-%m-%d %H-%M-%S")
+        target = self.project.media_dir / f"{_('Image fixe')} {stamp}.png"
+        try:
+            extract_frame(media.path, source_seconds(clip, frame, self.project.fps), target)
+        except FrameError as exc:
+            QMessageBox.warning(self, _("Image fixe"), str(exc))
+            return None
+        self._freeze_pending[str(target)] = (clip_id, frame)
+        self.import_files([str(target)])
+        return target
+
+    def _place_freeze(self, item: MediaItem, clip_id: str, frame: int) -> None:
+        duration = self.FREEZE_SECONDS * self.project.fps
+
+        def add(t):
+            t.project.media.append(item)
+            return t.insert_freeze(clip_id, frame, item, duration)
+
+        still = self.controller.edit(_("Image fixe"), add)
+        if still is not None:
+            self.controller.select(still.id)
+
     # --- graphismes ------------------------------------------------------------------------
 
     def insert_graphic(self, module_id: str, graphic) -> Path | None:
@@ -1344,6 +1385,8 @@ class EditorPage(QWidget):
             item, thumb, error = self._import_results.pop(queued)
             if item is None:
                 errors.append(f"{Path(queued).name} : {error}")
+            elif queued in self._freeze_pending:
+                self._place_freeze(item, *self._freeze_pending.pop(queued))
             elif queued in self._overlay_pending:
                 self._place_overlay(item, thumb, *self._overlay_pending.pop(queued))
             elif queued in self._voice_pending:
@@ -1440,6 +1483,7 @@ class EditorPage(QWidget):
         if opening:
             self.timeline.magnet.setChecked(settings.snap)
             self.preview.set_volume(settings.preview_volume)
+            self.preview.set_safe_zone(settings.safe_zone)
 
     # --- glisser-déposer de fichiers -----------------------------------------------
 
