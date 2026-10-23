@@ -1841,3 +1841,34 @@ def test_auto_subtitles_tool(window, media_dir, monkeypatch):
     assert editor.project.subtitles_shown
     editor.controller.undo()
     assert not editor.project.subtitles
+
+
+def test_module_catalogue_card(window, monkeypatch, tmp_path):
+    from pathlib import Path
+
+    from montar.core import catalog
+
+    root = Path(__file__).resolve().parent.parent / "catalogue"
+    calls = []
+
+    def fake_read(url, limit, timeout):
+        calls.append(url)
+        if url.endswith("index.json"):
+            return (root / "index.json").read_bytes()
+        return (root / "modules" / url.rsplit("/", 1)[1]).read_bytes()
+
+    monkeypatch.setattr(catalog, "_read", fake_read)
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Yes)
+    card = window.preferences.catalog
+    assert not window.settings.catalog_enabled and not calls  # rien sans accord
+    card.enabled.setChecked(True)
+    assert window.settings.catalog_enabled
+    assert wait_until(lambda: card.rows())
+    row = card.rows()[0]
+    assert row.entry.id == "exemple.negatif" and row.action.isEnabled()
+    row.action.click()
+    assert wait_until(lambda: "exemple.negatif" in window.modules.modules)
+    assert wait_until(lambda: not card.rows()[0].action.isEnabled())  # « Installé »
+    card.enabled.setChecked(False)
+    assert not card.rows()

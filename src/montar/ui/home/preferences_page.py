@@ -201,6 +201,11 @@ class PreferencesPage(QWidget):
             self.extensions = ExtensionsCard(modules)
             self.extensions.disabledChanged.connect(self._set_disabled)
             layout.addWidget(self.extensions)
+            from montar.ui.home.catalog_card import CatalogCard
+
+            self.catalog = CatalogCard(settings, self.extensions)
+            self.catalog.changed.connect(self.settingsChanged)
+            layout.addWidget(self.catalog)
         layout.addStretch()
 
     def _saving_card(self, settings: Settings) -> QFrame:

@@ -442,6 +442,26 @@ modules…** pendant le montage) :
 Les modules installés se trouvent dans `~/.local/share/montar/modules/` ; on peut les
 activer, les désactiver ou les supprimer dans Préférences → Extensions.
 
+### Catalogue en ligne
+
+**Préférences → Catalogue de modules** (désactivé par défaut) lit un fichier JSON servi en
+HTTPS et propose d'installer ou de mettre à jour les modules qu'il liste. Le catalogue de
+montar est `catalogue/index.json` dans le dépôt, reconstruit à partir de `examples/modules`
+par `python3 scripts/build_catalogue.py` ; on peut indiquer l'adresse d'un autre catalogue.
+
+```json
+{"format": 1, "modules": [
+  {"id": "mon.module", "name": "Mon module", "version": "1.0.0",
+   "description": "…", "author": "…", "license": "GPL-3.0-or-later",
+   "api_version": "1.4", "url": "modules/mon.module-1.0.0.montar-module",
+   "sha256": "<empreinte SHA-256 de l'archive>"}
+]}
+```
+
+`url` peut être relative au catalogue ; seules les adresses HTTPS sont acceptées et une
+archive dont l'empreinte ne correspond pas est refusée. L'installation demande ensuite la
+même confirmation qu'une installation depuis un fichier.
+
 ## 15. Compatibilité des versions
 
 | API | Nouveautés |

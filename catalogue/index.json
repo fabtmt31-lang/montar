@@ -1,0 +1,16 @@
+{
+  "format": 1,
+  "modules": [
+    {
+      "id": "exemple.negatif",
+      "name": "Négatif",
+      "version": "1.0.0",
+      "description": "Inverse les couleurs d'un clip (module d'exemple de l'API).",
+      "author": "Exemple montar",
+      "license": "GPL-3.0-or-later",
+      "api_version": "1.1",
+      "url": "modules/exemple.negatif-1.0.0.montar-module",
+      "sha256": "aaee559284a2c84811341150a7b9a910d31fb644ffe6f5550684bee77fe2153d"
+    }
+  ]
+}

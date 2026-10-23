@@ -35,6 +35,8 @@ class Settings:
     backup_minutes: int = 2  # intervalle des copies datées dans « sauvegardes/ »
     trash_days: int = 30  # projets effacés de la corbeille après ce nombre de jours
     shortcuts: dict[str, str] = field(default_factory=dict)  # touches personnalisées (F-UX-07)
+    catalog_enabled: bool = False  # catalogue de modules en ligne (F-MOD-08), sur demande
+    catalog_url: str = ""  # vide : adresse par défaut (montar.core.catalog.DEFAULT_URL)
 
     @property
     def projects_path(self) -> Path:
