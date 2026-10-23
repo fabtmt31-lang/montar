@@ -1917,3 +1917,52 @@ def test_grading_panel_and_scopes(window, media_dir, tmp_path):
         scopes.update_frame(editor.preview.canvas.image)
         assert scopes.view.pixmap() is not None and not scopes.view.pixmap().isNull()
     scopes.close()
+
+
+@needs_ffmpeg
+def test_track_tool_attaches_follower(window, tmp_path, monkeypatch):
+    import subprocess
+    import sys
+
+    pytest.importorskip("numpy")
+    folder = tmp_path / "media"
+    folder.mkdir()
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                    "testsrc2=size=480x270:rate=25:duration=2", "-f", "lavfi", "-i",
+                    "color=c=white:size=40x40", "-filter_complex",
+                    "[0][1]overlay=x='40+160*t':y=100:shortest=1", "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p", str(folder / "carre.mp4")], check=True)
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=red:size=64x64",
+                    "-frames:v", "1", str(folder / "logo.png")], check=True)
+    editor = imported_editor(window, folder, ["carre.mp4", "logo.png"])
+    video_media, logo_media = editor.project.media
+    editor.add_to_timeline(video_media)
+    track = editor.controller.edit("piste", lambda t: t.add_track("video")).id
+    logo = editor.controller.edit("logo", lambda t: t.add_clip(logo_media, track, 0, 50))
+    video = next(c for c in editor.project.clips if c.media_id == video_media.id)
+    module_id, tool = next((m, t) for m, t in editor.modules.tools_for(video)
+                           if t.id == "suivi.suivre")
+    package = sys.modules[type(tool).__module__]
+
+    class FakeDialog:
+        DialogCode = type("Code", (), {"Accepted": 1})
+
+        def __init__(self, parent, image, followers):
+            assert not image.isNull() and followers[0][0] == logo.id
+
+        def exec(self):
+            return 1
+
+        def choice(self):
+            return {"rect": (40 / 480, 100 / 270, 40 / 480, 40 / 270), "mode": "follow",
+                    "target": logo.id, "block": 16}
+
+    fake = type(sys)("dialog")
+    fake.TrackDialog = FakeDialog
+    monkeypatch.setitem(sys.modules, f"{package.__name__}.dialog", fake)
+    editor.timeline.set_playhead(0)
+    editor.modules.run_tool(module_id, tool, video)
+    assert wait_until(lambda: editor.project.clips[-1].keyframes.get("x"), 60)
+    keys = next(c for c in editor.project.clips if c.id == logo.id).keyframes
+    xs = [v for _f, v in keys["x"]]
+    assert xs[-1] - xs[0] > 0.2  # le logo part vers la droite avec le carré

@@ -423,6 +423,13 @@ class _TimelineGraph:
                                 + effect_filters(clip.effects)
                                 + grade_filters(clip.grade, clip.lut)
                                 + [f for f in clip.extra_filters if f[0] != MOTION]):
+                if "in" in props and "out" in props:  # partie du clip (API 1.4)
+                    rest = {k: v for k, v in props.items() if k not in ("in", "out")}
+                    first = span[0] + max(0, int(props["in"]))
+                    last = min(span[1], span[0] + int(props["out"]))
+                    if last >= first:
+                        self._attach(producer, name, rest, (first, last))
+                    continue
                 self._attach(producer, name, props)
         motions = [props for name, props in clip.extra_filters if name == MOTION] \
             if clip.kind in ("video", "image") else []

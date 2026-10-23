@@ -1,6 +1,7 @@
 {
  "Allemand": "German",
  "Anglais": "English",
+ "Annuler": "Cancel",
  "Aucun moteur de reconnaissance vocale n'est installé. Installez par exemple faster-whisper :\n\n    {cmd}\n\nLe modèle choisi est téléchargé une seule fois ; ensuite, tout se fait sur l'ordinateur, sans connexion. Le programme whisper.cpp convient aussi (modèles ggml-*.bin dans ~/.local/share/montar/whisper).": "No speech recognition engine is installed. Install faster-whisper, for example:\n\n    {cmd}\n\nThe chosen model is downloaded only once; after that, everything runs on the computer, offline. The whisper.cpp program also works (ggml-*.bin models in ~/.local/share/montar/whisper).",
  "Aucune parole reconnue dans ce clip.": "No speech recognised in this clip.",
  "Détecter automatiquement": "Detect automatically",

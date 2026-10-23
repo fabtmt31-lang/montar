@@ -121,6 +121,7 @@ def _ask(parent):
     buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
                                QDialogButtonBox.StandardButton.Cancel)
     buttons.button(QDialogButtonBox.StandardButton.Ok).setText(_("Transcrire"))
+    buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(_("Annuler"))
     buttons.accepted.connect(dialog.accept)
     buttons.rejected.connect(dialog.reject)
     layout.addWidget(buttons)

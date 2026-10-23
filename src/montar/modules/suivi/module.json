@@ -1,0 +1,10 @@
+{
+  "id": "suivi",
+  "name": "Suivi de mouvement",
+  "version": "1.0.0",
+  "api_version": "1.4",
+  "author": "montar",
+  "license": "GPL-3.0-or-later",
+  "description": "Suit un objet dans une vidéo pour y attacher un graphisme, une image ou un logo, ou pour le pixeliser (visage, plaque…).",
+  "permissions": []
+}

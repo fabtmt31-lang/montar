@@ -168,6 +168,10 @@ class Negatif(VideoEffect):
   `frei0r.scanline0r`…), options par leur nom (`{"triplevel": 0.98}`) ;
 - filtres **MLT** natifs (`brightness`, `oldfilm`, `grain`, `vignette`…).
 
+Depuis l'API 1.4, un filtre dont les propriétés contiennent `in` et `out` (images
+relatives au début du clip) ne s'applique qu'à cette partie du clip ; le module `suivi` s'en
+sert pour faire suivre une pixelisation à un objet.
+
 La liste des filtres disponibles sur une machine s'obtient avec
 `melt -query filters` (paquet `melt`) ; leur documentation avec
 `melt -query filter=avfilter.gblur`. Un filtre absent est ignoré (un avertissement est
@@ -470,7 +474,7 @@ même confirmation qu'une installation depuis un fichier.
 | 1.1 | `description` des outils et des effets, `icon` des effets |
 | 1.2 | `AudioEffect`, `Transition`, `Generator`, `ExportFormat`, `Param.color` |
 | 1.3 | `Graphic` (`api.add_graphic`), pseudo-filtre `ZOOM` |
-| 1.4 | `schedule_job(…, done)` : résultat d'un calcul remis au fil principal |
+| 1.4 | `schedule_job(…, done)` : résultat d'un calcul remis au fil principal ; propriétés `in` / `out` d'un filtre (images relatives au clip) |
 
 montar charge les modules dont la version **majeure** est la sienne (`1.x`). Indiquez dans
 `api_version` la plus petite version qui contient ce que vous utilisez : un module `1.2`
