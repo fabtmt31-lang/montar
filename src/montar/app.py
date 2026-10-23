@@ -101,15 +101,44 @@ def _install_language(app, setting: str) -> None:
             break
 
 
+def _module_tool(args) -> int:
+    from montar.plugins.devtools import new_module, pack_module
+    from montar.plugins.manager import ModuleError
+
+    try:
+        if args.new_module:
+            kinds = [k.strip() for t in (args.type or []) for k in t.split(",") if k.strip()]
+            folder = new_module(Path(args.new_module), kinds=kinds or None)
+            print(f"Module créé : {folder}")
+            print("Modifiez __init__.py, puis Préférences → Extensions → Installer un module "
+                  "→ « Lier un dossier (développement) ».")
+        else:
+            print(f"Archive créée : {pack_module(Path(args.pack_module))}")
+    except (ModuleError, OSError) as exc:
+        print(f"montar : {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="montar", description="Montage vidéo simple et local")
     parser.add_argument("project", nargs="?", help="projet .montar à ouvrir")
     parser.add_argument("--version", action="version", version=f"montar {__version__}")
     parser.add_argument("--diagnostic", action="store_true",
                         help="affiche les versions et vérifie le moteur de rendu, puis quitte")
+    dev = parser.add_argument_group("auteurs de modules (voir docs/MODULES.md)")
+    dev.add_argument("--new-module", metavar="DOSSIER",
+                     help="crée le squelette d'un module dans DOSSIER, puis quitte")
+    dev.add_argument("--type", action="append", metavar="TYPE",
+                     help="avec --new-module : effet-video, effet-audio, transition, "
+                          "generateur, graphisme, format, outil (répétable)")
+    dev.add_argument("--pack-module", metavar="DOSSIER",
+                     help="crée l'archive .montar-module du module DOSSIER, puis quitte")
     args, qt_args = parser.parse_known_args(argv if argv is not None else sys.argv[1:])
     if args.diagnostic:
         return diagnostic()
+    if args.new_module or args.pack_module:
+        return _module_tool(args)
 
     _setup_logging()
     from PyQt6.QtWidgets import QApplication

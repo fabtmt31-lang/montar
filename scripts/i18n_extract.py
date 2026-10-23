@@ -20,6 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent / "src" / "montar"
 MODULES = ROOT / "modules"
 ERRORS = {"TimelineError", "ProjectError"}
+SKIP = {"plugins/devtools.py"}  # modèles de code des nouveaux modules, pas de l'interface
 LANGUAGE = "en"
 
 
@@ -70,6 +71,8 @@ def groups() -> dict[Path, set[str]]:
     """Catalogue → chaînes : celui de montar, puis un par module intégré."""
     result: dict[Path, set[str]] = {ROOT / "locale" / f"{LANGUAGE}.json": set()}
     for path in sorted(ROOT.rglob("*.py")):
+        if path.relative_to(ROOT).as_posix() in SKIP:
+            continue
         if MODULES in path.parents:
             module = MODULES / path.relative_to(MODULES).parts[0]
             target = module / "locale" / f"{LANGUAGE}.json"

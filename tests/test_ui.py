@@ -1314,3 +1314,21 @@ def test_graphics_panel(window):
     assert background.track_id == video[-1].id
     im = QImage(editor.project.find_media(background.media_id).path)
     assert (im.width(), im.height()) == (1280, 720)
+
+
+def test_extensions_install_folder_and_reload(window, tmp_path):
+    from montar.plugins.devtools import new_module
+    from montar.ui.home.extensions import provides
+
+    card = window.preferences.extensions
+    folder = new_module(tmp_path / "dev", kinds=["effet-video", "graphisme"])
+    card.install_folder(str(folder), link=True)
+    info = window.modules.modules["dev"]
+    assert info.active and info.path.is_symlink()
+    assert provides(info) == "Apporte : 1 effets vidéo, 1 graphismes"
+    code = (folder / "__init__.py").read_text().replace('"Négatif"', '"Inversé"')
+    (folder / "__init__.py").write_text(code)
+    card.reload()
+    assert window.modules.modules["dev"].loaded.effects[0].name == "Inversé"
+    assert [a.text() for a in card.install_button.menu().actions()][1:] == [
+        "Depuis un dossier…", "Lier un dossier (développement)…"]

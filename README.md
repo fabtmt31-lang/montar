@@ -8,6 +8,21 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
 
 ## État d'avancement
 
+**Version 1.1** (1.1.0) : modules, effets et graphismes.
+
+- rail **Modules** : tout ce qu'apportent les modules actifs, avec recherche ; un clic
+  applique l'effet ou l'outil au clip sélectionné ; **Gérer les modules…** ;
+- nouveau module intégré **Effets** : VHS, zoom lent / rapide, dézoom lent / rapide,
+  bande dessinée, flou (doux, mouvement, carrés) ; le panneau **Effets** montre les effets
+  appliqués au clip, avec leurs réglages ;
+- rail **Graphiques** : annotations, figures, formes, arrière-plans, superpositions, cadres
+  et stickers, placés à la tête de lecture (les arrière-plans sous la vidéo) ;
+- **écrire ses modules** : guide complet [docs/MODULES.md](docs/MODULES.md),
+  `montar --new-module DOSSIER --type effet-video` (squelette) et
+  `montar --pack-module DOSSIER` (archive) ; **Préférences → Extensions → Installer un
+  module** depuis un fichier `.montar-module` ou `.zip`, un dossier, ou un dossier lié pour
+  le développement (**Recharger** relit le code).
+
 **Version 1.0 — Linux** (1.0.0) : fin du jalon J5, toutes les exigences P1 sont en place.
 
 - projets : **Enregistrer sous** / **Dupliquer**, copies de sauvegarde datées dans le
@@ -121,7 +136,7 @@ préférences, thèmes, paquet `.deb`.
 ## Installer le paquet
 
 ```sh
-sudo apt install ./montar_1.0.0_all.deb
+sudo apt install ./montar_1.1.0_all.deb
 ```
 
 Le paquet est produit par l'intégration continue (onglet *Actions* de GitHub, artefacts

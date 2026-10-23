@@ -1,3 +1,22 @@
+montar (1.1.0) unstable; urgency=medium
+
+  * Rail « Modules » : ce qu'apportent les modules actifs (outils, effets
+    vidéo et audio, transitions, générateurs, formats d'export), recherche,
+    application au clip sélectionné, « Gérer les modules… ».
+  * Panneau Effets : seuls les effets des modules appliqués au clip, avec
+    leurs réglages et « Retirer » ; « Ajouter un effet ou un module… ».
+  * Module intégré « Effets » : VHS, zoom lent / rapide, dézoom lent /
+    rapide, bande dessinée, flou (doux, mouvement, carrés).
+  * Rail « Graphiques » et module intégré « Graphismes » : annotations,
+    figures, formes, arrière-plans, superpositions, cadres, stickers.
+  * API des modules 1.3 : graphismes (Graphic), zoom animé (ZOOM) ; un module
+    qui demande une API plus récente est refusé avec un message clair.
+  * Auteurs de modules : guide détaillé (docs/MODULES.md, installé dans
+    /usr/share/doc/montar), montar --new-module et --pack-module,
+    installation depuis un dossier ou un dossier lié, « Recharger ».
+
+ -- Fabien <admin@appsdoc.fr>  Thu, 29 Oct 2026 10:00:00 +0100
+
 montar (1.0.0) unstable; urgency=medium
 
   * Version 1.0 pour Linux : toutes les exigences P1 du cahier des charges.

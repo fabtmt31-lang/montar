@@ -500,6 +500,14 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
   - **« Appliquer un effet ou un module… »** (F-MOD-07) : une seule entrée dans le clic droit d'un clip ou d'une plage, ouvrant une fenêtre de choix (outils et effets des modules, filtres, effets) avec recherche — prête pour les futurs modules ;
   - **enregistreur d'écran** simplifié (F-MED-06, avancé en J5) : écran entier ou fenêtre, son du micro et du système, webcam en incrustation ; l'enregistrement est importé dans le projet.
 
+**Jalon J6 — modules, effets et graphismes** (version 1.1, demandes d'octobre 2026) :
+- ✅ rail **Modules** : tout ce qu'apportent les modules actifs (outils, effets vidéo et audio, transitions, générateurs, formats d'export), avec recherche ; un clic applique au clip sélectionné ; « Gérer les modules… » sans quitter le montage (F-MOD-07, en partie) ;
+- ✅ module intégré **Effets** : VHS, zoom lent / rapide, dézoom lent / rapide (F-EDT-07, « Ken Burns »), bande dessinée, flou (doux, mouvement, carrés) ; zoom animé ouvert aux modules (API 1.3) ;
+- ✅ rail **Graphiques** : annotations, figures, formes, arrière-plans, superpositions, cadres, stickers ; module intégré **Graphismes** (35 dessins) et type `Graphic` pour en ajouter (F-MOD-08, modules de ressources) ;
+- ✅ **guide du développeur** de modules (docs/MODULES.md), `montar --new-module` et `--pack-module`, installation depuis un fichier, un dossier ou un dossier lié (développement), « Recharger ».
+
+**Suite prévue (J6+, exigences P2 puis P3)** : modèles de projet (F-PRJ-12), notifications locales (F-PRJ-14), proxys pour les fichiers 4K (F-MED-05), aperçu au survol (F-MED-03), verrouillage de piste (F-TL-09), zone de sécurité (F-PRV-05), lecture inversée (F-EDT-03), image fixe (F-EDT-09), images clés (F-EDT-10), animation « machine à écrire » (F-TXT-03), sous-titres SRT (F-TXT-05), export d'une plage ou d'une image (F-EXP-09), couleur d'accent (F-UX-01), raccourcis personnalisables (F-UX-07), accélération matérielle du rendu (F-UX-05) ; puis P3 : kit de marque, sous-titres automatiques, ducking, réduction de bruit, fond vert, stabilisation, catalogue de modules en ligne ; enfin le portage Windows (D9).
+
 ---
 
 ## 10. Critères de recette globaux (v1.0)

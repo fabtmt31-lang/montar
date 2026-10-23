@@ -76,9 +76,13 @@ def read_manifest(folder: Path) -> dict[str, Any]:
     if not data["id"].replace("_", "").replace("-", "").replace(".", "").isalnum():
         raise ModuleError(f"identifiant de module invalide : {data['id']}")
     try:
-        major = int(data["api_version"].split(".")[0])
-    except ValueError as exc:
+        parts = [int(x) for x in data["api_version"].split(".")[:2]]
+        major, minor = parts[0], (parts[1] if len(parts) > 1 else 0)
+    except (ValueError, IndexError) as exc:
         raise ModuleError(f"version d'API invalide : {data['api_version']}") from exc
+    if major == API_VERSION[0] and minor > API_VERSION[1]:
+        raise ModuleError(f"ce module demande l'API {data['api_version']} : mettez montar à "
+                          f"jour (il fournit l'API {API_VERSION[0]}.{API_VERSION[1]})")
     if major != API_VERSION[0]:
         raise ModuleError(f"API {data['api_version']} non prise en charge "
                           f"(montar fournit l'API {API_VERSION[0]}.{API_VERSION[1]})")
@@ -139,6 +143,10 @@ class ModuleManager:
         name = f"{_PARENT}.{info.id.replace('-', '_').replace('.', '_')}"
         for key in [k for k in sys.modules if k == name or k.startswith(name + ".")]:
             del sys.modules[key]
+        if not info.builtin:  # module en développement : jamais de code compilé périmé
+            for cache in list(info.path.rglob("__pycache__")):
+                shutil.rmtree(cache, ignore_errors=True)
+            importlib.invalidate_caches()
         try:
             spec = importlib.util.spec_from_file_location(
                 name, info.path / "__init__.py", submodule_search_locations=[str(info.path)])
@@ -242,17 +250,30 @@ class ModuleManager:
             return read_manifest(self._extract(archive, Path(tmp)))
 
     def install(self, archive: Path) -> ModuleInfo:
+        """Installe un module depuis une archive `.montar-module` (ou `.zip`), ou depuis un
+        dossier qui contient `module.json`."""
+        if Path(archive).is_dir():
+            return self.install_folder(Path(archive))
         with tempfile.TemporaryDirectory() as tmp:
-            folder = self._extract(archive, Path(tmp))
-            data = read_manifest(folder)
-            existing = self.modules.get(data["id"])
-            if existing is not None and existing.builtin:
-                raise ModuleError(f"« {data['id']} » est un module intégré à montar")
-            target = self.user_dir / data["id"]
-            self.user_dir.mkdir(parents=True, exist_ok=True)
-            if target.exists():
-                shutil.rmtree(target)
-            shutil.copytree(folder, target)
+            return self._install_from(self._extract(archive, Path(tmp)))
+
+    def install_folder(self, folder: Path, link: bool = False) -> ModuleInfo:
+        """Copie le dossier d'un module ; avec `link`, un lien vers lui est créé à la place
+        (développement : les modifications sont prises en compte en rechargeant)."""
+        return self._install_from(Path(folder).resolve(), link)
+
+    def _install_from(self, folder: Path, link: bool = False) -> ModuleInfo:
+        data = read_manifest(folder)
+        existing = self.modules.get(data["id"])
+        if existing is not None and existing.builtin:
+            raise ModuleError(f"« {data['id']} » est un module intégré à montar")
+        target = self.user_dir / data["id"]
+        self.user_dir.mkdir(parents=True, exist_ok=True)
+        _remove(target)
+        if link:
+            target.symlink_to(folder, target_is_directory=True)
+        else:
+            shutil.copytree(folder, target, ignore=shutil.ignore_patterns("__pycache__"))
         self.disabled.discard(data["id"])
         self.load_all()
         return self.modules[data["id"]]
@@ -261,7 +282,11 @@ class ModuleManager:
         info = self.modules.get(module_id)
         if info is None or info.builtin:
             raise ModuleError("seuls les modules installés peuvent être supprimés")
-        shutil.rmtree(info.path, ignore_errors=True)
+        _remove(info.path)  # un module lié : seul le lien est retiré
+        self.load_all()
+
+    def reload(self) -> None:
+        """Recharge tous les modules (après modification d'un module en développement)."""
         self.load_all()
 
     @staticmethod
@@ -282,3 +307,10 @@ class ModuleManager:
         if len(folders) != 1:
             raise ModuleError(f"l'archive doit contenir un seul module ({MANIFEST})")
         return folders[0]
+
+
+def _remove(path: Path) -> None:
+    if path.is_symlink():
+        path.unlink()
+    elif path.exists():
+        shutil.rmtree(path)

@@ -173,6 +173,8 @@ class PlaybackWorker(QObject):
     @pyqtSlot(int)
     def play_at(self, speed: int) -> None:
         """Lecture à `speed` fois la vitesse normale (négatif : en arrière)."""
+        if self._pending_seek is not None:  # un déplacement demandé juste avant passe d'abord
+            self._apply_seek()
         if self._source is None or self._timer is None or self._length == 0 or speed == 0:
             return
         if self._playing:
