@@ -11,13 +11,15 @@ from PyQt6.QtWidgets import QFrame, QHBoxLayout, QMenu, QSlider, QVBoxLayout
 from montar.i18n import _
 from montar.ui.editor.controller import EditorController
 from montar.ui.timeline.view import MAX_PPS, MIN_PPS, TimelineView
-from montar.ui.widgets import button
+from montar.ui.widgets import button, set_icon
 
 _SLIDER_STEPS = 1000
 
 
 class TimelinePanel(QFrame):
     voiceOverRequested = pyqtSignal()
+    maximizeToggled = pyqtSignal(bool)  # timeline sur toute la hauteur de l'écran de montage
+    detachToggled = pyqtSignal(bool)  # timeline dans une fenêtre à part (autre écran)
 
     def __init__(self, controller: EditorController,
                  thumbnail_for: Callable[[str], str | None],
@@ -84,6 +86,17 @@ class TimelinePanel(QFrame):
         bl.addWidget(self.zoom_slider)
         bl.addWidget(zoom_in)
         bl.addWidget(fit)
+        bl.addSpacing(8)
+        self.maximize_button = button("", "ghost", "maximize",
+                                      tooltip=_("Agrandir la timeline (voir toutes les pistes)"))
+        self.maximize_button.setCheckable(True)
+        self.maximize_button.toggled.connect(self._maximize_toggled)
+        self.detach_button = button("", "ghost", "external-link",
+                                    tooltip=_("Ouvrir la timeline dans une fenêtre séparée"))
+        self.detach_button.setCheckable(True)
+        self.detach_button.toggled.connect(self._detach_toggled)
+        bl.addWidget(self.maximize_button)
+        bl.addWidget(self.detach_button)
         layout.addWidget(bar)
 
         self.view = TimelineView(controller, thumbnail_for, peaks_for)
@@ -99,6 +112,25 @@ class TimelinePanel(QFrame):
         controller.changed.connect(self._update_buttons)
         self._sync_slider(self.view.pps)
         self._update_buttons()
+
+    def _maximize_toggled(self, on: bool) -> None:
+        set_icon(self.maximize_button, "minimize" if on else "maximize", "ink", 20)
+        self.maximize_button.setToolTip(_("Réduire la timeline") if on else
+                                        _("Agrandir la timeline (voir toutes les pistes)"))
+        self.maximizeToggled.emit(on)
+
+    def _detach_toggled(self, on: bool) -> None:
+        set_icon(self.detach_button, "panel-bottom" if on else "external-link", "ink", 20)
+        self.detach_button.setToolTip(_("Remettre la timeline dans l'écran de montage") if on
+                                      else _("Ouvrir la timeline dans une fenêtre séparée"))
+        self.maximize_button.setVisible(not on)
+        self.detachToggled.emit(on)
+
+    def set_maximized(self, on: bool) -> None:
+        self.maximize_button.setChecked(on)
+
+    def set_detached(self, on: bool) -> None:
+        self.detach_button.setChecked(on)
 
     # zoom logarithmique : le curseur couvre MIN_PPS → MAX_PPS
     def _slider_zoom(self, value: int) -> None:

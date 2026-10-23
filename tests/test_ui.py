@@ -1708,3 +1708,39 @@ def test_preview_drag_keeps_background_and_defers_render(window, media_dir):
                        QPoint(start.x() + 60, start.y()))
     assert wait_until(lambda: loads)
     editor.player.load = real_load
+
+
+@needs_ffmpeg
+def test_timeline_maximize_and_detach(window, media_dir):
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    panel = editor.timeline
+    panel.maximize_button.click()
+    assert editor._top.isHidden() and panel.maximize_button.isChecked()
+    panel.maximize_button.click()
+    assert not editor._top.isHidden()
+
+    panel.maximize_button.click()  # détacher depuis l'état agrandi : l'aperçu revient
+    panel.detach_button.click()
+    win = editor._timeline_window
+    assert win is not None and panel.window() is win and win.isVisible()
+    assert not editor._top.isHidden() and editor._detached_hint.isVisibleTo(editor)
+    # les raccourcis marchent aussi dans la fenêtre séparée
+    hosts = {sc.parent() for sc in editor._shortcuts}
+    assert win in hosts and editor in hosts
+    split = [sc for sc in editor._shortcuts if sc.parent() is win
+             and sc.key().toString() == "S"]
+    editor.timeline.set_playhead(20)
+    editor.controller.select(editor.project.clips[0].id)
+    split[0].activated.emit()
+    assert len(editor.project.clips) == 2
+    assert any(sc.parent() is win and sc.key().toString() == "Space" for sc in editor._shortcuts)
+
+    win.close()  # fermer la fenêtre remet la timeline en place
+    pump(50)
+    assert editor._timeline_window is None and panel.window() is window
+    assert not panel.detach_button.isChecked() and not editor._detached_hint.isVisibleTo(editor)
+    assert all(sc.parent() is editor for sc in editor._shortcuts)
+
+    panel.detach_button.click()
+    assert editor.close_project() is not None and editor._timeline_window is None

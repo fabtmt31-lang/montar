@@ -1,3 +1,17 @@
+montar (1.2.1) unstable; urgency=medium
+
+  * Opacité des clips appliquée au rendu (elle était sans effet).
+  * Aperçu : en déplaçant un élément, le fond ne suit plus la souris et
+    l'image ne saccade plus (rendu final au lâcher).
+  * Effet VHS refait : image douce, couleur qui bave, couleurs ternies,
+    grain, défauts de bande, affichage « PLAY ▶ » et date.
+  * Effet bande dessinée refait (encrage propre, aplats) et option « Trait
+    vivant » façon vieux dessin animé.
+  * Timeline : bouton pour l'agrandir (toutes les pistes) et pour l'ouvrir
+    dans une fenêtre séparée (deux écrans), raccourcis compris.
+
+ -- Fabien <admin@appsdoc.fr>  Sat, 31 Oct 2026 10:00:00 +0100
+
 montar (1.2.0) unstable; urgency=medium
 
   * Images clés : position, échelle, rotation et opacité animées entre des

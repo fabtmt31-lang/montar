@@ -79,6 +79,7 @@ from montar.ui.home.library import LibraryDialog
 from montar.ui.text_render import image_path as text_image_path
 from montar.ui.text_render import preset_style, text_bounds, typing_sequence
 from montar.ui.timeline.panel import TimelinePanel
+from montar.ui.timeline.window import TimelineWindow
 from montar.ui.widgets import LogoMark, button, label, set_icon
 
 log = logging.getLogger(__name__)
@@ -192,11 +193,28 @@ class EditorPage(QWidget):
         self.timeline.view.badge_provider = self.modules.badges
         self.timeline.view.applyRequested.connect(self.open_apply)
         self.timeline.voiceOverRequested.connect(self._voice_over_clicked)
+        self.timeline.maximizeToggled.connect(self.set_timeline_maximized)
+        self.timeline.detachToggled.connect(self.set_timeline_detached)
+        self._top = top
+        self._timeline_window: TimelineWindow | None = None
+        self._timeline_sizes: list[int] | None = None
+        self._detached_hint = QFrame()
+        hint_layout = QHBoxLayout(self._detached_hint)
+        hint_layout.setContentsMargins(16, 8, 16, 8)
+        hint_layout.addWidget(label(_("La timeline est ouverte dans une fenêtre séparée."),
+                                    "muted"))
+        hint_layout.addStretch()
+        back = button(_("Remettre ici"), "secondary", "panel-bottom")
+        back.clicked.connect(lambda: self.timeline.set_detached(False))
+        hint_layout.addWidget(back)
+        self._detached_hint.setVisible(False)
         splitter = QSplitter(Qt.Orientation.Vertical)
+        self._splitter = splitter
         splitter.setChildrenCollapsible(False)
         splitter.setHandleWidth(1)
         splitter.addWidget(top)
         splitter.addWidget(self.timeline)
+        splitter.addWidget(self._detached_hint)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
         splitter.setSizes([520, 320])
@@ -429,18 +447,28 @@ class EditorPage(QWidget):
         }
 
     def apply_shortcuts(self, overrides: dict[str, str]) -> None:
-        """Raccourcis clavier, avec les touches personnalisées des préférences (F-UX-07)."""
+        """Raccourcis clavier, avec les touches personnalisées des préférences (F-UX-07) ;
+        ils marchent aussi dans la fenêtre séparée de la timeline."""
+        self._shortcut_overrides = dict(overrides)
         for sc in self._shortcuts:
             sc.setEnabled(False)
             sc.setParent(None)
             sc.deleteLater()
         self._shortcuts = []
-        for action, slot in self._shortcut_actions().items():
-            for key in shortcuts.keys_for(overrides, action):
-                sc = QShortcut(QKeySequence(key), self)
-                sc.setContext(Qt.ShortcutContext.WindowShortcut)
-                sc.activated.connect(slot)
-                self._shortcuts.append(sc)
+        actions = self._shortcut_actions()
+        hosts: list[QWidget] = [self]
+        if getattr(self, "_timeline_window", None) is not None:
+            hosts.append(self._timeline_window)
+            actions = {**actions, **self.preview.transport_actions()}
+        for host in hosts:
+            for action, slot in actions.items():
+                if host is self and action in self.preview.transport_actions():
+                    continue  # l'aperçu porte déjà ses touches de lecture
+                for key in shortcuts.keys_for(overrides, action):
+                    sc = QShortcut(QKeySequence(key), host)
+                    sc.setContext(Qt.ShortcutContext.WindowShortcut)
+                    sc.activated.connect(slot)
+                    self._shortcuts.append(sc)
         self.preview.apply_shortcuts(overrides)
 
     # --- projet -------------------------------------------------------------
@@ -683,8 +711,54 @@ class EditorPage(QWidget):
             return True
         return False
 
+    # --- timeline agrandie ou détachée ------------------------------------------------------
+
+    def set_timeline_maximized(self, on: bool) -> None:
+        """La timeline occupe tout l'écran de montage (aperçu et panneaux masqués)."""
+        if on == self._top.isHidden() or self._timeline_window is not None:
+            return
+        if on:
+            self._timeline_sizes = self._splitter.sizes()
+        self._top.setVisible(not on)
+        if not on and self._timeline_sizes:
+            self._splitter.setSizes(self._timeline_sizes)
+        self.timeline.set_maximized(on)
+
+    def set_timeline_detached(self, on: bool) -> None:
+        """Timeline dans sa propre fenêtre (travail sur deux écrans) ou de retour ici."""
+        if on == (self._timeline_window is not None):
+            return
+        if on:
+            self.set_timeline_maximized(False)
+            self._timeline_sizes = self._splitter.sizes()
+            window = TimelineWindow(self, self.project.name)
+            window.closed.connect(self._timeline_window_closed)
+            window.hold(self.timeline)
+            self._timeline_window = window
+            self._detached_hint.setVisible(True)
+            self.apply_shortcuts(self._shortcut_overrides)
+            window.show()
+        else:
+            window, self._timeline_window = self._timeline_window, None
+            self._splitter.insertWidget(1, self.timeline)
+            self.timeline.show()
+            self._detached_hint.setVisible(False)
+            if self._timeline_sizes:
+                self._splitter.setSizes(self._timeline_sizes)
+            self.apply_shortcuts(self._shortcut_overrides)
+            window.closed.disconnect(self._timeline_window_closed)
+            window.close()
+            window.deleteLater()
+        self.timeline.set_detached(on)
+
+    def _timeline_window_closed(self) -> None:
+        if self._timeline_window is not None:
+            self.timeline.set_detached(False)
+
     def close_project(self) -> bool:
         """Enregistre si nécessaire et arrête la lecture ; False si l'enregistrement a échoué."""
+        if self._timeline_window is not None:
+            self.set_timeline_detached(False)
         ok = self.save() if self._save_timer.isActive() else True
         if self._modules_listener in self.module_manager.listeners:
             self.module_manager.listeners.remove(self._modules_listener)

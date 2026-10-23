@@ -8,6 +8,10 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
 
 ## État d'avancement
 
+**Version 1.2.1** : corrections et retours — opacité appliquée, déplacement fluide dans
+l'aperçu, effets **VHS** et **bande dessinée** refaits (option « Trait vivant »), timeline
+**agrandie** ou dans une **fenêtre séparée** (boutons à droite de sa barre d'outils).
+
 **Version 1.2** (1.2.0) : exigences P2 du cahier des charges.
 
 - **images clés** : dans l'inspecteur (onglet Image), « Ajouter une image clé », déplacez la
