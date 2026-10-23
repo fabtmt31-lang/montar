@@ -70,6 +70,11 @@ class GeneratorDialog(QDialog):
             self.list.setCurrentRow(0)
         self.create_button.setEnabled(bool(generators))
 
+    def select(self, generator_id: str) -> None:
+        for row in range(self.list.count()):
+            if self.list.item(row).data(Qt.ItemDataRole.UserRole)[1].id == generator_id:
+                self.list.setCurrentRow(row)
+
     def _show(self) -> None:
         while self.form.count():
             item = self.form.takeAt(0)

@@ -1,0 +1,10 @@
+{
+  "id": "effets",
+  "name": "Effets",
+  "version": "1.0.0",
+  "api_version": "1.3",
+  "author": "montar",
+  "license": "GPL-3.0-or-later",
+  "description": "Effets vidéo prêts à l'emploi : VHS, zoom et dézoom lents ou rapides, bande dessinée, flous.",
+  "permissions": []
+}

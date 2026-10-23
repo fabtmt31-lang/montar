@@ -65,6 +65,7 @@ from montar.ui.editor.importer import MediaImporter
 from montar.ui.editor.inspector import Inspector
 from montar.ui.editor.media_panel import MediaPanel
 from montar.ui.editor.modules import CANCELLED, EditorModules
+from montar.ui.editor.modules_panel import ModuleEntry, ModulesPanel
 from montar.ui.editor.panels import EffectsPanel, FiltersPanel, TextPanel, TransitionsPanel
 from montar.ui.editor.player import Player
 from montar.ui.editor.preview import PreviewPanel
@@ -85,6 +86,7 @@ _RAIL = (
     ("transitions", "Transitions", "columns-2"),
     ("effects", "Effets", "sparkles"),
     ("filters", "Filtres", "blend"),
+    ("modules", "Modules", "puzzle"),
     ("subtitles", "Sous-titres", "captions"),
     ("record", "Enregistrer", "circle-dot"),
 )
@@ -109,6 +111,7 @@ class EditorPage(QWidget):
     exportFinished = pyqtSignal(str)  # erreur (vide si réussite)
     recordingFinished = pyqtSignal(str)  # fichier enregistré (vide si échec)
     saveAsRequested = pyqtSignal(str)  # nom de la copie du projet
+    disabledModulesChanged = pyqtSignal(list)  # « Gérer les modules… »
 
     def __init__(self, project: Project, engine_factory: Callable[[], Engine], cache: Path,
                  preview_quality: str = "medium", modules: ModuleManager | None = None) -> None:
@@ -143,11 +146,13 @@ class EditorPage(QWidget):
         self.transitions_panel = TransitionsPanel(self.controller)
         self.effects_panel = EffectsPanel(self.controller)
         self.filters_panel = FiltersPanel(self.controller)
+        self.modules_panel = ModulesPanel()
         self.side = QStackedWidget()
         self._side_index = {}
         for key, panel in (("media", self.media_panel), ("text", self.text_panel),
                            ("transitions", self.transitions_panel),
-                           ("effects", self.effects_panel), ("filters", self.filters_panel)):
+                           ("effects", self.effects_panel), ("filters", self.filters_panel),
+                           ("modules", self.modules_panel)):
             self._side_index[key] = self.side.addWidget(panel)
         body.addWidget(self._build_rail())
         body.addWidget(self.side)
@@ -158,6 +163,10 @@ class EditorPage(QWidget):
         self.inspector = Inspector(self.controller, self.modules)
         body.addWidget(self.inspector)
         self.effects_panel.set_modules(self.modules)
+        self.effects_panel.addRequested.connect(self.open_apply)
+        self.modules_panel.set_manager(self.module_manager)
+        self.modules_panel.activated.connect(self.use_module_entry)
+        self.modules_panel.manageRequested.connect(self.manage_modules)
         self.transitions_panel.set_module_transitions(self.module_manager.transitions())
 
         self.timeline = TimelinePanel(self.controller, self.thumbnails.get, self.waveforms.get)
@@ -895,6 +904,65 @@ class EditorPage(QWidget):
                                 _("L'enregistrement a échoué : {error}").format(
                                     error=recorder.error))
 
+    # --- panneau Modules --------------------------------------------------------------------
+
+    def use_module_entry(self, entry: ModuleEntry) -> None:
+        """Clic dans le panneau Modules : appliquer au clip sélectionné, placer la
+        transition, créer le média ou ouvrir l'export."""
+        if entry.kind == "transition":
+            if self.transitions_panel.target() is None:
+                QMessageBox.information(self, _("Modules"), _(
+                    "Sélectionnez un clip suivi (ou précédé) d'un autre clip collé à lui, ou "
+                    "glissez la transition depuis le panneau Transitions."))
+                return
+            self.add_transition(entry.item.id)
+            return
+        if entry.kind == "generator":
+            dialog = GeneratorDialog(self.module_manager.generators(), self)
+            dialog.select(entry.item.id)
+            if dialog.exec() == QDialog.DialogCode.Accepted and dialog.chosen is not None:
+                self.generate(*dialog.chosen, dialog.values)
+            return
+        if entry.kind == "export_format":
+            self.open_export(entry.item.id)
+            return
+        clip = self.controller.selected_clip()
+        if clip is None:
+            QMessageBox.information(self, _("Modules"),
+                                    _("Sélectionnez d'abord un clip dans la timeline."))
+            return
+        if entry.kind == "tool":
+            usable = any(t is entry.item for _m, t in self.modules.tools_for(clip))
+        elif entry.kind == "audio_effect":
+            usable = self._has_sound(clip)
+        else:
+            usable = self._is_visual(clip)
+        if not usable:
+            QMessageBox.information(self, _("Modules"), _(
+                "« {name} » ne s'applique pas à ce clip.").format(name=entry.name))
+            return
+        action = ApplyAction(entry.kind, entry.item.id, entry.name, entry.description,
+                             entry.icon, entry.module_id, "",
+                             entry.item if entry.kind == "tool" else None)
+        self.apply_action(action, clip.id)
+
+    def manage_modules(self) -> None:
+        """Préférences → Extensions, dans une fenêtre, sans quitter le montage."""
+        from montar.ui.home.extensions import ExtensionsCard
+
+        dialog = QDialog(self)
+        dialog.setObjectName("ExportDialog")
+        dialog.setWindowTitle(_("Modules"))
+        dialog.resize(760, 560)
+        layout = QVBoxLayout(dialog)
+        card = ExtensionsCard(self.module_manager)
+        card.disabledChanged.connect(self.disabledModulesChanged)
+        layout.addWidget(card, 1)
+        close = button(_("Fermer"), "secondary")
+        close.clicked.connect(dialog.accept)
+        layout.addWidget(close, 0, Qt.AlignmentFlag.AlignRight)
+        dialog.exec()
+
     # --- générateurs des modules ---------------------------------------------------------
 
     def open_generator(self) -> None:
@@ -968,7 +1036,7 @@ class EditorPage(QWidget):
 
     # --- export --------------------------------------------------------------------------
 
-    def open_export(self) -> None:
+    def open_export(self, fmt: str | None = None) -> None:
         if self._export_job is not None:
             QMessageBox.information(self, _("Exporter la vidéo"),
                                     _("Un export est déjà en cours."))
@@ -991,6 +1059,8 @@ class EditorPage(QWidget):
         dialog = ExportDialog(self.project, length, self.preview.canvas.image, folder,
                               self._hardware, self,
                               [f for _m, f in self.module_manager.export_formats()])
+        if fmt:
+            dialog.choose_format(fmt)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         self.start_export(dialog.settings())
@@ -1075,6 +1145,7 @@ class EditorPage(QWidget):
         self.timeline.view.viewport().update()
         self.effects_panel.rebuild_modules()
         self.transitions_panel.set_module_transitions(self.module_manager.transitions())
+        self.modules_panel.set_manager(self.module_manager)
         self._on_clip_selected(self.controller.selected)
 
     def _on_frame(self, _image, frame: int) -> None:

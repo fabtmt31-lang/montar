@@ -294,6 +294,16 @@ class ExportDialog(QDialog):
             self.codec.setEnabled(self.codec.count() > 1)
         self._update()
 
+    def choose_format(self, fmt: str) -> None:
+        """Présélectionne un format (bouton d'un module dans le panneau Modules)."""
+        audio = fmt in AUDIO_FORMATS or (fmt in self.extra and self.extra[fmt].audio_only)
+        self.tabs.set_current("audio" if audio else "file")
+        self._tab_changed("")
+        chips = self.audio_formats if audio else self.video_formats
+        if fmt in chips.buttons:
+            chips.buttons[fmt].setChecked(True)
+            self._format_changed()
+
     def _extension(self) -> str:
         fmt = self._format()
         if fmt in self.extra:

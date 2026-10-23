@@ -1187,7 +1187,10 @@ def test_module_types_in_editor(window, media_dir):
     clip = editor.project.clips[0]
     editor.controller.select(clip.id)
 
-    # effet audio : réglé dans le panneau Effets, stocké dans clip.modules
+    # effet audio : appliqué depuis le panneau Modules, réglé dans le panneau Effets
+    entry = next(e for e in editor.modules_panel.visible_entries()
+                 if e.item.id == "essentiels.egaliseur")
+    editor.use_module_entry(entry)
     panel = editor.effects_panel
     control = next(c for e, c, audio in panel._module_controls
                    if audio and e.id == "essentiels.egaliseur" and c.param.key == "graves")
@@ -1248,3 +1251,35 @@ def test_language_preference(window):
     prefs = window.preferences
     prefs.language.setCurrentIndex(prefs.language.findData("en"))
     assert window.settings.language == "en"
+
+
+
+# --- J6 : panneau Modules et effets intégrés -------------------------------------------------
+
+
+@needs_ffmpeg
+def test_modules_panel(window, media_dir):
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    clip = editor.project.clips[0]
+    panel = editor.modules_panel
+    editor.show_side("modules")
+    names = {e.item.id for e in panel.visible_entries()}
+    assert {"timelapse.apply", "effets.vhs", "effets.zoom_lent", "essentiels.echo",
+            "essentiels.cercle", "essentiels.fond", "essentiels.mkv"} <= names
+    panel.search.setText("zoom")
+    assert {e.item.id for e in panel.visible_entries()} == {
+        "effets.zoom_lent", "effets.zoom_rapide", "effets.dezoom_lent", "effets.dezoom_rapide"}
+    panel.search.clear()
+
+    # appliquer un effet vidéo au clip sélectionné ; il apparaît dans le panneau Effets
+    editor.controller.select(clip.id)
+    vhs = next(e for e in panel.visible_entries() if e.item.id == "effets.vhs")
+    editor.use_module_entry(vhs)
+    assert "effets.vhs" in clip.modules
+    effects = editor.effects_panel
+    assert [e.id for e, _c, _a in effects._module_controls][:1] == ["effets.vhs"]
+    assert editor.side.currentWidget() is effects
+    editor.controller.undo()  # l'historique remplace les objets : relire le clip
+    assert "effets.vhs" not in editor.project.clips[0].modules
+    assert not effects._module_controls

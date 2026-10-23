@@ -126,6 +126,39 @@ def _profile(canvas: Canvas):
     return profile
 
 
+MOTION = "montar.zoom"  # montar.api.ZOOM : zoom animé du cadre du clip
+
+
+def _smooth(t: float) -> float:
+    return t * t * (3 - 2 * t)
+
+
+def zoom_curve(duration: int, fps: int, motions: list[dict]) -> list[tuple[int, float]]:
+    """Facteur de zoom aux images clés du clip, produit des mouvements demandés.
+
+    Chaque mouvement : `start` et `end` (facteurs, 1 = taille normale), `seconds` (durée
+    du mouvement depuis le début du clip ; 0 = tout le clip), `ease` (`smooth` ou
+    `linear`). Le facteur final est gardé jusqu'à la fin du clip."""
+    last = max(1, duration - 1)
+    specs = []
+    for m in motions:
+        seconds = float(m.get("seconds", 0) or 0)
+        frames = last if seconds <= 0 else max(1, min(last, round(seconds * fps)))
+        specs.append((float(m.get("start", 1.0)), float(m.get("end", 1.0)), frames,
+                      m.get("ease", "smooth") != "linear"))
+    points = {0, last}
+    for _a, _b, frames, _e in specs:
+        points.update(round(frames * i / 12) for i in range(13))  # courbe échantillonnée
+    result = []
+    for f in sorted(points):
+        k = 1.0
+        for a, b, frames, smooth in specs:
+            t = min(1.0, f / frames)
+            k *= a + (b - a) * (_smooth(t) if smooth else t)
+        result.append((f, k))
+    return result
+
+
 def _anim(points: list[tuple[int, float]]) -> str:
     """Valeur animée MLT « position=valeur;… » (positions relatives au filtre)."""
     return ";".join(f"{pos}={value:g}" for pos, value in points)
@@ -354,14 +387,23 @@ class _TimelineGraph:
             for name, props in (color_filters(clip.color)
                                 + preset_filters(clip.preset, clip.preset_amount)
                                 + effect_filters(clip.effects)
-                                + list(clip.extra_filters)):
+                                + [f for f in clip.extra_filters if f[0] != MOTION]):
                 self._attach(producer, name, props)
+        motions = [props for name, props in clip.extra_filters if name == MOTION] \
+            if clip.kind in ("video", "image") else []
         animated = clip.kind == "text" and "slide" in (clip.animation_in, clip.animation_out)
-        if not t.is_identity() or animated:
+        if not t.is_identity() or animated or motions:
             (x, y, w, h), distort = affine_rect(cw, ch, mw, mh, t)
-            rect = f"{x:g} {y:g} {w:g} {h:g} {max(0.0, min(1.0, t.opacity)):g}"
+            opacity = max(0.0, min(1.0, t.opacity))
+            rect = f"{x:g} {y:g} {w:g} {h:g} {opacity:g}"
             if animated:
                 rect = self._slide_rect(clip, x, y, w, h, t.opacity)
+            elif motions:  # zoom autour du centre du cadre
+                cx, cy = x + w / 2, y + h / 2
+                rect = ";".join(
+                    f"{f}={cx - w * k / 2:.2f} {cy - h * k / 2:.2f} {w * k:.2f} {h * k:.2f} "
+                    f"{opacity:g}"
+                    for f, k in zoom_curve(clip.duration, self.canvas.fps, motions))
             self._attach(producer, "affine", {
                 "background": "color:#00000000", "transition.rect": rect,
                 "transition.fill": 1, "transition.distort": 1 if distort else 0,

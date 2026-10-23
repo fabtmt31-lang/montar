@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""API publique des modules montar (version 1.2).
+"""API publique des modules montar (version 1.3).
 
 Un module est un dossier contenant `module.json` et un paquet Python dont le fichier
 `__init__.py` définit `register(api: ModuleAPI)`. Voir docs/MODULES.md.
@@ -22,7 +22,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-API_VERSION = (1, 2)
+API_VERSION = (1, 3)
+
+# Pseudo-filtre (1.3) qu'un `VideoEffect` peut renvoyer : zoom animé du cadre du clip autour
+# de son centre. Propriétés : start, end (facteurs, 1 = normal), seconds (0 = tout le clip),
+# ease (« smooth » ou « linear »).
+ZOOM = "montar.zoom"
 
 Filters = list[tuple[str, dict[str, Any]]]
 

@@ -266,6 +266,11 @@ class PreferencesPage(QWidget):
         self.themeChanged.emit(key)
         self.settingsChanged.emit()
 
+    def set_disabled_modules(self, disabled: list) -> None:
+        self._set_disabled(disabled)
+        if hasattr(self, "extensions"):
+            self.extensions.refresh()
+
     def _set_disabled(self, disabled: list) -> None:
         self.settings.disabled_modules = list(disabled)
         self.settingsChanged.emit()

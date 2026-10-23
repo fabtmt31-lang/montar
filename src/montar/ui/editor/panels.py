@@ -11,9 +11,12 @@ from PyQt6.QtWidgets import (
     QButtonGroup,
     QFrame,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
+    QWidget,
 )
 
 from montar.core.project import Clip, Effects
@@ -65,14 +68,32 @@ class _DragTile(QPushButton):
 
 
 class _Panel(QFrame):
-    def __init__(self, title: str) -> None:
+    def __init__(self, title: str, scroll: bool = False) -> None:
         super().__init__()
         self.setObjectName("SidePanel")
         self.setFixedWidth(300)
-        self.body = QVBoxLayout(self)
-        self.body.setContentsMargins(16, 18, 16, 12)
+        if not scroll:
+            self.body = QVBoxLayout(self)
+            self.body.setContentsMargins(16, 18, 16, 12)
+            self.body.setSpacing(10)
+            self.body.addWidget(label(title, "h3"))
+            return
+        # contenu plus haut que la fenêtre : titre fixe, le reste défile
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 18, 0, 0)
+        outer.setSpacing(10)
+        head = label(title, "h3")
+        head.setContentsMargins(16, 0, 16, 0)
+        outer.addWidget(head)
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        outer.addWidget(area, 1)
+        inner = QWidget()
+        area.setWidget(inner)
+        self.body = QVBoxLayout(inner)
+        self.body.setContentsMargins(16, 0, 16, 12)
         self.body.setSpacing(10)
-        self.body.addWidget(label(title, "h3"))
 
     def hint(self, text: str) -> QLabel:
         lbl = label(text, "small")
@@ -294,8 +315,13 @@ class FiltersPanel(_Panel):
 
 
 class EffectsPanel(_Panel):
+    """Effets intégrés du clip, puis effets des modules appliqués au clip (avec leurs
+    réglages) ; « Ajouter un effet… » ouvre la fenêtre de choix."""
+
+    addRequested = pyqtSignal(str)  # clip
+
     def __init__(self, controller: EditorController) -> None:
-        super().__init__(_("Effets"))
+        super().__init__(_("Effets"), scroll=True)
         self.controller = controller
         self.info = self.hint(_("Sélectionnez une vidéo ou une image dans la timeline."))
         self.body.addWidget(self.info)
@@ -306,16 +332,19 @@ class EffectsPanel(_Panel):
             row.moved.connect(lambda v, k=key, t=title: self._set(k, t, v))
             self.body.addWidget(row)
             self._rows[key] = row
+        # effets des modules appliqués au clip sélectionné
+        self._modules_box = QVBoxLayout()
+        self._modules_box.setSpacing(6)
+        self.body.addLayout(self._modules_box)
+        self.add_button = button(_("Ajouter un effet ou un module…"), "tonal", "plus")
+        self.add_button.clicked.connect(self._add_clicked)
+        self.body.addWidget(self.add_button)
         reset = button(_("Retirer les effets"), "secondary", "rotate-ccw")
         reset.clicked.connect(self._reset)
         self.body.addWidget(reset)
         self._reset_button = reset
-        # effets apportés par les modules (contrôles générés à partir de leurs paramètres)
-        self._modules_box = QVBoxLayout()
-        self._modules_box.setSpacing(6)
-        self.body.addLayout(self._modules_box)
         self._module_controls: list = []  # (effet, ParamControl, effet audio ?)
-        self.audio_info = None
+        self._shown: tuple | None = None  # (clip, effets affichés)
         self.modules = None
         self.body.addStretch()
         controller.selectionChanged.connect(lambda _id: self.refresh())
@@ -329,29 +358,45 @@ class EffectsPanel(_Panel):
         self.rebuild_modules()
 
     def rebuild_modules(self) -> None:
+        self._shown = None  # liste des effets des modules changée : tout est refait
+        self.refresh()
+
+    def _applied(self) -> list:
+        """(effet, audio ?) des modules appliqués au clip sélectionné."""
+        manager = self.modules.manager if self.modules else None
+        if manager is None:
+            return []
+        result = []
+        for audio, effects, clip in ((False, manager.effects(), self._visual_clip()),
+                                     (True, manager.audio_effects(), self._audio_clip())):
+            if clip is not None:
+                result += [(e, audio) for _m, e in effects if e.id in clip.modules]
+        return result
+
+    def _build_applied(self, applied: list) -> None:
         while self._modules_box.count():
             item = self._modules_box.takeAt(0)
             if item.widget() is not None:
                 item.widget().deleteLater()
         self._module_controls = []
-        self.audio_info = None
-        manager = self.modules.manager if self.modules else None
-        groups = (((False, manager.effects()), (True, manager.audio_effects()))
-                  if manager else ())
-        for audio, effects in groups:
-            if audio and effects:
-                self._modules_box.addWidget(section(_("Effets audio").upper()))
-                self.audio_info = self.hint(_("Sélectionnez un clip avec du son."))
-                self._modules_box.addWidget(self.audio_info)
-            for _module_id, effect in effects:
-                self._modules_box.addWidget(label(_(effect.name), "section"))
-                for param in effect.params:
-                    control = ParamControl(
-                        param, lambda v, merge, e=effect, k=param.key, a=audio:
-                        self._store(e, k, v, merge, a))
-                    self._modules_box.addWidget(control.widget)
-                    self._module_controls.append((effect, control, audio))
-        self.refresh()
+        for effect, audio in applied:
+            head = QWidget()
+            hl = QHBoxLayout(head)
+            hl.setContentsMargins(0, 8, 0, 0)
+            title = label(_(effect.name).upper(), "section")
+            title.setToolTip(_(effect.description))
+            hl.addWidget(title, 1)
+            remove = button("", "ghost", "x", tooltip=_("Retirer {name}").format(
+                name=_(effect.name)))
+            remove.clicked.connect(lambda _=False, e=effect, a=audio: self._remove(e, a))
+            hl.addWidget(remove)
+            self._modules_box.addWidget(head)
+            for param in effect.params:
+                control = ParamControl(
+                    param, lambda v, merge, e=effect, k=param.key, a=audio:
+                    self._store(e, k, v, merge, a))
+                self._modules_box.addWidget(control.widget)
+                self._module_controls.append((effect, control, audio))
 
     def _audio_clip(self) -> Clip | None:
         clip = self.controller.selected_clip()
@@ -374,6 +419,17 @@ class EffectsPanel(_Panel):
         self.controller.edit_clip(_(effect.name), clip.id, change,
                                   merge=(clip.id, effect.id, key) if merge else None)
 
+    def _remove(self, effect, audio: bool) -> None:
+        clip = self._audio_clip() if audio else self._visual_clip()
+        if clip is not None:
+            self.controller.edit_clip(_("Retirer {name}").format(name=_(effect.name)),
+                                      clip.id, lambda c: c.modules.pop(effect.id, None))
+
+    def _add_clicked(self) -> None:
+        clip = self.controller.selected_clip()
+        if clip is not None:
+            self.addRequested.emit(clip.id)
+
     def refresh(self) -> None:
         clip = self._visual_clip()
         self.info.setVisible(clip is None)
@@ -381,17 +437,19 @@ class EffectsPanel(_Panel):
             row.setEnabled(clip is not None)
             if clip is not None:
                 row.set_value(getattr(clip.effects, key) * 100)
-        audio_clip = self._audio_clip()
-        if self.audio_info is not None:
-            self.audio_info.setVisible(audio_clip is None)
+        selected = self.controller.selected_clip()
+        applied = self._applied()
+        shown = (selected.id if selected else None, tuple((e.id, a) for e, a in applied))
+        if shown != self._shown:
+            self._shown = shown
+            self._build_applied(applied)
         for effect, control, audio in self._module_controls:
-            target = audio_clip if audio else clip
-            control.widget.setEnabled(target is not None)
-            if target is None:
-                continue
-            values = {**effect.defaults(), **(target.modules.get(effect.id) or {})}
-            control.set_value(values.get(control.param.key, control.param.default))
-        self._reset_button.setEnabled(clip is not None or audio_clip is not None)
+            target = self._audio_clip() if audio else clip
+            if target is not None:
+                values = {**effect.defaults(), **(target.modules.get(effect.id) or {})}
+                control.set_value(values.get(control.param.key, control.param.default))
+        self.add_button.setEnabled(selected is not None and not selected.is_text)
+        self._reset_button.setEnabled(clip is not None or bool(applied))
 
     def _set(self, key: str, title: str, value: float) -> None:
         clip = self._visual_clip()

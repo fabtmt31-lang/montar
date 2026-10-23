@@ -170,6 +170,7 @@ class MainWindow(QMainWindow):
         editor.backRequested.connect(self.show_home)
         editor.saved.connect(lambda _p: None)
         editor.saveAsRequested.connect(self.save_project_as)
+        editor.disabledModulesChanged.connect(self.preferences.set_disabled_modules)
         editor.preview.volumeChanged.connect(self._volume_changed)
         editor.library_provider = lambda: self.library_items(project.path)
         editor.thumbnail_provider = self._thumbnail_for
