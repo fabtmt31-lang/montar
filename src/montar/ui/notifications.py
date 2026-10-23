@@ -28,17 +28,16 @@ class NotificationButton(QPushButton):
         set_icon(self, "bell")
         self.clicked.connect(self.show_menu)
         notifications.listeners.append(self.refresh)
-        self.destroyed.connect(self._forget)
         self.refresh()
-
-    def _forget(self, *_args) -> None:
-        if self.refresh in self.notifications.listeners:
-            self.notifications.listeners.remove(self.refresh)
 
     def refresh(self) -> None:
         n = self.notifications.unread
-        self.setText(str(n) if n else "")
-        self.setStyleSheet("QPushButton { color: #B4452F; font-weight: 700; }" if n else "")
+        try:
+            self.setText(str(n) if n else "")
+            self.setStyleSheet("QPushButton { color: #B4452F; font-weight: 700; }" if n else "")
+        except RuntimeError:  # bouton détruit avec sa page (projet fermé) : on se retire
+            if self.refresh in self.notifications.listeners:
+                self.notifications.listeners.remove(self.refresh)
 
     def build_menu(self) -> QMenu:
         menu = QMenu(self)

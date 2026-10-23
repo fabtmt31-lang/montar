@@ -27,6 +27,16 @@ from montar.ui.editor.editor_page import EditorPage, media_file_filter
 from montar.ui.home.home_page import HomePage, HomeShell
 from montar.ui.home.library import LibraryPage, TrashPage
 from montar.ui.home.preferences_page import PreferencesPage
+from montar.ui.home.templates import (
+    TemplatesPage,
+    ask_name,
+    builtin_templates,
+    confirm_delete,
+    create_from_template,
+    delete_template,
+    save_as_template,
+    user_templates,
+)
 from montar.ui.theme import theme
 
 log = logging.getLogger(__name__)
@@ -57,7 +67,12 @@ class MainWindow(QMainWindow):
         self.library_page = LibraryPage(self._thumbnail_for)
         self.trash_page = TrashPage(self.trash, settings.trash_days)
         self.trash_page.restored.connect(self._restored)
+        self.templates_dir = paths.data_dir() / "modeles"
+        self.templates_page = TemplatesPage()
+        self.templates_page.useRequested.connect(self.use_template)
+        self.templates_page.deleteRequested.connect(self.delete_template)
         self.shell = HomeShell(self.home, self.projects, self.preferences, [
+            ("templates", _("Modèles"), "layout-grid", self.templates_page),
             ("library", _("Médiathèque"), "library", self.library_page),
             ("trash", _("Corbeille"), "trash-2", self.trash_page),
         ])
@@ -191,6 +206,7 @@ class MainWindow(QMainWindow):
         editor.backRequested.connect(self.show_home)
         editor.saved.connect(lambda _p: None)
         editor.saveAsRequested.connect(self.save_project_as)
+        editor.saveTemplateRequested.connect(self.save_template)
         editor.disabledModulesChanged.connect(self.preferences.set_disabled_modules)
         editor.preview.volumeChanged.connect(self._volume_changed)
         editor.preview.safeZoneChanged.connect(self._safe_zone_changed)
@@ -214,6 +230,41 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, _("Enregistrer sous"), str(exc))
             return None
         return self.open_project(copy)
+
+    # --- modèles ---------------------------------------------------------------
+
+    def refresh_templates(self) -> None:
+        self.templates_page.set_templates(builtin_templates()
+                                          + user_templates(self.templates_dir))
+
+    def use_template(self, template, name: str | None = None) -> EditorPage | None:
+        name = name or ask_name(self, _("Nouveau projet"), template.name)
+        if not name:
+            return None
+        try:
+            path = create_from_template(template, name, self.settings.projects_path)
+        except (OSError, ProjectError) as exc:
+            QMessageBox.warning(self, _("Création impossible"), str(exc))
+            return None
+        return self.open_project(path)
+
+    def save_template(self, name: str) -> Path | None:
+        """Projet ouvert → modèle (copie avec ses médias)."""
+        if self.editor is None or self.editor.project.path is None or not self.editor.save():
+            return None
+        try:
+            path = save_as_template(self.editor.project.path, name, self.templates_dir)
+        except (OSError, ProjectError) as exc:
+            QMessageBox.warning(self, _("Enregistrer comme modèle"), str(exc))
+            return None
+        self.notifications.add(_("Modèle enregistré"), name, "success")
+        return path
+
+    def delete_template(self, template, confirm: bool = True) -> None:
+        if confirm and not confirm_delete(self, template):
+            return
+        delete_template(template)
+        self.refresh_templates()
 
     def duplicate(self, path: Path) -> None:
         """Accueil : copie d'un projet, ajoutée aux projets récents."""
@@ -252,6 +303,8 @@ class MainWindow(QMainWindow):
             self.library_page.set_items(self.library_items())
         elif key == "trash":
             self.trash_page.refresh()
+        elif key == "templates":
+            self.refresh_templates()
         elif key == "preferences":
             self.preferences.refresh_storage()
 

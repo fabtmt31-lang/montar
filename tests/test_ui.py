@@ -1457,3 +1457,43 @@ def test_hover_preview_notifications_typewriter(window, media_dir, tmp_path):
 
     # machine à écrire proposée en animation d'entrée
     assert editor.inspector._anims["animation_in"].button("typewriter") is not None
+
+
+# --- P2-4 : modèles ---------------------------------------------------------------------------
+
+
+@needs_ffmpeg
+def test_templates(window, media_dir, isolated_home):
+    from montar.ui.home.templates import builtin_templates
+
+    window.shell.show_page("templates")
+    page = window.templates_page
+    assert page.grid.count() == 3
+    assert all(page.grid.item(i).data(Qt.ItemDataRole.DecorationRole) is not None
+               for i in range(3))
+    for template in builtin_templates():
+        editor = window.use_template(template, f"Projet {template.key}")
+        assert editor is not None and len(editor.project.clips) == 2
+        tracks = {c.track_id for c in editor.project.clips}
+        assert len(tracks) == 2  # deux textes simultanés, chacun sur sa piste
+        assert editor.project.aspect == template.aspect
+        assert wait_until(lambda e=editor: e.player.length > 0)
+        window.show_home()
+
+    # projet de l'utilisateur → modèle (avec ses médias) → nouveau projet
+    editor = imported_editor(window, media_dir, ["red.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    assert window.save_template("Mon modèle") is not None
+    window.show_home()
+    window.refresh_templates()
+    assert page.grid.count() == 4
+    from montar.ui.thumbgrid import ROLE_PAYLOAD
+    mine = page.grid.item(3).data(ROLE_PAYLOAD)
+    assert mine.name == "Mon modèle" and not mine.builtin
+    editor = window.use_template(mine, "Depuis le modèle")
+    media = editor.project.media[0]
+    assert Path(media.path).exists() and Path(media.path).is_relative_to(
+        editor.project.path.parent)
+    window.show_home()
+    window.delete_template(mine, confirm=False)
+    assert page.grid.count() == 3

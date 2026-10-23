@@ -116,6 +116,7 @@ class EditorPage(QWidget):
     recordingFinished = pyqtSignal(str)  # fichier enregistré (vide si échec)
     saveAsRequested = pyqtSignal(str)  # nom de la copie du projet
     disabledModulesChanged = pyqtSignal(list)  # « Gérer les modules… »
+    saveTemplateRequested = pyqtSignal(str)  # nom du modèle
 
     def __init__(self, project: Project, engine_factory: Callable[[], Engine], cache: Path,
                  preview_quality: str = "medium", modules: ModuleManager | None = None) -> None:
@@ -347,6 +348,7 @@ class EditorPage(QWidget):
         menu = QMenu(self.project_button)
         menu.addAction(_("Enregistrer (Ctrl+S)"), self.save)
         menu.addAction(_("Enregistrer sous…"), self.save_as)
+        menu.addAction(_("Enregistrer comme modèle…"), self.save_as_template)
         menu.addAction(_("Ouvrir le dossier du projet"), self._open_project_folder)
         self.project_button.setMenu(menu)
         layout.addWidget(self.project_button)
@@ -594,6 +596,12 @@ class EditorPage(QWidget):
                                         text=_("{name} (copie)").format(name=self.project.name))
         if ok and name.strip() and self.save():
             self.saveAsRequested.emit(name.strip())
+
+    def save_as_template(self) -> None:
+        name, ok = QInputDialog.getText(self, _("Enregistrer comme modèle"),
+                                        _("Nom du modèle :"), text=self.project.name)
+        if ok and name.strip() and self.save():
+            self.saveTemplateRequested.emit(name.strip())
 
     def _open_project_folder(self) -> None:
         if self.project.path is not None:
