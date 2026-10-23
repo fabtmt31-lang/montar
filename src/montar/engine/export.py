@@ -19,8 +19,9 @@ VIDEO_FORMATS: dict[str, tuple[str, tuple[str, ...]]] = {
     "gif": (".gif", ("gif",)),
 }
 AUDIO_FORMATS: dict[str, str] = {"mp3": ".mp3", "wav": ".wav", "aac": ".m4a"}
+IMAGE_FORMATS: dict[str, str] = {"png": ".png", "jpg": ".jpg"}  # image fixe à la tête de lecture
 FORMAT_LABELS = {"mp4": "MP4", "mov": "MOV", "webm": "WebM", "gif": "GIF",
-                 "mp3": "MP3", "wav": "WAV", "aac": "AAC"}
+                 "mp3": "MP3", "wav": "WAV", "aac": "AAC", "png": "PNG", "jpg": "JPEG"}
 CODEC_LABELS = {"h264": "H.264", "h265": "H.265 (HEVC)", "vp9": "VP9", "gif": "GIF"}
 RESOLUTIONS = {"480p": 480, "720p": 720, "1080p": 1080, "4K": 2160}  # petit côté
 QUALITIES = ("light", "balanced", "max")
@@ -51,6 +52,9 @@ class ExportSettings:
     # format d'un module : propriétés du consommateur fournies par le module
     custom: tuple[tuple[str, object], ...] = ()
     custom_audio_only: bool = False
+    # partie exportée (F-EXP-09), en images du projet ; range_end = 0 : jusqu'à la fin
+    range_start: int = 0
+    range_end: int = 0
 
     @property
     def audio_only(self) -> bool:
@@ -76,6 +80,8 @@ def _even(value: float) -> int:
 
 def estimated_bytes(settings: ExportSettings, frames: int, fps: int) -> int:
     """Taille approximative du fichier (affichée « ≈ 186 Mo »)."""
+    if settings.format in IMAGE_FORMATS:
+        return int(settings.width * settings.height * (1.5 if settings.format == "png" else 0.3))
     seconds = frames / max(1, fps)
     audio = _AUDIO_KBPS[settings.level] * 1000 / 8
     if settings.format == "wav":

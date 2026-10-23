@@ -12,11 +12,14 @@ from montar.platform import paths
 THEMES = ("light", "dark", "system")
 PREVIEW_QUALITIES = {"low": 0.25, "medium": 0.5, "full": 1.0}
 BACKUP_INTERVALS = (1, 2, 5, 10)  # minutes entre deux copies de sauvegarde
+TRASH_DAYS = (7, 30, 90)  # durée de conservation des projets dans la corbeille
+ACCENTS = ("#2F7A56", "#4E9A72", "#3A8C86", "#6F9A3A", "#5F7F6C")  # verts de la charte
 
 
 @dataclass
 class Settings:
     theme: str = "light"
+    accent: str = ACCENTS[0]  # couleur d'accent (F-UX-01)
     language: str = "system"  # system | fr | en (pris en compte au démarrage)
     projects_dir: str = ""
     preview_quality: str = "medium"
@@ -28,6 +31,7 @@ class Settings:
     safe_zone: bool = False  # zone de sécurité affichée dans l'aperçu
     autosave: bool = True  # enregistrement à chaque modification (sinon Ctrl+S)
     backup_minutes: int = 2  # intervalle des copies datées dans « sauvegardes/ »
+    trash_days: int = 30  # projets effacés de la corbeille après ce nombre de jours
 
     @property
     def projects_path(self) -> Path:
@@ -56,6 +60,10 @@ class Settings:
         if settings.preview_quality not in PREVIEW_QUALITIES:
             settings.preview_quality = "medium"
         settings.preview_volume = max(0.0, min(1.0, settings.preview_volume))
+        if settings.trash_days not in TRASH_DAYS:
+            settings.trash_days = 30
+        if settings.accent.upper() not in ACCENTS:
+            settings.accent = ACCENTS[0]
         if settings.backup_minutes not in BACKUP_INTERVALS:
             settings.backup_minutes = 2
         return settings

@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 )
 
 from montar.core import storage
-from montar.core.settings import BACKUP_INTERVALS, Settings
+from montar.core.settings import ACCENTS, BACKUP_INTERVALS, TRASH_DAYS, Settings
 from montar.engine.export import human_size
 from montar.i18n import LANGUAGES, _
 from montar.ui.widgets import Segmented, Switch, button, label, shrink
@@ -82,6 +82,7 @@ def _row(title: str, subtitle: str, control: QWidget) -> QWidget:
 
 class PreferencesPage(QWidget):
     themeChanged = pyqtSignal(str)
+    accentChanged = pyqtSignal(str)
     settingsChanged = pyqtSignal()
     cacheCleared = pyqtSignal()
 
@@ -123,6 +124,29 @@ class PreferencesPage(QWidget):
             self._theme_cards[key] = c
             cards.addWidget(c, 1)
         al.addLayout(cards)
+        al.addSpacing(12)
+        accents = QHBoxLayout()
+        accents.setSpacing(10)
+        accents.addWidget(label(_("Couleur d'accent")))
+        accents.addSpacing(8)
+        self._accent_group = QButtonGroup(self)
+        self.accent_buttons: dict[str, QPushButton] = {}
+        for color in ACCENTS:
+            b = QPushButton()
+            b.setCheckable(True)
+            b.setFixedSize(30, 30)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setToolTip(color)
+            b.setStyleSheet(f"QPushButton {{ background: {color}; border-radius: 15px; "
+                            "border: 2px solid transparent; padding: 0; }"
+                            "QPushButton:checked { border: 3px solid #17261E; }")
+            b.setChecked(color.upper() == settings.accent.upper())
+            b.clicked.connect(lambda _=False, c=color: self._set_accent(c))
+            self._accent_group.addButton(b)
+            self.accent_buttons[color] = b
+            accents.addWidget(b)
+        accents.addStretch()
+        al.addLayout(accents)
         layout.addWidget(appearance)
 
         general = QFrame()
@@ -191,6 +215,11 @@ class PreferencesPage(QWidget):
                           _("Intervalle entre deux copies datées du projet, gardées dans "
                             "son dossier « sauvegardes » (les 10 dernières)"),
                           self.backup_interval))
+        self.trash_days = Segmented(
+            [(str(d), _("{n} jours").format(n=d)) for d in TRASH_DAYS], str(settings.trash_days))
+        self.trash_days.changed.connect(self._set_trash_days)
+        cl.addWidget(_row(_("Corbeille"), _("Durée avant l'effacement définitif d'un projet "
+                                             "supprimé"), self.trash_days))
         return card
 
     def _storage_card(self, cache: Path) -> QFrame:
@@ -259,6 +288,15 @@ class PreferencesPage(QWidget):
 
     def _set_backup_interval(self, key: str) -> None:
         self.settings.backup_minutes = int(key)
+        self.settingsChanged.emit()
+
+    def _set_accent(self, color: str) -> None:
+        self.settings.accent = color
+        self.accentChanged.emit(color)
+        self.settingsChanged.emit()
+
+    def _set_trash_days(self, key: str) -> None:
+        self.settings.trash_days = int(key)
         self.settingsChanged.emit()
 
     def _set_theme(self, key: str) -> None:

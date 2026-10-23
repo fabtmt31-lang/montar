@@ -619,7 +619,9 @@ class MltExport(ExportJob):
 
     def __init__(self, spec: TimelineSpec, settings) -> None:
         self.spec, self.settings = spec, settings
-        self.total = max(1, spec.length)
+        self.first = max(0, getattr(settings, "range_start", 0))
+        last = getattr(settings, "range_end", 0) or spec.length
+        self.total = max(1, min(last, spec.length) - self.first)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._consumer = None
@@ -694,7 +696,8 @@ class MltExport(ExportJob):
         self.used_encoder = str(props.get("vcodec") or props.get("acodec", ""))
         consumer.set("real_time", -max(1, min(4, (os.cpu_count() or 2) // 2)))
         consumer.set("terminate_on_pause", 1)
-        graph.tractor.set("out", self.total - 1)
+        # avec un point d'entrée, les positions du tracteur partent de ce point
+        graph.tractor.set_in_and_out(self.first, self.first + self.total - 1)
         consumer.connect(graph.tractor)
         graph.tractor.seek(0)
         graph.tractor.set_speed(1)

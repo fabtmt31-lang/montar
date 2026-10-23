@@ -26,11 +26,12 @@ from PyQt6.QtWidgets import (
 
 from montar.core import formats
 from montar.core.project import Project
-from montar.core.timecode import seconds_to_short
+from montar.core.timecode import frames_to_timecode, seconds_to_short
 from montar.engine.export import (
     AUDIO_FORMATS,
     CODEC_LABELS,
     FORMAT_LABELS,
+    IMAGE_FORMATS,
     QUALITIES,
     QUALITY_LABELS,
     RECOMMENDED_QUALITY,
@@ -91,9 +92,11 @@ class _Chips(QWidget):
 class ExportDialog(QDialog):
     def __init__(self, project: Project, frames: int, preview: QImage | None,
                  folder: Path, hardware: bool = False, parent: QWidget | None = None,
-                 extra_formats=()) -> None:
+                 extra_formats=(), selection: tuple[int, int] | None = None,
+                 playhead: int = 0) -> None:
         super().__init__(parent)
         self.project, self.frames = project, frames
+        self.selection, self.playhead = selection, playhead
         # formats des modules (montar.api.ExportFormat), par identifiant
         self.extra = {f.id: f for f in extra_formats}
         self.setObjectName("ExportDialog")
@@ -147,7 +150,8 @@ class ExportDialog(QDialog):
         ml = QVBoxLayout(main)
         ml.setContentsMargins(28, 28, 28, 28)
         ml.setSpacing(8)
-        self.tabs = Segmented([("file", _("Fichier")), ("audio", _("Audio seul"))])
+        self.tabs = Segmented([("file", _("Fichier")), ("audio", _("Audio seul")),
+                               ("image", _("Image"))])
         self.tabs.changed.connect(self._tab_changed)
         ml.addWidget(self.tabs)
         ml.addSpacing(10)
@@ -180,10 +184,35 @@ class ExportDialog(QDialog):
         for key, fmt in self.extra.items():
             chips = self.audio_formats if fmt.audio_only else self.video_formats
             chips.buttons[key].setToolTip(_(fmt.description))
+        self.image_formats = _Chips([(k, FORMAT_LABELS[k]) for k in IMAGE_FORMATS], "png")
         self.audio_formats.setVisible(False)
-        for chips in (self.video_formats, self.audio_formats):
+        self.image_formats.setVisible(False)
+        for chips in (self.video_formats, self.audio_formats, self.image_formats):
             chips.group.buttonClicked.connect(self._format_changed)
             ml.addWidget(chips)
+        ml.addSpacing(8)
+
+        self.range_box = QWidget()
+        rl = QVBoxLayout(self.range_box)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.setSpacing(8)
+        rl.addWidget(label(_("Partie exportée")))
+        fps = project.fps
+        span = (_("Sélection {a} → {b}").format(a=frames_to_timecode(selection[0], fps),
+                                                b=frames_to_timecode(selection[1], fps))
+                if selection else _("Sélection (touches I et O)"))
+        self.part = _Chips([("all", _("Toute la vidéo")), ("range", span)], "all")
+        self.part.buttons["range"].setEnabled(selection is not None)
+        if selection is None:
+            self.part.buttons["range"].setToolTip(_("Marquez d'abord une plage dans la "
+                                                    "timeline avec I et O"))
+        self.part.group.buttonClicked.connect(self._update)
+        rl.addWidget(self.part)
+        ml.addWidget(self.range_box)
+        self.frame_hint = label(_("Image affichée à la tête de lecture ({tc}).").format(
+            tc=frames_to_timecode(playhead, fps)), "muted")
+        self.frame_hint.setVisible(False)
+        ml.addWidget(self.frame_hint)
         ml.addSpacing(8)
 
         self.video_box = QWidget()
@@ -263,20 +292,32 @@ class ExportDialog(QDialog):
     def audio_only(self) -> bool:
         return self.tabs.current() == "audio"
 
+    @property
+    def still_image(self) -> bool:
+        return self.tabs.current() == "image"
+
+    def _chips(self) -> _Chips:
+        return {"audio": self.audio_formats, "image": self.image_formats}.get(
+            self.tabs.current(), self.video_formats)
+
     def _tab_changed(self, _key: str) -> None:
-        self.video_formats.setVisible(not self.audio_only)
-        self.audio_formats.setVisible(self.audio_only)
+        for chips in (self.video_formats, self.audio_formats, self.image_formats):
+            chips.setVisible(chips is self._chips())
+        self.range_box.setVisible(not self.still_image)
+        self.frame_hint.setVisible(self.still_image)
         self._format_changed()
 
     def _format(self) -> str:
-        return (self.audio_formats if self.audio_only else self.video_formats).current()
+        return self._chips().current()
 
     def _format_changed(self, *_args) -> None:
         fmt = self._format()
-        video = not self.audio_only
-        self.video_box.setVisible(video)
+        video = not self.audio_only and not self.still_image
+        self.video_box.setVisible(not self.audio_only)
         self.codec_box.setVisible(video)
         self.hardware.setVisible(video and fmt in ("mp4", "mov"))
+        for w in (self.quality, self.recommended):
+            w.setEnabled(not self.still_image)
         custom = self.extra.get(fmt)
         if video:
             gif = fmt == "gif"
@@ -297,9 +338,9 @@ class ExportDialog(QDialog):
     def choose_format(self, fmt: str) -> None:
         """Présélectionne un format (bouton d'un module dans le panneau Modules)."""
         audio = fmt in AUDIO_FORMATS or (fmt in self.extra and self.extra[fmt].audio_only)
-        self.tabs.set_current("audio" if audio else "file")
+        self.tabs.set_current("image" if fmt in IMAGE_FORMATS else "audio" if audio else "file")
         self._tab_changed("")
-        chips = self.audio_formats if audio else self.video_formats
+        chips = self._chips()
         if fmt in chips.buttons:
             chips.buttons[fmt].setChecked(True)
             self._format_changed()
@@ -308,6 +349,8 @@ class ExportDialog(QDialog):
         fmt = self._format()
         if fmt in self.extra:
             return self.extra[fmt].extension
+        if self.still_image:
+            return IMAGE_FORMATS[fmt]
         return AUDIO_FORMATS[fmt] if self.audio_only else VIDEO_FORMATS[fmt][0]
 
     def _label(self, fmt: str) -> str:
@@ -317,16 +360,27 @@ class ExportDialog(QDialog):
         return Path(self.folder_edit.text()) / (_safe_filename(self.name_edit.text())
                                                 + self._extension())
 
+    def _range(self) -> tuple[int, int]:
+        if self.part.current() == "range" and self.selection is not None:
+            return self.selection
+        return 0, 0
+
     def settings(self) -> ExportSettings:
         fmt = self._format()
         quality = QUALITIES[self.quality.value()]
+        start, end = self._range()
         if self.audio_only:
             return ExportSettings(str(self.target()), fmt, "", 0, 0, self.project.fps, quality,
-                                  custom_audio_only=fmt in self.extra)
+                                  custom_audio_only=fmt in self.extra, range_start=start,
+                                  range_end=end)
         w, h = export_size(self.project.canvas_size, self.resolutions.current())
+        if self.still_image:
+            return ExportSettings(str(self.target()), fmt, "", w, h, self.project.fps,
+                                  range_start=self.playhead, range_end=self.playhead + 1)
         return ExportSettings(str(self.target()), fmt, self.codec.currentData() or "h264",
                               w, h, self.fps.currentData(), quality,
-                              self.hardware.isVisible() and self.hardware.isChecked())
+                              self.hardware.isVisible() and self.hardware.isChecked(),
+                              range_start=start, range_end=end)
 
     def _update(self, *_args) -> None:
         s = self.settings()
@@ -336,7 +390,9 @@ class ExportDialog(QDialog):
         else:
             output = f"{self._label(s.format)} · {self.resolutions.current()}"
         self.summary_output.setText(output)
-        self.summary_size.setText(human_size(estimated_bytes(s, self.frames, self.project.fps)))
+        start, end = self._range()
+        frames = (end - start) if end else self.frames
+        self.summary_size.setText(human_size(estimated_bytes(s, frames, self.project.fps)))
         self.export_button.setEnabled(bool(self.name_edit.text().strip()) and self.frames > 0)
 
     def _choose_folder(self) -> None:

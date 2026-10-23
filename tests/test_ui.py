@@ -1376,3 +1376,39 @@ def test_freeze_frame_safe_zone_and_lock(window, media_dir):
     editor.controller.select(still.id)
     editor.timeline.delete()
     assert len(editor.project.clips) == count
+
+
+# --- P2-2 -------------------------------------------------------------------------------------
+
+
+@needs_ffmpeg
+def test_export_frame_range_accent_and_trash_days(window, media_dir, tmp_path):
+    from PyQt6.QtGui import QImage
+
+    from montar.ui.dialogs.export import ExportDialog
+    from montar.ui.theme import theme
+
+    editor = imported_editor(window, media_dir, ["redblue.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    editor._notify_export = False
+    dialog = ExportDialog(editor.project, 50, None, tmp_path, parent=editor,
+                          selection=(10, 30), playhead=40)
+    dialog.part.buttons["range"].click()
+    s = dialog.settings()
+    assert (s.range_start, s.range_end) == (10, 30)
+    dialog.tabs.set_current("image")
+    dialog._tab_changed("image")
+    s = dialog.settings()
+    assert s.format == "png" and s.range_start == 40 and dialog.target().suffix == ".png"
+    dialog.close()
+    assert editor.export_frame(s)
+    image = QImage(s.path)
+    color = image.pixelColor(image.width() // 2, image.height() // 2)
+    assert (image.width(), image.height()) == (s.width, s.height) and color.blue() > 200
+
+    prefs = window.preferences
+    prefs.accent_buttons["#3A8C86"].click()
+    assert window.settings.accent == "#3A8C86" and theme().palette.forest == "#3A8C86"
+    prefs.accent_buttons["#2F7A56"].click()
+    prefs.trash_days.button("90").click()
+    assert window.settings.trash_days == 90 and window.trash_page.days == 90

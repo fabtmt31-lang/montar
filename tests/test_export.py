@@ -184,3 +184,15 @@ def test_export_module_format(engine, media_dir, tmp_path):
     info = probe(target)
     assert info["streams"]["video"]["codec_name"] == "h264"
     assert info["streams"]["audio"]["codec_name"] == "aac"
+
+
+@needs_ffmpeg
+def test_export_range(engine, media_dir, tmp_path):
+    target = tmp_path / "partie.mp4"
+    settings = ExportSettings(str(target), "mp4", "h264", 320, 180, 25, range_start=10,
+                              range_end=35)
+    job = _run(engine, _spec(media_dir), settings)
+    assert job.error == "" and job.total == 25
+    info = probe(target)
+    assert int(info["streams"]["video"]["nb_read_frames"]) == 25
+    assert info["duration"] == pytest.approx(1.0, abs=0.1)

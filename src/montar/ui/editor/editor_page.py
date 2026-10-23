@@ -34,7 +34,7 @@ from montar.core.project import EXPORT_DIR, MediaItem, Project, ProjectError, ne
 from montar.core.project_files import backup
 from montar.core.timecode import frames_to_timecode
 from montar.engine.base import Engine, timeline_spec
-from montar.engine.export import ExportSettings, human_size, retime
+from montar.engine.export import IMAGE_FORMATS, ExportSettings, human_size, retime
 from montar.engine.geometry import offset_for_center, placement
 from montar.i18n import _
 from montar.media.edit import MediaEdit, output_suffix, updated_media
@@ -1152,9 +1152,12 @@ class EditorPage(QWidget):
             self._reload_player()  # relance les calculs manquants
             return
         folder = self.project.path.parent / EXPORT_DIR if self.project.path else Path.home()
+        found = self.timeline.view.valid_range()
         dialog = ExportDialog(self.project, length, self.preview.canvas.image, folder,
                               self._hardware, self,
-                              [f for _m, f in self.module_manager.export_formats()])
+                              [f for _m, f in self.module_manager.export_formats()],
+                              (found[1], found[2]) if found else None,
+                              min(self.timeline.view.playhead, length - 1))
         if fmt:
             dialog.choose_format(fmt)
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -1162,6 +1165,9 @@ class EditorPage(QWidget):
         self.start_export(dialog.settings())
 
     def start_export(self, settings: ExportSettings) -> None:
+        if settings.format in IMAGE_FORMATS:
+            self.export_frame(settings)
+            return
         found = self.module_manager.export_format(settings.format)
         if found is not None:  # format d'un module : il fournit les réglages de l'encodeur
             module_id, fmt = found
@@ -1177,6 +1183,10 @@ class EditorPage(QWidget):
         size = None if settings.audio_only else (settings.width, settings.height)
         spec = timeline_spec(self.project, self._text_image, self.modules.hook, size,
                              self.modules.transition_hook)
+        if settings.fps != self.project.fps and (settings.range_start or settings.range_end):
+            k = settings.fps / self.project.fps  # la partie suit la nouvelle fréquence
+            settings = dataclasses.replace(settings, range_start=round(settings.range_start * k),
+                                           range_end=round(settings.range_end * k))
         spec = retime(spec, settings.fps)
         Path(settings.path).parent.mkdir(parents=True, exist_ok=True)
         self._export_job = self._engine_factory().export(spec, settings)
@@ -1186,6 +1196,36 @@ class EditorPage(QWidget):
         self._export_timer.start()
         self.export_button.setEnabled(False)
         self._update_jobs()
+
+    def export_frame(self, settings: ExportSettings) -> bool:
+        """Export d'une image fixe (PNG ou JPEG) de la tête de lecture, à la taille choisie."""
+        from PyQt6.QtGui import QImage
+
+        spec = timeline_spec(self.project, self._text_image, self.modules.hook,
+                             (settings.width, settings.height), self.modules.transition_hook)
+        try:
+            source = self._engine_factory().build(spec)
+            try:
+                data = source.render(settings.range_start, settings.width, settings.height)
+            finally:
+                source.close()
+            image = QImage(data, settings.width, settings.height, settings.width * 4,
+                           QImage.Format.Format_RGBA8888)
+            Path(settings.path).parent.mkdir(parents=True, exist_ok=True)
+            fmt = "JPG" if settings.format == "jpg" else "PNG"
+            if settings.format == "jpg":
+                image = image.convertToFormat(QImage.Format.Format_RGB888)
+            if not image.save(settings.path, fmt, 92):
+                raise OSError(settings.path)
+        except Exception as exc:  # moteur ou écriture : message, jamais de plantage
+            QMessageBox.warning(self, _("Export impossible"), str(exc))
+            return False
+        self.exportFinished.emit("")
+        if self._notify_export:
+            QMessageBox.information(self, _("Export terminé"), _("{name} est prêt ({size}).")
+                                    .format(name=Path(settings.path).name,
+                                            size=human_size(Path(settings.path).stat().st_size)))
+        return True
 
     def _poll_export(self) -> None:
         job = self._export_job

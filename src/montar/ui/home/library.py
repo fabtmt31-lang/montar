@@ -183,10 +183,11 @@ class TrashPage(QWidget):
 
     restored = pyqtSignal(object)  # Path du projet restauré
 
-    def __init__(self, trash: Trash) -> None:
+    def __init__(self, trash: Trash, days: int = RETENTION_DAYS) -> None:
         super().__init__()
         self.setObjectName("Page")
         self.trash = trash
+        self.days = days
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea()
@@ -204,8 +205,8 @@ class TrashPage(QWidget):
         self.empty_button.clicked.connect(self._empty)
         head.addWidget(self.empty_button)
         layout.addLayout(head)
-        layout.addWidget(label(_("Les projets supprimés restent ici {n} jours avant d'être "
-                                 "effacés.").format(n=RETENTION_DAYS), "muted"))
+        self.retention = label("", "muted")
+        layout.addWidget(self.retention)
         self.rows = QVBoxLayout()
         self.rows.setSpacing(8)
         layout.addLayout(self.rows)
@@ -219,6 +220,8 @@ class TrashPage(QWidget):
             w = self.rows.takeAt(0).widget()
             if w is not None:
                 w.deleteLater()
+        self.retention.setText(_("Les projets supprimés restent ici {n} jours avant d'être "
+                                 "effacés.").format(n=self.days))
         entries = self.trash.entries()
         for entry in entries:
             self.rows.addWidget(self._row(entry))
@@ -234,7 +237,7 @@ class TrashPage(QWidget):
         title = label(entry.name)
         title.setStyleSheet("font-weight: 700;")
         texts.addWidget(title)
-        left = max(0, RETENTION_DAYS - int((time.time() - entry.deleted) / 86400))
+        left = max(0, self.days - int((time.time() - entry.deleted) / 86400))
         texts.addWidget(label(_("Supprimé {when} · {size} · effacé dans {n} jours").format(
             when=ago(entry.deleted), size=human_size(entry.size).lstrip("≈ "),
             n=left), "small"))

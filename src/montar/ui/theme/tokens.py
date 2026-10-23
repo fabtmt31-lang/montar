@@ -78,4 +78,4 @@ DARK = Palette(
 )
 
 # Couleurs d'accent proposées dans les préférences (maquette 06), thème clair.
-ACCENTS = ("#2F7A56", "#4E9A72", "#3A8C86", "#6F9A3A", "#5F7F6C")
+from montar.core.settings import ACCENTS  # noqa: E402,F401 - une seule définition

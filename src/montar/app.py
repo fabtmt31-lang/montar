@@ -164,7 +164,7 @@ def main(argv: list[str] | None = None) -> int:
     settings_file = paths.config_dir() / "settings.json"
     settings = Settings.load(settings_file)
     _install_language(app, settings.language)
-    theme().apply(settings.theme)
+    theme().apply(settings.theme, settings.accent)
     window = MainWindow(settings, settings_file)
     window.show()
     if args.project:

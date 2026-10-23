@@ -50,9 +50,9 @@ class MainWindow(QMainWindow):
         self.preferences = PreferencesPage(settings, self.modules, self.cache,
                                            self.recent.paths)
         self.trash = Trash(paths.data_dir() / "corbeille")
-        self.trash.purge()
+        self.trash.purge(settings.trash_days)
         self.library_page = LibraryPage(self._thumbnail_for)
-        self.trash_page = TrashPage(self.trash)
+        self.trash_page = TrashPage(self.trash, settings.trash_days)
         self.trash_page.restored.connect(self._restored)
         self.shell = HomeShell(self.home, self.projects, self.preferences, [
             ("library", _("Médiathèque"), "library", self.library_page),
@@ -69,6 +69,7 @@ class MainWindow(QMainWindow):
             page.projects.deleteRequested.connect(self.move_to_trash)
         self.home.showAllRequested.connect(lambda: self.shell.show_page("projects"))
         self.preferences.themeChanged.connect(theme().apply)
+        self.preferences.accentChanged.connect(self._accent_changed)
         self.preferences.settingsChanged.connect(self._save_settings)
         self.preferences.cacheCleared.connect(self.refresh_recent)
         self.editor: EditorPage | None = None
@@ -99,11 +100,15 @@ class MainWindow(QMainWindow):
         except OSError as exc:
             log.warning("préférences non enregistrées : %s", exc)
 
+    def _accent_changed(self, color: str) -> None:
+        theme().apply(accent=color)
+
     def _save_settings(self) -> None:
         try:
             self.settings.save(self._settings_file)
         except OSError as exc:
             QMessageBox.warning(self, _("Préférences"), str(exc))
+        self.trash_page.days = self.settings.trash_days
         if self.editor is not None:
             self.editor.set_preview_quality(self.settings.preview_quality)
             self.editor.apply_preferences(self.settings)
