@@ -1,0 +1,66 @@
+# Prototype du portage Windows (point ouvert n° 1 du cahier des charges) : la pile MSYS2
+# (Python, PyQt6, MLT, FFmpeg, frei0r) fait-elle tourner le moteur de montar ?
+name: Windows (prototype)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/windows.yml"
+      - "scripts/windows/**"
+      - "src/montar/engine/**"
+      - "src/montar/platform/**"
+
+jobs:
+  prototype:
+    name: MSYS2 ${{ matrix.msystem }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        msystem: [UCRT64, MINGW64]
+    defaults:
+      run:
+        shell: msys2 {0}
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          update: true
+          install: git
+      - name: Paquets (chacun à part, pour savoir lesquels manquent)
+        run: |
+          missing=""
+          for p in python python-pyqt6 qt6-svg mlt ffmpeg frei0r-plugins python-numpy \
+                   python-pytest swig gcc pkgconf; do
+            if pacman -S --needed --noconfirm "${MINGW_PACKAGE_PREFIX}-$p"; then
+              echo "installé : $p"
+            else
+              echo "::warning::paquet MSYS2 introuvable : $p"
+              missing="$missing $p"
+            fi
+          done
+          echo "Paquets manquants :${missing:- aucun}" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Ce que fournit le paquet MLT
+        continue-on-error: true
+        run: |
+          pacman -Q "${MINGW_PACKAGE_PREFIX}-mlt"
+          pacman -Ql "${MINGW_PACKAGE_PREFIX}-mlt" | grep -iE "python|mlt7|\.pyd|bin/.*\.dll|lib/mlt" | head -40
+          pkg-config --modversion mlt-framework-7 mlt++-7
+      - name: Bindings Python de MLT
+        run: bash scripts/windows/build_mlt_bindings.sh
+      - name: Prototype du moteur
+        run: python scripts/windows/prototype.py prototype-windows
+      - name: Suite de tests (informative)
+        if: always()
+        continue-on-error: true
+        run: python -m pytest -q -p no:cacheprovider --junitxml=prototype-windows/tests.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prototype-windows-${{ matrix.msystem }}
+          path: prototype-windows/

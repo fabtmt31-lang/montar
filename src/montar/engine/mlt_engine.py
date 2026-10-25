@@ -10,6 +10,7 @@ import logging
 import math
 import os
 import struct
+import sys
 import threading
 import zlib
 from math import gcd
@@ -62,7 +63,10 @@ def _native_get_image():
     global _lib_get_image
     if _lib_get_image is None:
         try:
-            lib = ctypes.CDLL(ctypes.util.find_library("mlt-7") or "libmlt-7.so.7")
+            # Linux : libmlt-7.so.7 ; Windows (MSYS2) : libmlt-7.dll, à côté de l'exécutable
+            name = ctypes.util.find_library("mlt-7") or ctypes.util.find_library("libmlt-7") \
+                or ("libmlt-7.dll" if sys.platform == "win32" else "libmlt-7.so.7")
+            lib = ctypes.CDLL(name)
             fn = lib.mlt_frame_get_image
             fn.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p),
                            ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
