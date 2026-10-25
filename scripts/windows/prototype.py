@@ -90,7 +90,9 @@ class Report:
 
 def environment() -> dict:
     import montar
+    from montar.engine import mlt_engine
 
+    mlt_engine._ensure_factory()  # renseigne les dossiers de MLT et le PATH sous Windows
     info = {"système": platform.platform(), "python": sys.version.split()[0],
             "exécutable": sys.executable, "montar": montar.__file__}
     from PyQt6.QtCore import PYQT_VERSION_STR, QT_VERSION_STR
@@ -99,9 +101,6 @@ def environment() -> dict:
     ffmpeg = shutil.which("ffmpeg")
     info["ffmpeg"] = subprocess.run([ffmpeg, "-version"], capture_output=True, text=True,
                                     encoding="utf-8").stdout.splitlines()[0] if ffmpeg else None
-    from montar.engine import mlt_engine
-
-    mlt_engine._ensure_factory()  # renseigne les dossiers de MLT sous Windows
     for var in ("MLT_REPOSITORY", "MLT_DATA", "MLT_PROFILES_PATH", "FREI0R_PATH"):
         info[var] = os.environ.get(var)
     return info
