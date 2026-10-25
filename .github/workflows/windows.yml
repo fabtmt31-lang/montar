@@ -55,9 +55,10 @@ jobs:
         run: |
           pacman -Q "${MINGW_PACKAGE_PREFIX}-mlt"
           for dll in "$MINGW_PREFIX"/lib/mlt/*.dll; do
-            missing=$(ntldd -R "$dll" 2>/dev/null | grep -i "not found" | sort -u)
+            missing=$(ntldd -R "$dll" 2>/dev/null | grep -i "not found" | grep -viE "(api|ext)-ms-" | sort -u)
             [ -n "$missing" ] && echo "$(basename "$dll") :" && echo "$missing"
           done
+          # les « api-ms-* / ext-ms-* » sont des ensembles d'API résolus par Windows : ignorés
           echo "fin de l'analyse"
       - name: Bindings Python de MLT
         run: bash scripts/windows/build_mlt_bindings.sh
