@@ -933,6 +933,21 @@ def test_apply_effect_or_module(window, media_dir, monkeypatch):
     assert any("timelapse" in c.modules for c in editor.project.clips)
 
 
+def _unlink_released(editor, path: Path) -> None:
+    """Supprime un média ; sous Windows, un fichier ouvert (lecteur de l'aperçu) ne peut pas
+    l'être : l'aperçu le relâche d'abord."""
+    def unlink() -> bool:
+        try:
+            path.unlink()
+        except PermissionError:
+            return False
+        return True
+
+    if not unlink():
+        editor.player._close.emit()
+        assert wait_until(unlink, 10)
+
+
 @needs_ffmpeg
 def test_save_as_and_relink(window, media_dir, tmp_path, monkeypatch):
     editor = imported_editor(window, media_dir, ["clip.mp4", "photo.png"])
@@ -952,7 +967,7 @@ def test_save_as_and_relink(window, media_dir, tmp_path, monkeypatch):
     for m in copy_editor.project.media:
         _shutil = __import__("shutil")
         _shutil.copy(m.path, elsewhere / Path(m.path).name)
-        Path(m.path).unlink()
+        _unlink_released(copy_editor, Path(m.path))
     copy_editor._update_used_media()
     panel = copy_editor.media_panel
     assert panel.missing_box.isVisibleTo(panel) and "2" in panel.missing_label.text()

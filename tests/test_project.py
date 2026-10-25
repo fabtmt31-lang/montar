@@ -91,9 +91,10 @@ def test_invalid_files(tmp_path, content):
 
 def test_unknown_fields_are_ignored(tmp_path):
     f = tmp_path / "p.montar"
+    absolute = str(tmp_path.resolve() / "a.mp4")  # « /a.mp4 » n'est pas absolu sous Windows
     f.write_text(json.dumps({"format_version": 1, "name": "x", "futur": True,
-                             "media": [{"path": "/a.mp4", "inconnu": 1}]}), encoding="utf-8")
-    assert Project.load(f).media[0].path == "/a.mp4"
+                             "media": [{"path": absolute, "inconnu": 1}]}), encoding="utf-8")
+    assert Project.load(f).media[0].path == absolute
 
 
 def test_unique_project_path(tmp_path):

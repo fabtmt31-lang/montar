@@ -90,8 +90,10 @@ class OpenAIWhisper(Backend):
 
 
 def _ggml_dirs() -> list[Path]:
-    data = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
-    return [data / "montar" / "whisper", data / "whisper.cpp", Path("/usr/share/whisper.cpp")]
+    from montar.platform.paths import data_dir
+
+    shared = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    return [data_dir() / "whisper", shared / "whisper.cpp", Path("/usr/share/whisper.cpp")]
 
 
 class WhisperCpp(Backend):

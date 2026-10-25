@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import os
+import sys
 import time
 
 import pytest
@@ -114,6 +115,11 @@ def test_qt5_is_never_loaded(engine, media_dir):
     """Les modules MLT liés à Qt 5 figeaient l'interface (Qt 6) à l'ouverture d'une image."""
     s = spec(video(ClipSpec(str(media_dir / "photo.png"), "image", 0, 25, 0)))
     engine.build(s).render(0, 64, 36)
+    if sys.platform == "win32":
+        import ctypes
+
+        assert not ctypes.WinDLL("kernel32").GetModuleHandleW("Qt5Core.dll")
+        return
     with open(f"/proc/{os.getpid()}/maps") as maps:
         assert not any("libQt5Core" in line for line in maps)
 

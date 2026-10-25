@@ -1,6 +1,6 @@
-# Prototype du portage Windows (point ouvert n° 1 du cahier des charges) : la pile MSYS2
-# (Python, PyQt6, MLT, FFmpeg, frei0r) fait-elle tourner le moteur de montar ?
-name: Windows (prototype)
+# Portage Windows (point ouvert n° 1 du cahier des charges) : la pile MSYS2 (Python, PyQt6,
+# MLT, FFmpeg, frei0r) fait tourner le moteur (prototype) et toute la suite de tests passe.
+name: Windows
 
 on:
   workflow_dispatch:
@@ -8,8 +8,8 @@ on:
     paths:
       - ".github/workflows/windows.yml"
       - "scripts/windows/**"
-      - "src/montar/engine/**"
-      - "src/montar/platform/**"
+      - "src/**"
+      - "tests/**"
 
 jobs:
   prototype:
@@ -64,9 +64,8 @@ jobs:
         run: bash scripts/windows/build_mlt_bindings.sh
       - name: Prototype du moteur
         run: python scripts/windows/prototype.py prototype-windows
-      - name: Suite de tests (informative)
+      - name: Suite de tests
         if: always()
-        continue-on-error: true
         run: python -m pytest -q -p no:cacheprovider --junitxml=prototype-windows/tests.xml
       - uses: actions/upload-artifact@v4
         if: always()

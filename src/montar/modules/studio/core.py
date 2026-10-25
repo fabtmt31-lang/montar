@@ -49,11 +49,11 @@ def available() -> bool:
 
 
 def _run(cmd: list[str], duration: float, progress: Callable[[float], None], low: float,
-         high: float, cancelled: Callable[[], bool]) -> None:
+         high: float, cancelled: Callable[[], bool], cwd: str | None = None) -> None:
     """Lance ffmpeg ; l'avancement (`-progress`) est ramené dans [low, high]."""
     process = subprocess.Popen([cmd[0], "-progress", "pipe:1", "-nostats", *cmd[1:]],
                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE, text=True)
+                               stderr=subprocess.PIPE, text=True, cwd=cwd)
     try:
         assert process.stdout is not None
         for line in process.stdout:
@@ -85,17 +85,21 @@ def stabilize(source: str, target: Path, strength: float, duration: float,
     target.parent.mkdir(parents=True, exist_ok=True)
     shakiness = round(4 + 6 * strength)
     smoothing = round(8 + 40 * strength)
+    source = str(Path(source).resolve())
+    target = target.resolve()
     with tempfile.TemporaryDirectory(prefix="montar-stab-") as tmp:
-        trf = Path(tmp) / "transforms.trf"
+        # fichier d'analyse nommé sans chemin (ffmpeg lancé dans le dossier temporaire) : un
+        # chemin Windows (« C:\… ») casserait la syntaxe des filtres
+        trf = "transforms.trf"
         _run([ffmpeg, "-y", "-v", "error", "-i", source, "-vf",
               f"vidstabdetect=shakiness={shakiness}:accuracy=12:result={trf}", "-f", "null",
-              "-"], duration, progress, 0.0, 0.4, cancelled)
+              "-"], duration, progress, 0.0, 0.4, cancelled, tmp)
         partial = target.with_suffix(".tmp.mp4")
         # zoom optimal : les bords noirs laissés par la correction sont rognés
         _run([ffmpeg, "-y", "-v", "error", "-i", source, "-map", "0:v:0", "-map", "0:a?",
               "-vf", f"vidstabtransform=input={trf}:smoothing={smoothing}:optzoom=1:"
                      f"interpol=bicubic,unsharp=5:5:0.6:3:3:0.3",
               "-c:v", "libx264", "-preset", "fast", "-crf", "17", "-pix_fmt", "yuv420p",
-              "-c:a", "copy", str(partial)], duration, progress, 0.4, 1.0, cancelled)
+              "-c:a", "copy", str(partial)], duration, progress, 0.4, 1.0, cancelled, tmp)
         partial.replace(target)
     progress(1.0)

@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from montar.core.project import MEDIA_DIR, PROJECT_SUFFIX, Project, unique_project_folder
+from montar.platform.process import alive
 
 BACKUP_DIR = "sauvegardes"
 MAX_BACKUPS = 10
@@ -90,16 +91,8 @@ class Session:
             pid, project = int(data["pid"]), Path(data["project"])
         except (OSError, ValueError, KeyError, TypeError):
             return None
-        if pid != os.getpid() and _alive(pid):
+        if pid != os.getpid() and alive(pid):
             return None  # une autre fenêtre de montar est ouverte
         return project if project.exists() else None
 
 
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True

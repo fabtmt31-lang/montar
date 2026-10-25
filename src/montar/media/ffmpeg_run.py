@@ -3,10 +3,10 @@
 vérifiée plusieurs fois par seconde, arrêt d'un ffmpeg qui n'avance plus."""
 from __future__ import annotations
 
-import os
-import select
+import queue
 import subprocess
 import tempfile
+import threading
 import time
 from collections.abc import Callable
 
@@ -30,16 +30,21 @@ def run(cmd: list[str], on_progress: Callable[[str, str], None] = lambda k, v: N
     # messages d'erreur dans un fichier : un tuyau plein bloquerait ffmpeg
     errors = tempfile.TemporaryFile()
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errors)
+    # lecture dans un fil : select() ne sait pas attendre un tuyau sous Windows
+    chunks: queue.Queue[bytes] = queue.Queue()
+    assert proc.stdout is not None
+    reader = threading.Thread(target=_read_all, args=(proc.stdout, chunks), daemon=True)
+    reader.start()
     try:
-        assert proc.stdout is not None
-        fd = proc.stdout.fileno()
         pending, last_change, last_state = b"", time.monotonic(), None
         while True:
             if cancelled():
                 raise Cancelled()
-            ready, _w, _x = select.select([fd], [], [], 0.25)
-            if ready:
-                chunk = os.read(fd, 65536)
+            try:
+                chunk = chunks.get(timeout=0.25)
+            except queue.Empty:
+                chunk = None
+            if chunk is not None:
                 if not chunk:
                     break  # ffmpeg a terminé
                 pending += chunk
@@ -67,4 +72,16 @@ def run(cmd: list[str], on_progress: Callable[[str, str], None] = lambda k, v: N
         proc.wait()
         raise
     finally:
+        reader.join(timeout=3)
         errors.close()
+
+
+def _read_all(stream, chunks: queue.Queue) -> None:
+    """Transmet la sortie par morceaux ; un morceau vide signale la fin."""
+    try:
+        while chunk := stream.read1(65536):
+            chunks.put(chunk)
+    except (OSError, ValueError):
+        pass
+    finally:
+        chunks.put(b"")

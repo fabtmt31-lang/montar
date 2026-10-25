@@ -49,7 +49,10 @@ def isolated_home(tmp_path, monkeypatch):
     home = tmp_path / "home"
     for var, sub in (("HOME", ""), ("XDG_CONFIG_HOME", ".config"),
                      ("XDG_DATA_HOME", ".local/share"), ("XDG_CACHE_HOME", ".cache"),
-                     ("XDG_VIDEOS_DIR", "Vidéos")):
+                     ("XDG_VIDEOS_DIR", "Vidéos"),
+                     # Windows : dossier personnel, %APPDATA% et %LOCALAPPDATA%
+                     ("USERPROFILE", ""), ("APPDATA", "AppData/Roaming"),
+                     ("LOCALAPPDATA", "AppData/Local")):
         path = home / sub if sub else home
         path.mkdir(parents=True, exist_ok=True)
         monkeypatch.setenv(var, str(path))

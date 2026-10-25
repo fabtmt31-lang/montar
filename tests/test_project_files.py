@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Dupliquer, sauvegardes, session interrompue (cahier des charges F-PRJ-01, F-PRJ-03)."""
+import json
 import os
 import subprocess
 import sys
@@ -57,9 +58,9 @@ def test_session_detects_interruption(tmp_path):
     assert session.interrupted() == project  # même processus : vue comme interrompue
     dead = subprocess.Popen([sys.executable, "-c", "pass"])
     dead.wait()
-    session.file.write_text(f'{{"project": "{project}", "pid": {dead.pid}}}')
+    session.file.write_text(json.dumps({"project": str(project), "pid": dead.pid}))
     assert session.interrupted() == project
-    session.file.write_text(f'{{"project": "{project}", "pid": {os.getppid()}}}')
+    session.file.write_text(json.dumps({"project": str(project), "pid": os.getppid()}))
     assert session.interrupted() is None  # un autre montar tourne encore
     session.close()
     assert not session.file.exists() and session.interrupted() is None
