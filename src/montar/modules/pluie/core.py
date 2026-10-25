@@ -1,0 +1,532 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Effet « Pluie » : réglages, filtres MLT de l'ambiance et calcul des calques de gouttes.
+
+L'ambiance (image plus sombre, plus froide, brume, éclairs, objectif mouillé) est faite de
+filtres MLT ordinaires : elle suit les curseurs sans délai. Les gouttes posées sur l'objectif
+(ou la vitre) sont calculées une fois avec NumPy, en boucle de quelques secondes, dans deux
+fichiers :
+
+- un **masque** (niveaux de gris) : là où il y a de l'eau, l'image vue à travers la goutte
+  (floue, plus claire) remplace l'image nette (filtres `mask_start` / `mask_apply`) ;
+- un **calque** transparent superposé (`watermark`) : bord sombre et reflet des gouttes,
+  ombrage intérieur, traits de la pluie qui tombe.
+
+Ces calques ne dépendent pas de la vidéo : ils sont recalculés seulement quand un réglage
+des gouttes change, et partagés par tous les clips aux mêmes réglages."""
+from __future__ import annotations
+
+import hashlib
+import json
+import random
+import shutil
+import subprocess
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+
+MODULE_VERSION = 1  # change le nom des calques en cache si leur dessin évolue
+LOOP_SECONDS = 5  # durée de la boucle des gouttes animées
+MAX_SIDE = 1920  # calques limités à cette taille (le moteur les met à l'échelle)
+
+PRESETS = {
+    # volume, taille, ruissellement, ambiance, pluie qui tombe, brume, éclairs
+    "bruine": dict(volume=0.2, taille=0.3, ruissellement=0.15, ambiance=0.5, chute=0.2,
+                   brume=0.2, eclairs=False),
+    "pluie": dict(volume=0.5, taille=0.5, ruissellement=0.5, ambiance=0.7, chute=0.4,
+                  brume=0.3, eclairs=False),
+    "averse": dict(volume=0.9, taille=0.75, ruissellement=0.9, ambiance=0.85, chute=0.8,
+                   brume=0.45, eclairs=False),
+    "orage": dict(volume=0.8, taille=0.7, ruissellement=0.8, ambiance=1.0, chute=0.9,
+                  brume=0.35, eclairs=True),
+}
+CUSTOM = "perso"
+SURFACES = ("objectif", "vitre")
+
+# réglages qui changent le dessin des gouttes (les autres sont des filtres instantanés)
+DROP_KEYS = ("volume", "taille", "ruissellement", "chute", "surface", "anime", "variante")
+
+
+@dataclass(frozen=True)
+class Settings:
+    volume: float = 0.5
+    taille: float = 0.5
+    ruissellement: float = 0.5
+    ambiance: float = 0.7
+    chute: float = 0.4
+    brume: float = 0.3
+    eclairs: bool = False
+    surface: str = "objectif"
+    anime: bool = True
+    mouille: bool = True
+    variante: int = 1
+
+    @classmethod
+    def from_values(cls, values: dict) -> Settings:
+        def unit(key: str) -> float:
+            try:
+                return max(0.0, min(1.0, float(values.get(key, getattr(cls, key)))))
+            except (TypeError, ValueError):
+                return getattr(cls, key)
+
+        surface = values.get("surface", "objectif")
+        try:
+            variante = max(1, min(99, int(values.get("variante", 1))))
+        except (TypeError, ValueError):
+            variante = 1
+        def step(key: str) -> float:
+            """Réglage des gouttes arrondi à 5 % : le glisser d'un curseur ne lance pas un
+            calcul par position, et la différence ne se voit pas."""
+            return round(unit(key) * 20) / 20
+
+        return cls(volume=step("volume"), taille=step("taille"),
+                   ruissellement=step("ruissellement"), ambiance=unit("ambiance"),
+                   chute=step("chute"), brume=unit("brume"),
+                   eclairs=bool(values.get("eclairs", False)),
+                   surface=surface if surface in SURFACES else "objectif",
+                   anime=bool(values.get("anime", True)),
+                   mouille=bool(values.get("mouille", True)), variante=variante)
+
+    @property
+    def has_drops(self) -> bool:
+        return self.volume > 0.001 or self.chute > 0.001
+
+
+def apply_preset(values: dict, key: str) -> dict:
+    """Choisir un préréglage règle les curseurs ; toucher un curseur passe en
+    « Personnalisé »."""
+    values = dict(values)
+    if key == "preset":
+        values.update(PRESETS.get(values.get("preset"), {}))
+    elif key in PRESETS["pluie"] and values.get("preset") != CUSTOM:
+        preset = PRESETS.get(values.get("preset"))
+        if preset is None or preset.get(key) != values.get(key):
+            values["preset"] = CUSTOM
+    return values
+
+
+# --- filtres de l'ambiance (instantanés) ----------------------------------------------------
+
+
+def ambiance_filters(s: Settings) -> list[tuple[str, dict]]:
+    """Jour de pluie : image désaturée, plus sombre, tons moyens écrasés, contraste adouci,
+    noirs voilés, dominante froide."""
+    k = s.ambiance
+    if k <= 0.001:
+        return []
+    tint = (1 - 0.07 * k, 1 - 0.01 * k, min(1.0, 1 + 0.06 * k))
+    low = 0.06 * k
+    high = low + (1 - 0.18 * k) * (1 - 0.32 * k)
+    levels = {}
+    for c, t in zip("rgb", tint, strict=True):
+        levels[f"av.{c}omin"] = round(low * t, 4)
+        levels[f"av.{c}omax"] = round(min(1.0, high * t), 4)
+    return [("avfilter.eq", {"av.saturation": round(1 - 0.45 * k, 3),
+                             "av.gamma": round(1 / (1 + 0.25 * k), 3)}),
+            ("avfilter.colorlevels", levels)]
+
+
+def softening_filters(s: Settings, height: int) -> list[tuple[str, dict]]:
+    """Eau sur l'objectif : toute l'image est un peu adoucie (plus sur une vitre, où la
+    mise au point est faite sur les gouttes)."""
+    if not s.mouille or s.volume <= 0.001:
+        return []
+    sigma = (0.8 + 1.2 * s.volume) * (1.8 if s.surface == "vitre" else 1.0)
+    return [("avfilter.gblur", {"av.sigma": round(sigma * height / 720, 2)})]
+
+
+def flash_points(duration: int, fps: int, seed: int) -> list[tuple[int, float]]:
+    """Éclairs d'orage : (image, niveau de luminosité), un éclair toutes les 4 à 9 s en
+    moyenne, en double flash comme un vrai éclair."""
+    rng = random.Random(seed)
+    points = [(0, 1.0)]
+    t = round(fps * rng.uniform(0.8, 3.0))
+    while t + 8 < duration:
+        peak = rng.uniform(1.7, 2.3)
+        for dt, level in ((-1, 1.0), (0, peak), (2, 1.15), (3, peak * 0.85), (7, 1.0)):
+            if t + dt > points[-1][0]:
+                points.append((t + dt, round(level, 3)))
+        t += round(fps * rng.uniform(4.0, 9.0))
+    if points[-1][0] < duration - 1:
+        points.append((duration - 1, 1.0))
+    return points
+
+
+def lightning_filters(s: Settings, duration: int, fps: int) -> list[tuple[str, dict]]:
+    if not s.eclairs or duration < 2:
+        return []
+    points = flash_points(duration, fps, s.variante)
+    if len(points) <= 2:
+        return []
+    level = ";".join(f"{f}={v:g}" for f, v in points)
+    return [("brightness", {"level": level, "in": 0, "out": duration - 1})]
+
+
+HAZE_ROWS = 540
+
+
+def haze_image(folder: Path, amount: float) -> Path:
+    """Brume : voile gris-bleu, plus dense en haut de l'image (petite image PNG étirée)."""
+    level = round(amount * 20)
+    path = folder / f"brume{MODULE_VERSION}_{level:02d}.png"
+    if not path.exists():
+        folder.mkdir(parents=True, exist_ok=True)
+        rows = []
+        for y in range(HAZE_ROWS):  # assez de lignes pour un dégradé sans bandes
+            a = round(255 * 0.35 * (level / 20) * (1 - 0.7 * y / (HAZE_ROWS - 1)))
+            rows.append(bytes([140, 153, 168, a]) * 4)
+        tmp = path.with_suffix(".part")
+        tmp.write_bytes(_png_rgba(4, HAZE_ROWS, rows))
+        tmp.replace(path)
+    return path
+
+
+def _png_rgba(width: int, height: int, rows: list[bytes]) -> bytes:
+    import struct
+    import zlib
+
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        return (struct.pack(">I", len(payload)) + kind + payload
+                + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF))
+
+    raw = b"".join(b"\0" + r for r in rows)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6,
+                                                               0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+
+
+# --- calques des gouttes -------------------------------------------------------------------
+
+
+def layer_size(width: int, height: int) -> tuple[int, int]:
+    """Taille des calques : celle de la toile, réduite si elle dépasse MAX_SIDE (paire)."""
+    k = min(1.0, MAX_SIDE / max(width, height, 1))
+    return max(2, round(width * k / 2) * 2), max(2, round(height * k / 2) * 2)
+
+
+def loop_frames(s: Settings, fps: int) -> tuple[int, int]:
+    """Nombre d'images du masque et du calque (1 : image fixe)."""
+    loop = max(2, round(LOOP_SECONDS * fps))
+    mask = loop if s.anime and s.volume > 0.001 else 1
+    overlay = loop if (mask > 1 or s.chute > 0.001) else 1
+    return mask, overlay
+
+
+def cache_folder(cache_dir: Path, s: Settings, width: int, height: int, fps: int) -> Path:
+    key = json.dumps([MODULE_VERSION, layer_size(width, height), fps,
+                      [getattr(s, k) for k in DROP_KEYS]])
+    return cache_dir / "pluie" / hashlib.sha1(key.encode()).hexdigest()[:20]
+
+
+MASK, OVERLAY = "masque.mp4", "calque.mov"
+
+
+def ready(folder: Path) -> bool:
+    return (folder / MASK).exists() and (folder / OVERLAY).exists()
+
+
+@dataclass
+class _Drop:
+    x: float
+    y: float
+    r: float
+    aspect: float
+    born: int  # image d'apparition dans la boucle
+    life: int  # durée de vie (images)
+    slide_at: int  # âge auquel elle se met à glisser (-1 : jamais)
+    trail: float  # longueur du sillon laissé au-dessus (goutte fixe)
+    walk: object = None  # écart du sillon à la verticale, tous les 2 px (tableau)
+
+
+class _Layers:
+    """Hauteur d'eau et ombrage, dessinés goutte par goutte : là où deux gouttes se
+    touchent, la plus épaisse l'emporte."""
+
+    def __init__(self, scene: _Scene, base: _Layers | None = None) -> None:
+        import numpy as np
+
+        self.scene = scene
+        if base is None:
+            shape = (scene.h, scene.w)
+            self.hm, self.light, self.dark = (np.zeros(shape, np.float32) for _ in range(3))
+        else:
+            self.hm, self.light, self.dark = base.hm.copy(), base.light.copy(), \
+                base.dark.copy()
+
+    def _paint(self, x0: int, y0: int, v, sx, sy, radius: float) -> None:
+        import numpy as np
+
+        sc = self.scene
+        y1, x1 = y0 + v.shape[0], x0 + v.shape[1]
+        win = v > self.hm[y0:y1, x0:x1]
+        if not win.any():
+            return
+        wet = np.clip(v * sc.gain, 0, 1)
+        rim = np.where(v > 0.01, (1 - v) ** sc.rim_power, 0)
+        rel = np.clip(sy / radius, -1, 1)
+        # vue inversée à travers la goutte : le sol en haut (sombre), le ciel en bas (clair)
+        dark = 0.6 * rim + 0.3 * np.clip(-rel, 0, 1) * wet
+        light = 0.22 * np.clip(rel, 0, 1) * wet
+        if radius > 2.5 * sc.unit:  # reflet : petit point clair en haut à gauche
+            dist = np.hypot(sx + radius * 0.35, sy + radius * 0.4) / radius
+            light = light + sc.spec * np.clip(1 - dist / 0.22, 0, 1) ** 1.5 * (v > 0.3)
+        for layer, value in ((self.hm, v), (self.light, light), (self.dark, dark)):
+            layer[y0:y1, x0:x1][win] = np.broadcast_to(value, v.shape)[win]
+
+    def drop(self, x: float, y: float, rx: float, ry: float, top: float = 1.0) -> None:
+        import numpy as np
+
+        w, h = self.scene.w, self.scene.h
+        x0, x1 = int(max(0, x - rx - 2)), int(min(w, x + rx + 3))
+        y0, y1 = int(max(0, y - ry - 2)), int(min(h, y + ry + 3))
+        if x1 <= x0 or y1 <= y0 or rx < 0.4:
+            return
+        sx = np.arange(x0, x1, dtype=np.float32)[None, :] - x
+        sy = np.arange(y0, y1, dtype=np.float32)[:, None] - y
+        if rx > 5:  # contour légèrement irrégulier (une goutte n'est pas un cercle)
+            ang = np.arctan2(sy, sx)
+            wob = 1 + 0.07 * np.sin(3 * ang + x) + 0.04 * np.sin(5 * ang + y)
+        else:
+            wob = 1.0
+        r2 = (sx / (rx * wob)) ** 2 + (sy / (ry * wob)) ** 2
+        v = np.sqrt(np.clip(1 - r2, 0, 1)) * top
+        self._paint(x0, y0, v, sx, sy, max(rx, ry))
+
+    def trail(self, d: _Drop, bottom: float, top: float, fade: float) -> None:
+        """Sillon fin laissé par une goutte qui a glissé, avec quelques perles."""
+        import numpy as np
+
+        sc = self.scene
+        w, h = sc.w, sc.h
+        y0, y1 = int(max(0, top)), int(min(h, bottom + 1))
+        if y1 <= y0:
+            return
+        rows = np.arange(y0, y1, dtype=np.float32)
+        steps = (bottom - rows) / (2 * sc.unit)
+        center = d.x + np.interp(steps, np.arange(len(d.walk)), d.walk)
+        rr = max(0.5, d.r * 0.22 * fade)
+        x0 = int(max(0, center.min() - rr - 2))
+        x1 = int(min(w, center.max() + rr + 3))
+        if x1 <= x0:
+            return
+        dx = np.arange(x0, x1, dtype=np.float32)[None, :] - center[:, None]
+        v = np.sqrt(np.clip(1 - (dx / rr) ** 2, 0, 1)) * (0.85 * fade)
+        self._paint(x0, y0, v, dx, np.zeros_like(dx), rr)
+        length = max(1.0, bottom - top)
+        for k in range(int(length / (50 * sc.unit))):  # perles : une tous les 50 px environ
+            t = ((k * 0.618 + d.x * 0.01) % 1.0) * length
+            i = min(len(d.walk) - 1, int(t / (2 * sc.unit)))
+            self.drop(d.x + float(d.walk[i]), bottom - t, rr * 1.8, rr * 2.0, top=fade)
+
+
+class _Scene:
+    """Gouttes, gouttelettes et traits de pluie tirés au hasard (graine = variante)."""
+
+    def __init__(self, s: Settings, w: int, h: int, loop: int) -> None:
+        import numpy as np
+
+        self.s, self.w, self.h, self.loop = s, w, h, loop
+        rng = np.random.default_rng(1000 + s.variante)
+        unit = h / 720  # tailles exprimées pour une image de 720 lignes
+        self.unit = unit
+        soft = s.surface == "objectif"  # gouttes floues sur l'objectif, nettes sur une vitre
+        self.gain, self.rim_power, self.spec = (2.5, 2.0, 0.45) if soft else (5.0, 3.0, 0.6)
+        size = 0.5 + s.taille
+        animated = s.anime and loop > 1
+        self.drops: list[_Drop] = []
+        self.drizzle = None
+        if s.volume > 0.001:
+            # gouttes animées : chacune n'est visible qu'une partie de la boucle
+            more = 1.4 if animated else 1.0
+            for _ in range(round((6 + 110 * s.volume) * more)):
+                r = float(rng.uniform(4, 20)) * size * unit
+                life = int(rng.integers(loop // 2, loop)) if animated else loop
+                big = r > 11 * size * unit and rng.random() < 0.6 * s.ruissellement
+                trail = float(rng.uniform(90, 340)) * s.ruissellement * unit \
+                    if big and not animated else 0.0
+                d = _Drop(float(rng.uniform(0, w)), float(rng.uniform(0, h)), r,
+                          float(rng.uniform(1.0, 1.2)), int(rng.integers(0, loop)), life,
+                          int(life * rng.uniform(0.25, 0.55)) if big and animated else -1,
+                          trail)
+                if big:
+                    d.walk = np.cumsum(rng.normal(0, 0.3, round(h / unit / 2) + 2))
+                self.drops.append(d)
+            # gouttelettes très fines (bruine) : elles restent en place
+            n = round((300 + 3500 * s.volume) * (w * h) / (1280 * 720))
+            self.drizzle = (rng.uniform(0, w, n), rng.uniform(0, h, n),
+                            rng.uniform(0.8, 3.0, n) * (0.6 + 0.6 * s.taille) * unit)
+        # traits de pluie : chacun parcourt un nombre entier de fois la hauteur pendant la
+        # boucle, pour qu'elle se referme sans saut
+        count = round(2200 * s.chute * (w * h) / (1280 * 720))
+        span = h + 120 * unit
+        self.streaks = (rng.uniform(-0.2 * w, w, count), rng.uniform(0, span, count),
+                        rng.uniform(18, 46, count) * unit, rng.uniform(0.16, 0.47, count),
+                        rng.integers(3, 7, count) * span / max(1, loop))
+        self.span = span
+        self.slant = 0.18
+        self._static: _Layers | None = None
+
+    # dessin -----------------------------------------------------------------------------
+
+    def layers(self, frame: int) -> _Layers:
+        if self._static is None:
+            self._static = _Layers(self)
+            if self.drizzle is not None:
+                for x, y, r in zip(*self.drizzle, strict=True):
+                    self._static.drop(float(x), float(y), float(r), float(r))
+        out = _Layers(self, self._static)
+        for d in self.drops:
+            age = (frame - d.born) % self.loop
+            if age >= d.life:
+                continue
+            scale, fade = 1.0, 1.0
+            if self.loop > 1 and d.life < self.loop:
+                grow, end = 4, max(1, min(8, d.life // 3))
+                scale = min(1.0, 0.4 + 0.6 * age / grow)
+                if d.life - age < end:  # la goutte s'efface avant de disparaître
+                    fade = (d.life - age) / end
+                    scale *= 0.6 + 0.4 * fade
+            r = d.r * scale
+            y = d.y
+            if d.slide_at >= 0 and age > d.slide_at:  # glisse en accélérant
+                t = age - d.slide_at
+                y = d.y + 0.35 * self.unit * t * t
+                out.trail(d, y - r * 0.6, d.y - r * 0.3, fade)
+            elif d.trail:
+                out.trail(d, y - r * 0.6, y - d.trail, 1.0)
+            out.drop(d.x, y, r, r * d.aspect, top=fade)
+        return out
+
+    def streak_layer(self, frame: int):
+        """Traits de pluie qui tombent (flou de mouvement), en léger biais."""
+        import numpy as np
+
+        w, h = self.w, self.h
+        layer = np.zeros((h, w), np.float32)
+        x0, y0, length, alpha, speed = self.streaks
+        if not len(x0):
+            return layer
+        y = (y0 + speed * frame) % self.span - 60 * self.unit
+        steps = np.linspace(0, 1, 24, dtype=np.float32)
+        px = x0[:, None] + length[:, None] * steps * self.slant
+        py = y[:, None] + length[:, None] * steps
+        # trait effilé aux deux bouts
+        a = alpha[:, None] * np.clip(np.sin(np.pi * steps), 0, 1)[None, :] ** 0.7
+        ix, iy = px.astype(np.int32).ravel(), py.astype(np.int32).ravel()
+        keep = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
+        np.maximum.at(layer, (iy[keep], ix[keep]), a.ravel()[keep])
+        # un pixel de flou horizontal : trait plus doux
+        layer[:, 1:] = np.maximum(layer[:, 1:], layer[:, :-1] * 0.5)
+        return layer
+
+    def frame(self, frame: int, mask: bool, overlay: bool):
+        """(masque uint8 h×w, calque RGBA uint8 h×w×4) de l'image `frame` de la boucle."""
+        import numpy as np
+
+        lay = self.layers(frame)
+        out_mask = (np.clip(lay.hm * self.gain, 0, 1) * 255).astype(np.uint8) if mask else None
+        if not overlay:
+            return out_mask, None
+        light, dark = lay.light, lay.dark
+        if self.s.chute > 0.001:
+            light = np.maximum(light, self.streak_layer(frame) * 0.42)
+        total = light + dark
+        alpha = np.clip(total, 0, 1)
+        white = light / np.maximum(total, 1e-6)
+        rgba = np.empty((self.h, self.w, 4), np.uint8)
+        # bleu-gris très clair pour la lumière, presque noir pour les bords
+        for c, (lo, hi) in enumerate(((12, 236), (16, 242), (22, 250))):
+            rgba[..., c] = (lo + (hi - lo) * white).astype(np.uint8)
+        rgba[..., 3] = (alpha * 255).astype(np.uint8)
+        return out_mask, rgba
+
+
+class Cancelled(Exception):
+    pass
+
+
+def _encoder(path: Path, fmt: str, w: int, h: int, fps: int, codec: list[str]):
+    errors = tempfile.TemporaryFile()
+    cmd = [shutil.which("ffmpeg") or "ffmpeg", "-v", "error", "-y", "-f", "rawvideo",
+           "-pix_fmt", fmt, "-s", f"{w}x{h}", "-r", str(fps), "-i", "-", *codec, str(path)]
+    return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=errors), errors
+
+
+def _finish(proc, errors) -> None:
+    try:
+        if proc.stdin and not proc.stdin.closed:
+            proc.stdin.close()
+        code = proc.wait(timeout=120)
+        if code != 0:
+            errors.seek(0)
+            lines = errors.read().decode("utf-8", "replace").strip().splitlines()
+            raise RuntimeError(lines[-1] if lines else f"ffmpeg a échoué (code {code})")
+    finally:
+        errors.close()
+
+
+def _abort(proc) -> None:
+    if proc.poll() is None:
+        proc.kill()
+    proc.wait()
+
+
+def render_layers(folder: Path, s: Settings, width: int, height: int, fps: int,
+                  progress=lambda ratio: None, cancelled=lambda: False) -> Path:
+    """Calcule le masque et le calque des gouttes dans `folder` (écrit d'abord ailleurs)."""
+    w, h = layer_size(width, height)
+    n_mask, n_over = loop_frames(s, fps)
+    scene = _Scene(s, w, h, max(n_mask, n_over))
+    folder.parent.mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix=folder.name + ".", dir=folder.parent))
+    gop = ["-g", str(max(1, fps))]
+    mask_proc, mask_err = _encoder(work / MASK, "gray", w, h, fps,
+                                   ["-c:v", "libx264", "-preset", "veryfast", "-crf", "12",
+                                    "-pix_fmt", "yuv420p", *gop, "-f", "mp4"])
+    over_proc, over_err = _encoder(work / OVERLAY, "rgba", w, h, fps,
+                                   ["-c:v", "qtrle", "-pix_fmt", "argb", *gop, "-f", "mov"])
+    try:
+        total = max(n_mask, n_over)
+        for i in range(total):
+            if cancelled():
+                raise Cancelled()
+            mask, over = scene.frame(i, i < n_mask, i < n_over)
+            try:
+                if mask is not None:
+                    mask_proc.stdin.write(mask.tobytes())
+                if over is not None:
+                    over_proc.stdin.write(over.tobytes())
+            except BrokenPipeError:
+                break  # l'erreur de ffmpeg est remontée par _finish
+            progress((i + 1) / (total + 1))
+        _finish(mask_proc, mask_err)
+        _finish(over_proc, over_err)
+        if folder.exists():
+            shutil.rmtree(folder, ignore_errors=True)
+        work.replace(folder)
+    except BaseException:
+        _abort(mask_proc)
+        _abort(over_proc)
+        shutil.rmtree(work, ignore_errors=True)
+        raise
+    progress(1.0)
+    return folder
+
+
+def drop_filters(folder: Path, s: Settings, height: int) -> list[tuple[str, dict]]:
+    """Filtres qui posent les gouttes calculées sur l'image du clip."""
+    result = []
+    if s.volume > 0.001:
+        # dans les gouttes : l'image vue à travers l'eau, floue et un peu plus claire
+        blur = (3.0 + 4.0 * s.taille) * (1.6 if s.surface == "objectif" else 1.0)
+        result += [
+            ("mask_start", {"filter": "shape", "filter.resource": str(folder / MASK),
+                            "filter.use_luminance": 1, "filter.use_mix": 0,
+                            "filter.audio_match": 0, "filter.producer.eof": "loop"}),
+            ("avfilter.gblur", {"av.sigma": round(blur * height / 720, 2)}),
+            ("avfilter.eq", {"av.brightness": 0.04, "av.contrast": 0.9,
+                             "av.saturation": 0.85}),
+            ("mask_apply", {}),
+        ]
+    result.append(("watermark", {"resource": str(folder / OVERLAY),
+                                 "producer.eof": "loop", "distort": 1}))
+    return result

@@ -165,7 +165,7 @@
  "DYNAMIQUE ET HAUTEUR": "DYNAMICS AND PITCH",
  "Depuis un dossier…": "From a folder…",
  "Depuis un fichier ({ext} ou .zip)…": "From a file ({ext} or .zip)…",
- "Des calculs sont en cours (copie des médias ou timelapse). L'export sera possible dès qu'ils seront terminés.": "Processing is in progress (media copy or timelapse). You can export as soon as it is done.",
+ "Des calculs sont en cours (copie des médias, timelapse, gouttes de pluie…). L'export sera possible dès qu'ils seront terminés.": "Processing is in progress (media copy, timelapse, raindrops…). You can export as soon as it is done.",
  "Disponible dans une prochaine version": "Available in a future version",
  "Dossier": "Folder",
  "Dossier d'export": "Export folder",
