@@ -57,6 +57,8 @@ class Report:
         self.steps.append(entry)
         mark = "OK " if entry["ok"] else "ÉCHEC"
         print(f"[{mark}] {name} ({entry['durée_s']} s)", flush=True)
+        if entry["ok"]:
+            print("      ", json.dumps(entry["résultat"], ensure_ascii=False), flush=True)
         if not entry["ok"]:
             print(entry["trace"], flush=True)
         return entry.get("résultat")
@@ -93,6 +95,9 @@ def environment() -> dict:
     ffmpeg = shutil.which("ffmpeg")
     info["ffmpeg"] = subprocess.run([ffmpeg, "-version"], capture_output=True, text=True,
                                     encoding="utf-8").stdout.splitlines()[0] if ffmpeg else None
+    from montar.engine import mlt_engine
+
+    mlt_engine._ensure_factory()  # renseigne les dossiers de MLT sous Windows
     for var in ("MLT_REPOSITORY", "MLT_DATA", "MLT_PROFILES_PATH", "FREI0R_PATH"):
         info[var] = os.environ.get(var)
     return info
@@ -110,8 +115,10 @@ def mlt_services() -> dict:
     transitions = repo.transitions()
     available = {transitions.get_name(i) for i in range(transitions.count())}
     missing += [n for n in NEEDED_TRANSITIONS if n not in available]
+    if missing:
+        raise RuntimeError(f"services MLT manquants : {', '.join(missing)}")
     return {"mlt": mlt.mlt_version_get_string(), "filtres": len(names),
-            "manquants": missing, "rendu_natif": mlt_engine._native_get_image() is not None}
+            "rendu_natif": mlt_engine._native_get_image() is not None}
 
 
 def make_media(out: Path) -> dict:

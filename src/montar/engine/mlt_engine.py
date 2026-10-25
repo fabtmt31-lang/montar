@@ -95,6 +95,23 @@ def _deny_qt5_modules() -> None:
         current + [m for m in _DENIED_MODULES if m not in current])
 
 
+def _windows_data_paths() -> None:
+    """Sous Windows, MLT déduit ses dossiers de l'exécutable (ici python.exe) et ne trouve
+    pas ses profils ni loader.ini : on les indique à partir de son préfixe d'installation."""
+    if sys.platform != "win32":
+        return
+    from pathlib import Path
+
+    for prefix in (Path(sys.base_prefix), Path(mlt.__file__).resolve().parents[3]):
+        data = prefix / "share" / "mlt"
+        if (data / "profiles").is_dir():
+            os.environ.setdefault("MLT_DATA", str(data))
+            os.environ.setdefault("MLT_PROFILES_PATH", str(data / "profiles"))
+            if (prefix / "lib" / "mlt").is_dir():
+                os.environ.setdefault("MLT_REPOSITORY", str(prefix / "lib" / "mlt"))
+            return
+
+
 def use_c_numeric() -> None:
     """MLT lit les nombres de ses propriétés (rectangle du filtre affine, valeurs animées…)
     selon la convention numérique du processus. Qt adopte celle du système au démarrage :
@@ -114,6 +131,7 @@ def _ensure_factory() -> None:
     with _init_lock:
         if not _factory_ready:
             _deny_qt5_modules()
+            _windows_data_paths()
             if mlt.Factory().init() is None:
                 raise EngineUnavailable("initialisation de MLT impossible")
             _factory_ready = True

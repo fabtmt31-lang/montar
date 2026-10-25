@@ -13,12 +13,9 @@ on:
 
 jobs:
   prototype:
-    name: MSYS2 ${{ matrix.msystem }}
+    # UCRT64 seulement : MINGW64 n'a plus ni PyQt6 ni MLT (premier passage du prototype)
+    name: MSYS2 UCRT64
     runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        msystem: [UCRT64, MINGW64]
     defaults:
       run:
         shell: msys2 {0}
@@ -29,14 +26,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: ${{ matrix.msystem }}
+          msystem: UCRT64
           update: true
           install: git
       - name: Paquets (chacun à part, pour savoir lesquels manquent)
         run: |
           missing=""
           for p in python python-pyqt6 qt6-svg mlt ffmpeg frei0r-plugins python-numpy \
-                   python-pytest swig gcc pkgconf; do
+                   python-pytest swig gcc pkgconf ntldd-git; do
             if pacman -S --needed --noconfirm "${MINGW_PACKAGE_PREFIX}-$p"; then
               echo "installé : $p"
             else
@@ -45,12 +42,23 @@ jobs:
             fi
           done
           echo "Paquets manquants :${missing:- aucun}" | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Ce que fournit le paquet MLT
+      - name: Dépendances facultatives de MLT (modules plus, resample, rubberband, sox…)
+        continue-on-error: true
+        run: |
+          deps=$(LANG=C pacman -Si "${MINGW_PACKAGE_PREFIX}-mlt" \
+            | awk '/^Optional Deps/{on=1; print; next} on && /^[^ ]/{on=0} on' \
+            | grep -o "${MINGW_PACKAGE_PREFIX}-[^ :]*" | sort -u)
+          echo "dépendances facultatives : $deps"
+          for d in $deps; do pacman -S --needed --noconfirm "$d" || echo "::warning::introuvable : $d"; done
+      - name: Modules MLT qui ne se chargent pas (DLL manquantes)
         continue-on-error: true
         run: |
           pacman -Q "${MINGW_PACKAGE_PREFIX}-mlt"
-          pacman -Ql "${MINGW_PACKAGE_PREFIX}-mlt" | grep -iE "python|mlt7|\.pyd|bin/.*\.dll|lib/mlt" | head -40
-          pkg-config --modversion mlt-framework-7 mlt++-7
+          for dll in "$MINGW_PREFIX"/lib/mlt/*.dll; do
+            missing=$(ntldd -R "$dll" 2>/dev/null | grep -i "not found" | sort -u)
+            [ -n "$missing" ] && echo "$(basename "$dll") :" && echo "$missing"
+          done
+          echo "fin de l'analyse"
       - name: Bindings Python de MLT
         run: bash scripts/windows/build_mlt_bindings.sh
       - name: Prototype du moteur
@@ -62,5 +70,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: prototype-windows-${{ matrix.msystem }}
+          name: prototype-windows-UCRT64
           path: prototype-windows/
