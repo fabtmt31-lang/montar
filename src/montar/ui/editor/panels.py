@@ -411,16 +411,9 @@ class EffectsPanel(_Panel):
         if clip is None:
             return
 
-        manager = self.modules.manager if self.modules else None
-        owner = next((m for m, e in manager.effects() + manager.audio_effects()
-                      if e is effect), None) if manager else None
-
         def change(c):
-            values = {**effect.defaults(), **(c.modules.get(effect.id) or {})}
+            values = dict(c.modules.get(effect.id) or effect.defaults())
             values[key] = value
-            if owner is not None:  # un préréglage peut régler les autres curseurs (API 1.5)
-                values = manager.guarded(owner, lambda: dict(effect.adjust(values, key)),
-                                         values)
             c.modules[effect.id] = values
 
         self.controller.edit_clip(_(effect.name), clip.id, change,

@@ -5,9 +5,9 @@ Ce guide explique comment ajouter à montar vos propres **effets vidéo et audio
 **outils**, puis comment les partager. Un module est un petit dossier Python ; il ne demande
 ni compilation ni outil particulier.
 
-- API publique : `montar.api`, version **1.5**.
+- API publique : `montar.api`, version **1.4**.
 - Exemples complets : les modules intégrés, dans `src/montar/modules/` (`effets`,
-  `essentiels`, `graphismes`, `timelapse`, `pluie`), et `examples/modules/negatif/`.
+  `essentiels`, `graphismes`, `timelapse`), et `examples/modules/negatif/`.
 
 > **Sécurité et licence.** Un module s'exécute avec les droits de l'utilisateur ; montar
 > affiche un avertissement avant d'installer un module tiers. Un module chargé dans montar
@@ -176,32 +176,6 @@ La liste des filtres disponibles sur une machine s'obtient avec
 `melt -query filters` (paquet `melt`) ; leur documentation avec
 `melt -query filter=avfilter.gblur`. Un filtre absent est ignoré (un avertissement est
 écrit dans le journal).
-
-### Filtres propres à un clip, calculs et préréglages (1.5)
-
-`filters(values)` ne connaît que les réglages. Pour connaître le clip et le contexte de
-rendu (taille de la toile `context.width` × `context.height`, `context.fps`,
-`context.cache_dir`, `context.schedule_job`), définissez plutôt `clip_filters` ; par défaut,
-elle appelle `filters`. Elle peut, par exemple, faire calculer un fichier en tâche de fond
-(§11) puis l'utiliser dans un filtre (`watermark`, `shape`…) :
-
-```python
-class MonEffet(VideoEffect):
-    def clip_filters(self, context, clip, values):
-        calque = context.cache_dir / "moi" / "calque.mov"
-        if not calque.exists():
-            context.schedule_job("moi:calque", "Mon calque",
-                                 lambda progress, cancelled: dessiner(calque))
-            return []                        # en attendant : sans le calque
-        return [("watermark", {"resource": str(calque), "producer.eof": "loop"})]
-```
-
-`adjust(values, clé)` est appelée quand l'utilisateur change un réglage ; elle renvoie les
-valeurs à enregistrer. Un choix « préréglage » peut ainsi régler les autres curseurs.
-
-Le module intégré `pluie` utilise les deux : les gouttes d'eau sont calculées une fois
-(NumPy), en boucle, puis posées sur l'image par les filtres `mask_start` / `shape` /
-`mask_apply` et `watermark`.
 
 ### Zoom animé : `montar.api.ZOOM` (1.3)
 
@@ -501,8 +475,7 @@ même confirmation qu'une installation depuis un fichier.
 | 1.2 | `AudioEffect`, `Transition`, `Generator`, `ExportFormat`, `Param.color` |
 | 1.3 | `Graphic` (`api.add_graphic`), pseudo-filtre `ZOOM` |
 | 1.4 | `schedule_job(…, done)` : résultat d'un calcul remis au fil principal ; propriétés `in` / `out` d'un filtre (images relatives au clip) |
-| 1.5 | `VideoEffect.clip_filters(context, clip, values)` et `VideoEffect.adjust(values, clé)` ; `width` / `height` dans le contexte de rendu |
 
 montar charge les modules dont la version **majeure** est la sienne (`1.x`). Indiquez dans
 `api_version` la plus petite version qui contient ce que vous utilisez : un module `1.2`
-fonctionne avec montar 1.5, mais pas l'inverse.
+fonctionne avec montar 1.4, mais pas l'inverse.

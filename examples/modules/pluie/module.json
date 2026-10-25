@@ -2,7 +2,7 @@
   "id": "pluie",
   "name": "Pluie",
   "version": "1.0.0",
-  "api_version": "1.5",
+  "api_version": "1.4",
   "author": "montar",
   "license": "GPL-3.0-or-later",
   "description": "La vidéo semble filmée sous la pluie : gouttes d'eau sur l'objectif ou une vitre (volume réglable), image assombrie d'un jour de pluie, pluie qui tombe, brume, éclairs d'orage.",

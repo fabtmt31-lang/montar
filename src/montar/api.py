@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""API publique des modules montar (version 1.5).
+"""API publique des modules montar (version 1.3).
 
 Un module est un dossier contenant `module.json` et un paquet Python dont le fichier
 `__init__.py` définit `register(api: ModuleAPI)`. Voir docs/MODULES.md.
@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-API_VERSION = (1, 5)
+API_VERSION = (1, 4)
 
 # Pseudo-filtre (1.3) qu'un `VideoEffect` peut renvoyer : zoom animé du cadre du clip autour
 # de son centre. Propriétés : start, end (facteurs, 1 = normal), seconds (0 = tout le clip),
@@ -79,17 +79,6 @@ class VideoEffect:
 
     def filters(self, values: dict[str, Any]) -> Filters:
         return []
-
-    def clip_filters(self, context: RenderContext, clip: Any,
-                     values: dict[str, Any]) -> Filters:
-        """Filtres pour un clip précis, avec le contexte de rendu (taille de la toile, dossier
-        de cache, tâches de fond) (1.5). Par défaut : `filters(values)`."""
-        return self.filters(values)
-
-    def adjust(self, values: dict[str, Any], key: str) -> dict[str, Any]:
-        """Appelée quand l'utilisateur change le réglage `key` ; renvoie les valeurs à
-        enregistrer, ce qui permet à un préréglage de régler les autres curseurs (1.5)."""
-        return values
 
 
 class AudioEffect(VideoEffect):
@@ -209,8 +198,6 @@ class RenderContext(Protocol):
 
     fps: int
     cache_dir: Path
-    width: int  # taille de la toile du projet (1.5)
-    height: int
 
     def schedule_job(self, key: str, title: str,
                      work: Callable[[Callable[[float], None], Callable[[], bool]], Any],
@@ -221,7 +208,10 @@ class RenderContext(Protocol):
 
 
 class GeneratorContext(RenderContext, Protocol):
-    """Contexte des générateurs (la taille de la toile y figure depuis la 1.2)."""
+    """Taille de la toile du projet, pour les générateurs."""
+
+    width: int
+    height: int
 
 
 class EditorContext(RenderContext, Protocol):

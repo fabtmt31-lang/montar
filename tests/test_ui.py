@@ -1228,34 +1228,6 @@ def test_module_types_in_editor(window, media_dir):
     dialog.close()
 
 
-@needs_ffmpeg
-def test_rain_effect_in_editor(window, media_dir):
-    editor = imported_editor(window, media_dir, ["clip.mp4"])
-    editor.add_to_timeline(editor.project.media[0])
-    clip = editor.project.clips[0]
-    editor.controller.select(clip.id)
-    entry = next(e for e in editor.modules_panel.visible_entries() if e.item.id == "pluie.pluie")
-    editor.use_module_entry(entry)
-    controls = {c.param.key: c for e, c, _a in editor.effects_panel._module_controls
-                if e.id == "pluie.pluie"}
-
-    # un préréglage règle les autres curseurs (API 1.5 : VideoEffect.adjust)
-    controls["preset"].combo.setCurrentIndex(controls["preset"].combo.findData("orage"))
-    values = clip.modules["pluie.pluie"]
-    assert values["eclairs"] is True and values["volume"] == 0.8
-    controls = {c.param.key: c for e, c, _a in editor.effects_panel._module_controls
-                if e.id == "pluie.pluie"}
-    assert controls["eclairs"].widget.isChecked()
-    controls["volume"].widget.slider.setValue(controls["volume"].widget.slider.minimum())
-    assert clip.modules["pluie.pluie"]["preset"] == "perso"
-
-    # gouttes calculées en tâche de fond ; en attendant, l'ambiance seule
-    names = [n for n, _p in editor.modules.hook(clip, editor.project.media[0]).extra_filters]
-    assert names[:2] == ["avfilter.eq", "avfilter.colorlevels"]
-    assert any(key.startswith("pluie:") for key in editor.modules.jobs.jobs)
-    editor.modules.jobs.cancel_all()
-
-
 # --- J5-G : interface en anglais -----------------------------------------------------------------
 
 

@@ -1369,8 +1369,8 @@ class EditorPage(QWidget):
         if pending or self.modules.jobs.jobs or self._copies:
             QMessageBox.information(
                 self, _("Exporter la vidéo"),
-                _("Des calculs sont en cours (copie des médias, timelapse, gouttes de pluie…). "
-                  "L'export sera possible dès qu'ils seront terminés."))
+                _("Des calculs sont en cours (copie des médias ou timelapse). L'export sera "
+                  "possible dès qu'ils seront terminés."))
             self._reload_player()  # relance les calculs manquants
             return
         folder = self.project.path.parent / EXPORT_DIR if self.project.path else Path.home()

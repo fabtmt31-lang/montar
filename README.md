@@ -8,13 +8,6 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
 
 ## État d'avancement
 
-**Prochaine version** : module intégré **Pluie** (rail Modules → Pluie) — la vidéo semble
-filmée sous la pluie : gouttes d'eau sur l'objectif ou une vitre (volume, taille,
-ruissellement réglables, gouttes animées), image assombrie d'un jour de pluie, pluie qui
-tombe, brume et éclairs ; préréglages Bruine, Pluie, Averse, Orage
-([maquettes](docs/maquettes/pluie/)). API des modules 1.5 : `VideoEffect.clip_filters` et
-`VideoEffect.adjust`.
-
 **Version 1.3** (1.3.0) : exigences P3, étalonnage et suivi de mouvement.
 
 - **son** : réduction de bruit, volume régulier, « s'efface sous les voix » (clic droit sur

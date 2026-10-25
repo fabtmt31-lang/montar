@@ -1,12 +1,10 @@
 {
  "Pluie": "Rain",
- "Comme filmé sous la pluie : gouttes d'eau sur l'objectif ou une vitre, image plus sombre et plus froide, pluie qui tombe, brume, éclairs.": "As if filmed in the rain: water drops on the lens or a window, darker and colder picture, falling rain, mist, lightning.",
  "La vidéo semble filmée sous la pluie : gouttes d'eau sur l'objectif ou une vitre (volume réglable), image assombrie d'un jour de pluie, pluie qui tombe, brume, éclairs d'orage.": "Makes the video look filmed in the rain: water drops on the lens or a window (adjustable amount), the darker picture of a rainy day, falling rain, mist, storm lightning.",
  "Temps": "Weather",
  "Bruine": "Drizzle",
  "Averse": "Downpour",
  "Orage": "Storm",
- "Personnalisé": "Custom",
  "Gouttes sur": "Drops on",
  "L'objectif de la caméra": "The camera lens",
  "Une vitre": "A window",
@@ -16,9 +14,10 @@
  "Ambiance (image assombrie)": "Mood (darker picture)",
  "Pluie qui tombe": "Falling rain",
  "Brume": "Mist",
- "Éclairs": "Lightning",
  "Gouttes animées (apparaissent, glissent)": "Animated drops (appear, run down)",
  "Objectif mouillé (image adoucie)": "Wet lens (softer picture)",
  "Variante des gouttes": "Drop variant",
- "Gouttes de pluie": "Raindrops"
+ "Gouttes de pluie": "Raindrops",
+ "Comme filmé sous la pluie : gouttes d'eau sur l'objectif ou une vitre, image plus sombre et plus froide, pluie qui tombe, brume, éclairs. Curseurs à 50 % : réglage normal du temps choisi.": "As if filmed in the rain: water drops on the lens or a window, darker and colder picture, falling rain, mist, lightning. Sliders at 50%: normal setting for the chosen weather.",
+ "Éclairs (toujours avec « Orage »)": "Lightning (always with “Storm”)"
 }

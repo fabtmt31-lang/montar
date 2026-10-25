@@ -221,8 +221,8 @@ class EditorModules:
             values = clip.modules.get(effect.id)
             if isinstance(values, dict):
                 filters += self.manager.guarded(
-                    module_id, lambda e=effect, v=values: list(
-                        e.clip_filters(self, clip, {**e.defaults(), **v})), [])
+                    module_id, lambda e=effect, v=values: list(e.filters({**e.defaults(), **v})),
+                    [])
         return filters
 
     def transition_hook(self, kind: str, duration: int):

@@ -28,6 +28,8 @@ MODULE_VERSION = 1  # change le nom des calques en cache si leur dessin évolue
 LOOP_SECONDS = 5  # durée de la boucle des gouttes animées
 MAX_SIDE = 1920  # calques limités à cette taille (le moteur les met à l'échelle)
 
+# Le « temps » choisi donne le caractère de la pluie ; les curseurs l'ajustent : 50 % =
+# valeur du temps choisi, 0 % = rien, 100 % = le double.
 PRESETS = {
     # volume, taille, ruissellement, ambiance, pluie qui tombe, brume, éclairs
     "bruine": dict(volume=0.2, taille=0.3, ruissellement=0.15, ambiance=0.5, chute=0.2,
@@ -39,7 +41,7 @@ PRESETS = {
     "orage": dict(volume=0.8, taille=0.7, ruissellement=0.8, ambiance=1.0, chute=0.9,
                   brume=0.35, eclairs=True),
 }
-CUSTOM = "perso"
+SLIDERS = ("volume", "taille", "ruissellement", "ambiance", "chute", "brume")
 SURFACES = ("objectif", "vitre")
 
 # réglages qui changent le dessin des gouttes (les autres sont des filtres instantanés)
@@ -48,6 +50,8 @@ DROP_KEYS = ("volume", "taille", "ruissellement", "chute", "surface", "anime", "
 
 @dataclass(frozen=True)
 class Settings:
+    """Réglages effectifs (0 … 1), une fois le temps et les curseurs combinés."""
+
     volume: float = 0.5
     taille: float = 0.5
     ruissellement: float = 0.5
@@ -62,26 +66,30 @@ class Settings:
 
     @classmethod
     def from_values(cls, values: dict) -> Settings:
-        def unit(key: str) -> float:
+        """Valeurs du clip (temps + curseurs à 50 % par défaut) → réglages effectifs."""
+        preset = PRESETS.get(values.get("temps"), PRESETS["pluie"])
+
+        def slider(key: str) -> float:
             try:
-                return max(0.0, min(1.0, float(values.get(key, getattr(cls, key)))))
+                k = max(0.0, min(1.0, float(values.get(key, 0.5))))
             except (TypeError, ValueError):
-                return getattr(cls, key)
+                k = 0.5
+            return max(0.0, min(1.0, preset[key] * 2 * k))
+
+        def step(key: str) -> float:
+            """Réglage des gouttes arrondi à 5 % : le glisser d'un curseur ne lance pas un
+            calcul par position, et la différence ne se voit pas."""
+            return round(slider(key) * 20) / 20
 
         surface = values.get("surface", "objectif")
         try:
             variante = max(1, min(99, int(values.get("variante", 1))))
         except (TypeError, ValueError):
             variante = 1
-        def step(key: str) -> float:
-            """Réglage des gouttes arrondi à 5 % : le glisser d'un curseur ne lance pas un
-            calcul par position, et la différence ne se voit pas."""
-            return round(unit(key) * 20) / 20
-
         return cls(volume=step("volume"), taille=step("taille"),
-                   ruissellement=step("ruissellement"), ambiance=unit("ambiance"),
-                   chute=step("chute"), brume=unit("brume"),
-                   eclairs=bool(values.get("eclairs", False)),
+                   ruissellement=step("ruissellement"), ambiance=slider("ambiance"),
+                   chute=step("chute"), brume=slider("brume"),
+                   eclairs=preset["eclairs"] or bool(values.get("eclairs", False)),
                    surface=surface if surface in SURFACES else "objectif",
                    anime=bool(values.get("anime", True)),
                    mouille=bool(values.get("mouille", True)), variante=variante)
@@ -89,19 +97,6 @@ class Settings:
     @property
     def has_drops(self) -> bool:
         return self.volume > 0.001 or self.chute > 0.001
-
-
-def apply_preset(values: dict, key: str) -> dict:
-    """Choisir un préréglage règle les curseurs ; toucher un curseur passe en
-    « Personnalisé »."""
-    values = dict(values)
-    if key == "preset":
-        values.update(PRESETS.get(values.get("preset"), {}))
-    elif key in PRESETS["pluie"] and values.get("preset") != CUSTOM:
-        preset = PRESETS.get(values.get("preset"))
-        if preset is None or preset.get(key) != values.get(key):
-            values["preset"] = CUSTOM
-    return values
 
 
 # --- filtres de l'ambiance (instantanés) ----------------------------------------------------
