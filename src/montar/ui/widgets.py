@@ -4,15 +4,21 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from PyQt6.QtCore import QObject, QRectF, QSize, Qt, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QEvent, QObject, QRectF, QSize, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractButton,
+    QAbstractScrollArea,
+    QAbstractSlider,
+    QAbstractSpinBox,
+    QApplication,
     QButtonGroup,
+    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollBar,
     QSizePolicy,
     QWidget,
 )
@@ -219,3 +225,35 @@ class Switch(QAbstractButton):
         x = self.width() - 23 if on else 3
         painter.drawEllipse(x, 3, 20, 20)
         painter.end()
+
+
+class WheelGuard(QObject):
+    """Dans un panneau qui défile (inspecteur, panneaux latéraux, préférences), la molette
+    ou le défilement à deux doigts fait défiler le panneau, même si le pointeur passe sur un
+    curseur ou une liste déroulante : ceux-ci ne réagissent à la molette qu'après un clic.
+    Ailleurs (zoom de la timeline, volume de l'aperçu), la molette garde son effet."""
+
+    GUARDED = (QAbstractSlider, QComboBox, QAbstractSpinBox)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if event.type() != QEvent.Type.Wheel or not isinstance(obj, self.GUARDED) \
+                or isinstance(obj, QScrollBar) or obj.hasFocus():
+            return False  # la barre de défilement reçoit la molette du panneau : on la laisse
+        area = obj.parentWidget()
+        while area is not None and not isinstance(area, QAbstractScrollArea):
+            area = area.parentWidget()
+        if area is None:
+            return False
+        QApplication.sendEvent(area.viewport(), event)  # le panneau défile
+        return True
+
+
+_wheel_guard: WheelGuard | None = None
+
+
+def install_wheel_guard(app: QApplication) -> None:
+    """Une seule fois par application ; les curseurs ne prennent le focus qu'au clic."""
+    global _wheel_guard
+    if _wheel_guard is None:
+        _wheel_guard = WheelGuard(app)
+        app.installEventFilter(_wheel_guard)

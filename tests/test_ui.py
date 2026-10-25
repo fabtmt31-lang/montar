@@ -1966,3 +1966,39 @@ def test_track_tool_attaches_follower(window, tmp_path, monkeypatch):
     keys = next(c for c in editor.project.clips if c.id == logo.id).keyframes
     xs = [v for _f, v in keys["x"]]
     assert xs[-1] - xs[0] > 0.2  # le logo part vers la droite avec le carré
+
+
+@needs_ffmpeg
+def test_wheel_scrolls_inspector_instead_of_sliders(window, media_dir):
+    from PyQt6.QtGui import QWheelEvent
+    from PyQt6.QtWidgets import QScrollArea
+
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    editor.controller.select(editor.project.clips[0].id)
+    window.resize(1400, 700)  # inspecteur plus haut que l'écran : il défile
+    pump(100)
+    inspector = editor.inspector
+    scroll = inspector.findChild(QScrollArea).verticalScrollBar()
+    row = inspector._animated[2]  # échelle
+    slider = row.slider
+    before = slider.value()
+
+    def wheel(widget):
+        pos = QPointF(widget.width() / 2, widget.height() / 2)
+        event = QWheelEvent(pos, widget.mapToGlobal(pos), QPoint(0, 0), QPoint(0, -120),
+                            Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                            Qt.ScrollPhase.NoScrollPhase, False)
+        QApplication.sendEvent(widget, event)
+
+    wheel(slider)
+    assert slider.value() == before  # le réglage n'a pas bougé…
+    assert scroll.value() > 0  # … le panneau a défilé
+    assert editor.project.clips[0].transform.scale == 1.0
+    slider.setFocus()  # après un clic, la molette règle le curseur
+    wheel(slider)
+    assert slider.value() != before
+    zoom = editor.timeline.zoom_slider  # hors panneau défilant : molette inchangée
+    z = zoom.value()
+    wheel(zoom)
+    assert zoom.value() != z

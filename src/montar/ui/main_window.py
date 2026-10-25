@@ -6,7 +6,14 @@ import logging
 from pathlib import Path
 
 from PyQt6.QtCore import QSize
-from PyQt6.QtWidgets import QDialog, QFileDialog, QMainWindow, QMessageBox, QStackedWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QFileDialog,
+    QMainWindow,
+    QMessageBox,
+    QStackedWidget,
+)
 
 from montar import __version__
 from montar.core.brand import BrandKit
@@ -40,6 +47,7 @@ from montar.ui.home.templates import (
     user_templates,
 )
 from montar.ui.theme import theme
+from montar.ui.widgets import install_wheel_guard
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +56,7 @@ class MainWindow(QMainWindow):
     def __init__(self, settings: Settings, settings_file: Path) -> None:
         super().__init__()
         self.settings, self._settings_file = settings, settings_file
+        install_wheel_guard(QApplication.instance())  # la molette fait défiler les panneaux
         self.recent = RecentProjects(paths.data_dir() / "recent.json")
         self.session = Session(paths.data_dir() / "session.json")
         self.cache = paths.cache_dir()

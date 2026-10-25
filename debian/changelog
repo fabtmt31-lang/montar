@@ -1,3 +1,11 @@
+montar (1.3.1) unstable; urgency=medium
+
+  * Inspecteur et panneaux : la molette ou le défilement à deux doigts fait
+    défiler le panneau au lieu de modifier le réglage survolé (curseurs et
+    listes ne réagissent à la molette qu'après un clic).
+
+ -- Fabien <admin@appsdoc.fr>  Mon, 02 Nov 2026 10:00:00 +0100
+
 montar (1.3.0) unstable; urgency=medium
 
   * Son : réduction de bruit, volume régulier, atténuation automatique sous
