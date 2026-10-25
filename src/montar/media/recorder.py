@@ -7,11 +7,14 @@ import glob
 import os
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from montar.i18n import N_, _
+
+ON_WINDOWS = sys.platform == "win32"
 
 WEBCAM_WIDTH = 0.25  # largeur de l'incrustation, en fraction de la largeur de la vidéo
 
@@ -33,6 +36,8 @@ def session_problem() -> str:
     """Raison pour laquelle l'enregistrement est impossible ici, ou chaîne vide."""
     if shutil.which("ffmpeg") is None:
         return N_("ffmpeg est introuvable")
+    if ON_WINDOWS:
+        return N_("l'enregistrement d'écran n'est pas encore disponible sous Windows")
     if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
         return N_("l'enregistrement d'écran n'est pas encore possible dans une session Wayland ; "
                   "ouvrez une session X11 (la session Cinnamon par défaut de Linux Mint)")

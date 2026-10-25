@@ -9,12 +9,13 @@ import sys
 from pathlib import Path
 
 from montar import __version__
-from montar.platform import paths
+from montar.platform import paths, windows
 
 
 def _setup_logging() -> None:
     log_dir = paths.cache_dir() / "logs"
-    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    # pas de console sous Windows (pythonw.exe) : sys.stderr vaut None
+    handlers: list[logging.Handler] = [logging.StreamHandler()] if sys.stderr else []
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
         handlers.append(logging.handlers.RotatingFileHandler(
@@ -44,6 +45,8 @@ def diagnostic() -> int:
 
     print(f"montar {__version__}")
     print(f"Python {platform.python_version()}")
+    if sys.platform == "win32":
+        print(f"Système : {platform.platform()}")
     try:
         release = Path("/etc/os-release").read_text(encoding="utf-8")
         name = next((line.split("=", 1)[1].strip('"') for line in release.splitlines()
@@ -135,6 +138,7 @@ def main(argv: list[str] | None = None) -> int:
     dev.add_argument("--pack-module", metavar="DOSSIER",
                      help="crée l'archive .montar-module du module DOSSIER, puis quitte")
     args, qt_args = parser.parse_known_args(argv if argv is not None else sys.argv[1:])
+    windows.prepare()
     if args.diagnostic:
         return diagnostic()
     if args.new_module or args.pack_module:
@@ -148,6 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     from montar.ui.theme import theme
     from montar.ui.theme.manager import app_icon, load_fonts
 
+    windows.set_app_id()
     app = QApplication([sys.argv[0], *qt_args])
     # QApplication adopte la convention numérique du système (virgule en français), que
     # MLT utiliserait pour lire ses nombres : le moteur exige le point décimal.

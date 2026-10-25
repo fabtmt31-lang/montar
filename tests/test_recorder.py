@@ -27,11 +27,14 @@ def test_command():
 
 
 def test_session_problem(monkeypatch):
+    monkeypatch.setattr(recorder, "ON_WINDOWS", False)
     monkeypatch.setenv("DISPLAY", ":0")
     monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
     assert "Wayland" in recorder.session_problem()
     monkeypatch.setenv("XDG_SESSION_TYPE", "x11")
     assert recorder.session_problem() == "" or "ffmpeg" in recorder.session_problem()
+    monkeypatch.setattr(recorder, "ON_WINDOWS", True)
+    assert "Windows" in recorder.session_problem() or "ffmpeg" in recorder.session_problem()
 
 
 @pytest.fixture(scope="module")
@@ -83,9 +86,36 @@ def test_failed_recording_reports_error(xvfb, tmp_path, monkeypatch):
 def test_voice_over_command(monkeypatch):
     from montar.media import voiceover
 
+    monkeypatch.setattr(voiceover, "ON_WINDOWS", False)
     cmd = voiceover.command("alsa_input.usb", "/tmp/v.wav")
     assert cmd[cmd.index("-f") + 1] == "pulse"
     assert cmd[cmd.index("-i") + 1] == "alsa_input.usb"
     assert "pcm_s16le" in cmd and cmd[-1] == "/tmp/v.wav"
     monkeypatch.setattr(voiceover.shutil, "which", lambda _n: None)
     assert voiceover.microphones() == [("default", "Micro par défaut")]
+
+
+DSHOW_LISTING = """[dshow @ 0000] "Integrated Camera" (video)
+[dshow @ 0000]   Alternative name "@device_pnp_\\?\\usb#vid"
+[dshow @ 0000] "Microphone (Realtek(R) Audio)" (audio)
+[dshow @ 0000]   Alternative name "@device_cm_{33D9A762}\\wave_{1}"
+[dshow @ 0000] "Casque (USB Audio)" (audio)
+dummy: Immediate exit requested
+"""
+
+
+def test_voice_over_on_windows(monkeypatch):
+    from montar.media import voiceover
+
+    assert voiceover.parse_dshow(DSHOW_LISTING) == ["Microphone (Realtek(R) Audio)",
+                                                    "Casque (USB Audio)"]
+    monkeypatch.setattr(voiceover, "ON_WINDOWS", True)
+    monkeypatch.setattr(voiceover, "dshow_microphones",
+                        lambda: voiceover.parse_dshow(DSHOW_LISTING))
+    assert voiceover.microphones()[1:] == [("Microphone (Realtek(R) Audio)",) * 2,
+                                           ("Casque (USB Audio)",) * 2]
+    cmd = voiceover.command("default", "v.wav")
+    assert cmd[cmd.index("-f") + 1] == "dshow"
+    assert cmd[cmd.index("-i") + 1] == "audio=Microphone (Realtek(R) Audio)"
+    cmd = voiceover.command("Casque (USB Audio)", "v.wav")
+    assert cmd[cmd.index("-i") + 1] == "audio=Casque (USB Audio)"

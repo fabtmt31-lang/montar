@@ -21,7 +21,9 @@ import traceback
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src"))
+# MONTAR_PROTOTYPE_INSTALLED=1 : montar installé (dossier autonome) plutôt que les sources
+if not os.environ.get("MONTAR_PROTOTYPE_INSTALLED"):
+    sys.path.insert(0, str(ROOT / "src"))
 
 # filtres et services dont montar se sert (moteur, effets intégrés, son, étalonnage, suivi)
 NEEDED = ["affine", "brightness", "volume", "obscure", "dynamictext", "rbpitch",
@@ -87,8 +89,10 @@ class Report:
 
 
 def environment() -> dict:
+    import montar
+
     info = {"système": platform.platform(), "python": sys.version.split()[0],
-            "exécutable": sys.executable}
+            "exécutable": sys.executable, "montar": montar.__file__}
     from PyQt6.QtCore import PYQT_VERSION_STR, QT_VERSION_STR
 
     info["pyqt6"], info["qt"] = PYQT_VERSION_STR, QT_VERSION_STR
