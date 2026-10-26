@@ -10,7 +10,8 @@ from montar.media import recorder
 from montar.media.recorder import RecordOptions, command
 
 
-def test_command():
+def test_command(monkeypatch):
+    monkeypatch.setattr(recorder, "ON_WINDOWS", False)  # commande X11 / PulseAudio
     cmd = command(RecordOptions(geometry=(1920, 0, 1281, 720), display=":1",
                                 microphone=True, system_audio=True,
                                 webcam="/dev/video0"), "out.mp4")
