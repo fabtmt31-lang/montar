@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Module « Mix Flash » : une ou plusieurs vidéos d'une piste découpées en extraits de 0,5 à
-5 s, mélangés au hasard sans perdre une image, avec des fondus au blanc ou au noir.
+5 s, mélangés au hasard sans perdre une image, avec des fondus au blanc ou au noir et des
+éclats lumineux.
 
 Clic droit sur un clip vidéo → « Mix Flash… ». Sur un extrait : « Remélanger le Mix
 Flash… » ou « Défaire le Mix Flash »."""
@@ -22,12 +23,23 @@ def _ramp(color: str, points: list[tuple[int, float]], length: int) -> tuple[str
     return "brightness", {"level": level, "alpha": -1, **clip}
 
 
+def _burst(points: dict[int, float], length: int) -> tuple[str, dict]:
+    """Éclat lumineux : l'image se surexpose (gain) et blanchit (ombres relevées)."""
+    keys = sorted(points.items())
+    lift = ";".join(f"{f}={x:.3f}" for f, x in keys)
+    gain = ";".join(f"{f}={1 + 0.6 * x:.3f}" for f, x in keys)
+    return "lift_gamma_gain", {"lift_r": lift, "lift_g": lift, "lift_b": lift,
+                               "gain_r": gain, "gain_g": gain, "gain_b": gain,
+                               "in": 0, "out": length - 1}
+
+
 class Couleur(VideoEffect):
-    """Fondus et flashs du Mix Flash, posés par l'outil sur les extraits."""
+    """Fondus et éclats du Mix Flash, posés par l'outil sur les extraits."""
 
     id = core.MODULE_ID
     name = "Fondu Mix Flash"
-    description = "Fondu au noir ou au blanc au début ou à la fin du clip, ou aplat de couleur."
+    description = ("Fondu au noir ou au blanc, ou éclat lumineux, au début ou à la fin du "
+                   "clip.")
     icon = "sun"
     params = [
         Param.choice("color", "Couleur (fin du clip)", [("black", "Noir"), ("white", "Blanc")]),
@@ -35,8 +47,10 @@ class Couleur(VideoEffect):
         Param.choice("fade_in_color", "Couleur (début du clip)",
                      [("black", "Noir"), ("white", "Blanc")]),
         Param("fade_in", "Images en fondu au début", "int", 0, 0, 50),
+        Param("burst_out", "Images d'éclat à la fin", "int", 0, 0, 25),
+        Param("burst_in", "Images d'éclat au début", "int", 0, 0, 25),
         Param("length", "Durée du clip (images)", "int", 0, 0, 100000),
-        Param.bool("full", "Aplat de couleur", False),
+        Param.bool("full", "Aplat de couleur", False),  # flashs insérés des versions 1.0
     ]
 
     def filters(self, values):
@@ -58,14 +72,24 @@ class Couleur(VideoEffect):
         for color, points in ramps.items():
             merged = dict(sorted(points))  # une même image en fin de montée et début de descente
             result.append(_ramp(color, sorted(merged.items()), length))
+        burst: dict[int, float] = {}
+        d = max(0, min(int(values["burst_in"]), length - 1))
+        for k in range(d + 1):  # retombée : toute la lumière à la première image
+            burst[k] = (1 - k / d) ** 2 if d else 0.0
+        a = max(0, min(int(values["burst_out"]), length - 1))
+        for k in range(a + 1):  # montée accélérée jusqu'à la dernière image
+            frame = length - 1 - a + k
+            burst[frame] = max(burst.get(frame, 0.0), (k / a) ** 2 if a else 0.0)
+        if d or a:
+            result.append(_burst(burst, length))
         return result
 
 
-def _settings_dialog(editor, clips, chosen, settings, remix):
+def _settings_dialog(editor, clips, chosen, settings, remix, skipped=0):
     from .dialog import MixFlashDialog
 
     dialog = MixFlashDialog(editor.parent, clips, chosen, editor.project.fps, settings, remix,
-                            names=lambda c: editor.timeline.media_of(c).name)
+                            names=lambda c: editor.timeline.media_of(c).name, skipped=skipped)
     if dialog.exec() != dialog.DialogCode.Accepted:
         return None
     return dialog.chosen_ids(), dialog.settings()
@@ -82,14 +106,18 @@ class MixFlashTool(Tool):
     name = "Mix Flash…"
     icon = "square-split-horizontal"
     description = ("Découpe les vidéos choisies de la piste en extraits de 0,5 à 5 s et les "
-                   "mélange au hasard, avec des fondus au blanc ou au noir.")
+                   "mélange au hasard, avec des fondus au blanc ou au noir et des éclats "
+                   "lumineux.")
 
     def available(self, editor, clip) -> bool:
         return clip is not None and core.eligible(editor.timeline, clip)
 
     def run(self, editor, clip) -> None:
         clips = core.candidates(editor.timeline, clip)
-        result = _settings_dialog(editor, clips, {clip.id}, core.Settings(), remix=False)
+        skipped = len(editor.timeline.clips_on(clip.track_id)) - len(clips)
+        # toute la piste est cochée d'emblée ; on décoche ce qui ne doit pas être mélangé
+        result = _settings_dialog(editor, clips, {c.id for c in clips}, core.Settings(),
+                                  remix=False, skipped=skipped)
         if result is None:
             return
         ids, settings = result

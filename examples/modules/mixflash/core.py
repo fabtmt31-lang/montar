@@ -3,9 +3,10 @@
 
 Les clips choisis d'une piste sont découpés en extraits de durée aléatoire, mélangés puis
 replacés bout à bout à l'emplacement du premier. Chaque image des clips d'origine se
-retrouve dans exactement un extrait (vérifié avant d'appliquer). Entre deux extraits, un
-fondu au noir ou au blanc est possible après les extraits de 3 à 5 s : soit par-dessus les
-images (durée inchangée), soit sous forme d'un flash de couleur inséré (rien n'est masqué).
+retrouve dans exactement un extrait (vérifié avant d'appliquer). Entre deux extraits, une
+transition est possible, posée par-dessus les images (la durée ne change pas) : un fondu au
+noir ou au blanc après les extraits d'au moins 1 s, ou un éclat lumineux (l'image se
+surexpose jusqu'au blanc à la coupe, puis retombe) après les extraits d'au moins 0,5 s.
 
 Les réglages du groupe et les clips d'origine sont gardés dans `clip.modules["fab.mixflash"]`
 de chaque extrait, pour remélanger ou revenir aux clips d'origine."""
@@ -14,6 +15,7 @@ from __future__ import annotations
 import copy
 import random
 from dataclasses import asdict, dataclass, fields
+from itertools import pairwise
 
 from montar.core.project import (
     AudioAdjust,
@@ -28,10 +30,13 @@ from montar.core.project import (
 from montar.core.timeline import TimelineError
 
 MODULE_ID = "fab.mixflash"
-FADE_ELIGIBLE = (3.0, 5.0)  # secondes : seuls les extraits de cette durée ont un fondu après eux
+FADE_MIN = 1.0  # secondes : durée minimale d'un extrait suivi d'un fondu
+BURST_MIN = 0.5  # secondes : durée minimale d'un extrait suivi d'un éclat
+BURST_ATTACK = 0.4  # part de l'éclat avant la coupe (montée) ; le reste est la retombée
 LIMITS = (0.5, 5.0)  # bornes des réglages de durée des extraits, en secondes
-COLORS = {"none": "Aucun", "black": "Noir", "white": "Blanc", "mix": "Noir et blanc"}
-MODES = {"insert": "Flash inséré", "over": "Par-dessus les images"}
+TRANSITIONS = {"none": "Aucune", "fade": "Fondus", "burst": "Éclats lumineux",
+               "mix": "Fondus et éclats"}
+COLORS = {"black": "Noir", "white": "Blanc", "mix": "Noir et blanc"}
 SOUND = {"detach": "Détacher le son d'abord", "remove": "Supprimer le son"}
 
 
@@ -39,10 +44,11 @@ SOUND = {"detach": "Détacher le son d'abord", "remove": "Supprimer le son"}
 class Settings:
     min_seconds: float = 0.5
     max_seconds: float = 5.0
+    transition: str = "mix"
     fade_color: str = "mix"
-    fade_mode: str = "insert"
-    probability: float = 0.6  # chance d'un fondu après un extrait de 3 à 5 s
+    probability: float = 0.6  # chance d'une transition après un extrait assez long
     fade_seconds: float = 0.4
+    burst_seconds: float = 0.3
     sound: str = "detach"
     no_adjacent: bool = True  # deux extraits qui se suivaient ne restent pas côte à côte
     seed: int = 1
@@ -55,11 +61,12 @@ class Settings:
                 setattr(s, key, type(getattr(s, key))(data[key]))
         s.min_seconds = max(LIMITS[0], min(LIMITS[1], s.min_seconds))
         s.max_seconds = max(s.min_seconds, min(LIMITS[1], s.max_seconds))
+        s.transition = s.transition if s.transition in TRANSITIONS else "mix"
         s.fade_color = s.fade_color if s.fade_color in COLORS else "mix"
-        s.fade_mode = s.fade_mode if s.fade_mode in MODES else "insert"
         s.sound = s.sound if s.sound in SOUND else "detach"
         s.probability = max(0.0, min(1.0, s.probability))
         s.fade_seconds = max(0.1, min(1.0, s.fade_seconds))
+        s.burst_seconds = max(0.1, min(1.0, s.burst_seconds))
         return s
 
 
@@ -75,14 +82,17 @@ class Piece:
 
 @dataclass
 class Item:
-    """Élément du résultat : un extrait, ou un flash de couleur (`piece` vaut alors None)."""
+    """Extrait du résultat, avec ses transitions posées par-dessus ses images."""
 
-    piece: Piece | None
+    piece: Piece
     length: int
-    color: str = ""  # couleur du fondu (extrait) ou du flash
-    fade_in: int = 0  # images en fondu « par-dessus » au début / à la fin de l'extrait
+    after: str = ""  # transition vers l'extrait suivant : "", "fade" ou "burst"
+    color: str = ""  # couleur du fondu de fin
+    fade_in: int = 0  # images en fondu au début / à la fin de l'extrait
     fade_out: int = 0
     fade_in_color: str = ""
+    burst_in: int = 0  # images de retombée d'un éclat (début) / de montée (fin)
+    burst_out: int = 0
 
 
 # --- découpe et mélange ------------------------------------------------------------------
@@ -187,29 +197,27 @@ def plan(lengths: list[int], fps: int, settings: Settings) -> list[Item]:
             pieces.append(Piece(source, index, offset, length))
             offset += length
     order = shuffle(pieces, rng, settings.no_adjacent)
-    lo, hi = (round(s * fps) for s in FADE_ELIGIBLE)
     fade = max(1, round(settings.fade_seconds * fps))
-    items: list[Item] = []
-    for i, piece in enumerate(order):
-        item = Item(piece, piece.length)
-        if items and items[-1].piece is not None and items[-1].color \
-                and settings.fade_mode == "over":
-            item.fade_in = min(fade, piece.length // 2)
-            item.fade_in_color = items[-1].color
-        items.append(item)
-        last = i == len(order) - 1
-        if last or settings.fade_color == "none" or not lo <= piece.length <= hi:
+    burst = max(2, round(settings.burst_seconds * fps))
+    kinds = {"fade": ("fade",), "burst": ("burst",), "mix": ("fade", "burst")}.get(
+        settings.transition, ())
+    items = [Item(piece, piece.length) for piece in order]
+    for item, following in pairwise(items):
+        allowed = [k for k in kinds
+                   if item.length >= round((FADE_MIN if k == "fade" else BURST_MIN) * fps)]
+        if not allowed or rng.random() >= settings.probability:
             continue
-        if rng.random() >= settings.probability:
-            continue
-        color = settings.fade_color
-        if color == "mix":
-            color = rng.choice(("black", "white"))
-        item.color = color
-        if settings.fade_mode == "over":
-            item.fade_out = min(fade, piece.length // 2)
-        else:
-            items.append(Item(None, fade, color))
+        item.after = rng.choice(allowed)
+        if item.after == "fade":
+            color = settings.fade_color
+            item.color = rng.choice(("black", "white")) if color == "mix" else color
+            item.fade_out = min(fade, item.length // 2)
+            following.fade_in = min(fade, following.length // 2)
+            following.fade_in_color = item.color
+        else:  # montée courte avant la coupe, retombée plus longue après
+            attack = max(1, round(burst * BURST_ATTACK))
+            item.burst_out = min(attack, item.length // 2)
+            following.burst_in = min(max(1, burst - attack), following.length // 2)
     return items
 
 
@@ -217,7 +225,7 @@ def covers(lengths: list[int], items: list[Item]) -> bool:
     """Chaque image de chaque source est dans exactement un extrait."""
     for source, total in enumerate(lengths):
         spans = sorted((i.piece.offset, i.piece.length) for i in items
-                       if i.piece is not None and i.piece.source == source)
+                       if i.piece.source == source)
         position = 0
         for offset, length in spans:
             if offset != position or length <= 0:
@@ -282,18 +290,9 @@ def _piece_clip(src: Clip, item: Item, start: int, record: dict) -> Clip:
     clip.modules[MODULE_ID] = {**record, "role": "piece", "color": item.color or "black",
                                "fade_in_color": item.fade_in_color or "black",
                                "fade_in": item.fade_in, "fade_out": item.fade_out,
+                               "burst_in": item.burst_in, "burst_out": item.burst_out,
                                "length": item.length, "full": False}
     return clip
-
-
-def _flash_clip(previous: Clip, item: Item, start: int, record: dict) -> Clip:
-    """Aplat de couleur : quelques images de l'extrait précédent, recouvertes par la couleur."""
-    return Clip(previous.media_id, previous.track_id, start, item.length,
-                source_in=previous.source_in, speed=previous.speed, volume=0.0,
-                transform=Transform(fit="stretch"),
-                modules={MODULE_ID: {**record, "role": "flash", "color": item.color,
-                                     "fade_in_color": item.color, "full": True,
-                                     "fade_in": 0, "fade_out": 0, "length": item.length}})
 
 
 def apply(timeline, clip_ids: list[str], settings: Settings) -> list[Clip]:
@@ -325,10 +324,7 @@ def apply(timeline, clip_ids: list[str], settings: Settings) -> list[Clip]:
     created: list[Clip] = []
     position = anchor
     for item in items:
-        if item.piece is not None:
-            clip = _piece_clip(sources[item.piece.source], item, position, record)
-        else:
-            clip = _flash_clip(created[-1], item, position, record)
+        clip = _piece_clip(sources[item.piece.source], item, position, record)
         timeline.project.clips.append(clip)
         created.append(clip)
         position += item.length

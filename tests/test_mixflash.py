@@ -43,7 +43,7 @@ def project(*seconds, fps=25):
 
 
 def coverage(core, clips, created):
-    """Images source (média, image) montrées par les extraits, hors flashs."""
+    """Images source (média, image) montrées par les extraits."""
     shown = []
     for c in created:
         if c.modules[core.MODULE_ID]["role"] == "piece":
@@ -68,29 +68,46 @@ def test_split_lengths_tight_bounds(core):
 
 
 def test_plan_covers_everything_and_respects_settings(core):
-    settings = core.Settings(seed=7, probability=1.0, fade_color="white", fade_mode="insert")
+    settings = core.Settings(seed=7, probability=1.0, fade_color="white", transition="mix")
     lengths = [355, 240, 275]
     items = core.plan(lengths, 25, settings)
     assert core.covers(lengths, items)
-    pieces = [i for i in items if i.piece is not None]
-    assert all(12 <= i.length <= 125 for i in pieces)
-    flashes = [i for i in items if i.piece is None]
-    for k, item in enumerate(items):  # un flash suit toujours un extrait de 3 à 5 s
-        if item.piece is None:
-            assert 75 <= items[k - 1].length <= 125 and item.color == "white"
-    assert flashes and items[-1].piece is not None
+    assert all(12 <= i.length <= 125 for i in items)
+    assert sum(i.length for i in items) == sum(lengths)  # transitions par-dessus les images
+    for item, following in pairwise(items):
+        if item.after == "fade":  # fondus dès 1 s, éclats dès 0,5 s
+            assert item.length >= 25 and item.color == "white" and item.fade_out
+            assert following.fade_in and following.fade_in_color == "white"
+        elif item.after == "burst":
+            assert item.length >= 12 and item.burst_out and following.burst_in
+            assert following.burst_in >= item.burst_out  # retombée plus longue que la montée
+        else:
+            assert item.length < 12  # fréquence 100 % : seuls les trop courts n'ont rien
+    kinds = {i.after for i in items}
+    assert {"fade", "burst"} <= kinds and items[-1].after == ""
     assert core.plan(lengths, 25, settings) == items  # même tirage, même résultat
+
+
+def test_short_excerpts_get_bursts_not_fades(core):
+    settings = core.Settings(seed=3, probability=1.0, transition="mix", min_seconds=0.5,
+                             max_seconds=0.9)
+    items = core.plan([400], 25, settings)
+    assert all(i.length < 25 for i in items)
+    assert all(i.after == "burst" for i in items[:-1]) and not any(i.fade_out for i in items)
+    fades_only = core.plan([400], 25, core.Settings.from_dict(
+        {**settings.__dict__, "transition": "fade"}))
+    assert not any(i.after for i in fades_only)
 
 
 def test_no_adjacent_pieces(core):
     for seed in range(20):
-        items = core.plan([500, 300], 25, core.Settings(seed=seed, fade_color="none"))
+        items = core.plan([500, 300], 25, core.Settings(seed=seed, transition="none"))
         order = [i.piece for i in items]
         assert not any(core._adjacent(a, b) for a, b in pairwise(order))
 
 
-def test_over_mode_keeps_duration(core):
-    settings = core.Settings(seed=2, probability=1.0, fade_mode="over", max_seconds=5.0,
+def test_fades_keep_duration(core):
+    settings = core.Settings(seed=2, probability=1.0, transition="fade", max_seconds=5.0,
                              min_seconds=3.0)
     items = core.plan([1000], 25, settings)
     assert all(i.piece is not None for i in items)
@@ -139,7 +156,7 @@ def test_reverse_and_speed_sources(core):
     t.set_speed(a.id, 2.0)
     clip = t.clip(a.id)
     clip.reverse = True
-    created = core.apply(t, [a.id], core.Settings(seed=5, fade_color="none"))
+    created = core.apply(t, [a.id], core.Settings(seed=5, transition="none"))
     starts = sorted(x.source_in for x in created)
     assert starts[0] == clip.source_in
     assert all(x.reverse and x.speed == 2.0 for x in created)
@@ -161,6 +178,12 @@ def test_effect_filters(loaded):
     assert full == [("avfilter.lutrgb", {"av.r": "maxval", "av.g": "maxval",
                                          "av.b": "maxval"})]
     assert effect.filters(effect.defaults()) == []
+    (name, light), = effect.filters({**effect.defaults(), "length": 50, "burst_out": 2,
+                                     "burst_in": 4})
+    assert name == "lift_gamma_gain" and (light["in"], light["out"]) == (0, 49)
+    assert light["lift_r"] == ("0=1.000;1=0.562;2=0.250;3=0.062;4=0.000;"
+                               "47=0.000;48=0.250;49=1.000")
+    assert light["gain_b"].startswith("0=1.600;") and light["gain_b"].endswith("49=1.600")
     assert {t.id for t in api.tools} == {"fab.mixflash.apply", "fab.mixflash.remix",
                                          "fab.mixflash.restore"}
 
@@ -173,19 +196,23 @@ def test_dialog_builds(core):
     dialog_mod = importlib.import_module("montar_modules.fab_mixflash.dialog")
     p, t, clips = project(14.2, 9.6)
     dialog = dialog_mod.MixFlashDialog(None, clips, {clips[0].id}, 25, core.Settings(), False,
-                                       names=lambda c: t.media_of(c).name)
-    assert dialog.chosen_ids() == [clips[0].id]
+                                       names=lambda c: t.media_of(c).name, skipped=1)
+    assert dialog.chosen_ids() == [clips[0].id] and not dialog.whole.isChecked()
     assert dialog.ok.isEnabled()
-    dialog.boxes[clips[1].id].setChecked(True)
+    dialog.whole.click()  # « Toute la piste »
+    assert dialog.chosen_ids() == [c.id for c in clips] and dialog.whole.isChecked()
     dialog._reshuffle()
     assert "✓" in dialog.summary.text()
-    dialog.boxes[clips[0].id].setChecked(False)
-    dialog.boxes[clips[1].id].setChecked(False)
-    assert not dialog.ok.isEnabled()
+    dialog.transition.button("burst").click()
+    assert dialog.settings().transition == "burst" and not dialog.color.isEnabled()
+    dialog.whole.click()
+    assert dialog.chosen_ids() == [] and not dialog.ok.isEnabled()
+    dialog.boxes[clips[1].id].setChecked(True)
+    assert dialog.chosen_ids() == [clips[1].id] and not dialog.whole.isChecked()
 
 
 @needs_ffmpeg
-def test_fades_and_flash_render(loaded, media_dir):
+def test_fades_and_bursts_render(loaded, media_dir):
     pytest.importorskip("mlt7")
     from montar.engine import get_engine
     from montar.engine.base import Canvas, ClipSpec, TimelineSpec, TrackSpec
@@ -219,3 +246,10 @@ def test_fades_and_flash_render(loaded, media_dir):
         assert (min(last) >= 250) if end == "white" else (max(last) <= 5)
         middle = sum(render(fading, 44)) / len(plain)  # à mi-fondu
         assert 5 < middle < 250 and middle != sum(plain) / len(plain)
+    burst = {"length": 50, "burst_out": 4, "burst_in": 8}
+    mean = sum(plain) / len(plain)
+    levels = [sum(render(burst, f)) / len(plain) for f in (25, 46, 48, 49, 0, 3, 8)]
+    assert levels[0] == mean  # milieu du clip : intact
+    assert mean < levels[1] < levels[2] < levels[3]  # montée jusqu'à la coupe
+    assert levels[3] >= 250 and levels[4] >= 250  # pic blanc de part et d'autre de la coupe
+    assert levels[4] > levels[5] > levels[6] and abs(levels[6] - mean) < 2  # retombée

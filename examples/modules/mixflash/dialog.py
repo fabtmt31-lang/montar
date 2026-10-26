@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Fenêtre du Mix Flash : clips de la piste, durées, fondus, son, aperçu du mélange."""
+"""Fenêtre du Mix Flash : clips de la piste, durées, transitions, son, aperçu du mélange."""
 from __future__ import annotations
 
 import random
@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QSlider,
     QVBoxLayout,
     QWidget,
@@ -26,20 +27,23 @@ from montar.i18n import _
 from montar.ui.theme import theme
 from montar.ui.widgets import Segmented, label
 
-from .core import COLORS, LIMITS, MODES, SOUND, Settings, covers, plan
+from .core import BURST_MIN, COLORS, FADE_MIN, LIMITS, SOUND, TRANSITIONS, Settings, covers, plan
 
 # une teinte par clip d'origine, dans l'aperçu
 SWATCHES = ("#5FA882", "#6FA7C9", "#C79A5B", "#A784C2", "#D07A7A", "#7FB8A4", "#B5B35C")
+LIGHT = "#FFF4C2"  # éclat lumineux, dans l'aperçu
 
 
 class Strip(QWidget):
-    """Bande proportionnelle : clips d'origine, ou extraits mélangés avec leurs fondus."""
+    """Bande proportionnelle : clips d'origine, ou extraits mélangés avec leurs transitions.
+
+    Chaque bloc : (images, teinte, [(bord "in" / "out", couleur, images), …])."""
 
     def __init__(self, height: int = 30) -> None:
         super().__init__()
         self.setMinimumHeight(height)
         self.setMaximumHeight(height)
-        self.blocks: list[tuple[int, str, str, int, int]] = []  # images, teinte, flash, fondus
+        self.blocks: list[tuple[int, str, list[tuple[str, str, int]]]] = []
 
     def set_blocks(self, blocks) -> None:
         self.blocks = list(blocks)
@@ -58,19 +62,19 @@ class Strip(QWidget):
             return
         x = rect.left()
         painter.setPen(Qt.PenStyle.NoPen)
-        for frames, swatch, flash, fade_in, fade_out in self.blocks:
+        for frames, swatch, edges in self.blocks:
             w = rect.width() * frames / total
             box = QRectF(x, rect.top(), max(1.0, w - 1), rect.height())
-            painter.setBrush(QColor(flash or swatch))
+            painter.setBrush(QColor(swatch))
             painter.drawRect(box)
-            for edge, color_frames in (("in", fade_in), ("out", fade_out)):
-                if not color_frames or not frames:
+            for edge, color, count in edges:
+                if not count or not frames:
                     continue
-                width = box.width() * min(0.5, color_frames[1] / frames)
+                width = max(2.0, box.width() * min(0.5, count / frames))
                 part = QRectF(box.left() if edge == "in" else box.right() - width,
                               box.top(), width, box.height())
                 ramp = QLinearGradient(part.topLeft(), part.topRight())
-                solid, clear = QColor(color_frames[0]), QColor(color_frames[0])
+                solid, clear = QColor(color), QColor(color)
                 clear.setAlpha(0)
                 ramp.setColorAt(0, solid if edge == "in" else clear)
                 ramp.setColorAt(1, clear if edge == "in" else solid)
@@ -79,13 +83,17 @@ class Strip(QWidget):
             x += w
 
 
+def _decimal(seconds: float) -> str:
+    return f"{seconds:.1f} s".replace(".", ",")
+
+
 def _hex(color: str) -> str:
     return "#FFFFFF" if color == "white" else "#000000"
 
 
 class MixFlashDialog(QDialog):
     def __init__(self, parent, clips, chosen: set[str], fps: int, settings: Settings,
-                 remix: bool, names) -> None:
+                 remix: bool, names, skipped: int = 0) -> None:
         super().__init__(parent)
         self.setWindowTitle(_("Mix Flash"))
         self.setMinimumWidth(620)
@@ -100,8 +108,24 @@ class MixFlashDialog(QDialog):
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
-        layout.addWidget(label(_("Vidéos de la piste") if not remix
-                               else _("Vidéos du mélange")))
+        heading = QHBoxLayout()
+        heading.addWidget(label(_("Vidéos de la piste") if not remix
+                                else _("Vidéos du mélange")))
+        heading.addStretch()
+        self.whole = QCheckBox(_("Toute la piste"))  # coche ou décoche toutes les vidéos
+        self.whole.setEnabled(not remix and len(self._clips) > 1)
+        self.whole.clicked.connect(self._whole_clicked)
+        heading.addWidget(self.whole)
+        layout.addLayout(heading)
+        if skipped:
+            note = label(_("{n} autre(s) clip(s) de la piste (images, timelapses, extraits déjà "
+                           "mélangés…) ne sont pas pris.").format(n=skipped), "small")
+            note.setWordWrap(True)
+            layout.addWidget(note)
+        listing = QWidget()
+        rows = QVBoxLayout(listing)
+        rows.setContentsMargins(0, 0, 0, 0)
+        rows.setSpacing(6)
         self.boxes: dict[str, QCheckBox] = {}
         for c in self._clips:
             box = QCheckBox(f"{names(c)}  ·  {seconds_to_short(c.duration / fps)}")
@@ -115,7 +139,14 @@ class MixFlashDialog(QDialog):
             row = QHBoxLayout()
             row.addWidget(swatch)
             row.addWidget(box, 1)
-            layout.addLayout(row)
+            rows.addLayout(row)
+        rows.addStretch()
+        scroll = QScrollArea()  # une longue piste ne rallonge pas la fenêtre
+        scroll.setWidget(listing)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setMaximumHeight(min(180, 30 * len(self._clips) + 6))
+        layout.addWidget(scroll)
 
         grid = QGridLayout()
         grid.setHorizontalSpacing(10)
@@ -129,32 +160,44 @@ class MixFlashDialog(QDialog):
         grid.setColumnStretch(4, 1)
         layout.addLayout(grid)
 
-        layout.addWidget(label(_("Fondus après les extraits de 3 à 5 s")))
-        self.color = Segmented([(k, _(v)) for k, v in COLORS.items()], settings.fade_color)
-        self.color.changed.connect(lambda _k: self._update())
-        layout.addWidget(self.color)
-        self.mode = Segmented([(k, _(v)) for k, v in MODES.items()], settings.fade_mode)
-        self.mode.changed.connect(lambda _k: self._update())
-        layout.addWidget(self.mode)
-        self.mode_hint = label("", "small")
-        self.mode_hint.setWordWrap(True)
-        layout.addWidget(self.mode_hint)
-        row = QHBoxLayout()
-        row.addWidget(label(_("Probabilité")))
+        layout.addWidget(label(_("Entre les extraits")))
+        self.transition = Segmented([(k, _(v)) for k, v in TRANSITIONS.items()],
+                                    settings.transition)
+        self.transition.changed.connect(lambda _k: self._update())
+        layout.addWidget(self.transition)
+        hint = label(_("Posés par-dessus les images, sans changer la durée. Fondus après les "
+                       "extraits d'au moins {f} s, éclats lumineux (l'image s'illumine "
+                       "jusqu'au blanc à la coupe, puis retombe) dès {b} s.").format(
+            f=f"{FADE_MIN:g}".replace(".", ","), b=f"{BURST_MIN:g}".replace(".", ",")),
+            "small")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(8)
+        grid.addWidget(label(_("Fréquence")), 0, 0)
         self.probability = QSlider(Qt.Orientation.Horizontal)
         self.probability.setRange(0, 100)
         self.probability.setSingleStep(5)
         self.probability.setValue(round(settings.probability * 100))
         self.probability.valueChanged.connect(self._update)
-        row.addWidget(self.probability, 1)
+        grid.addWidget(self.probability, 0, 1, 1, 3)
         self.probability_text = QLabel()
         self.probability_text.setMinimumWidth(44)
-        row.addWidget(self.probability_text)
-        row.addSpacing(12)
-        row.addWidget(label(_("Durée du fondu")))
+        grid.addWidget(self.probability_text, 0, 4)
+        self.fade_label = label(_("Fondu"))
+        grid.addWidget(self.fade_label, 1, 0)
+        self.color = Segmented([(k, _(v)) for k, v in COLORS.items()], settings.fade_color)
+        self.color.changed.connect(lambda _k: self._update())
+        grid.addWidget(self.color, 1, 1)
         self.fade = self._seconds(settings.fade_seconds, 0.1, 1.0)
-        row.addWidget(self.fade)
-        layout.addLayout(row)
+        grid.addWidget(self.fade, 1, 2)
+        self.burst_label = label(_("Éclat"))
+        grid.addWidget(self.burst_label, 2, 0)
+        self.burst = self._seconds(settings.burst_seconds, 0.1, 1.0)
+        grid.addWidget(self.burst, 2, 2)
+        grid.setColumnStretch(3, 1)
+        layout.addLayout(grid)
 
         layout.addWidget(label(_("Son des vidéos")))
         self.sound = Segmented([(k, _(v)) for k, v in SOUND.items()], settings.sound)
@@ -215,6 +258,13 @@ class MixFlashDialog(QDialog):
         box.valueChanged.connect(self._update)
         return box
 
+    def _whole_clicked(self, checked: bool) -> None:
+        for box in self.boxes.values():
+            box.blockSignals(True)
+            box.setChecked(checked)
+            box.blockSignals(False)
+        self._update()
+
     def _reshuffle(self) -> None:
         self._seed = random.randint(1, 999_999)
         self._update()
@@ -228,8 +278,9 @@ class MixFlashDialog(QDialog):
         low = self.min_s.value()
         return Settings.from_dict({
             "min_seconds": low, "max_seconds": max(low, self.max_s.value()),
-            "fade_color": self.color.current(), "fade_mode": self.mode.current(),
+            "transition": self.transition.current(), "fade_color": self.color.current(),
             "probability": self.probability.value() / 100, "fade_seconds": self.fade.value(),
+            "burst_seconds": self.burst.value(),
             "sound": self.sound.current(), "no_adjacent": self.no_adjacent.isChecked(),
             "seed": self._seed})
 
@@ -239,13 +290,17 @@ class MixFlashDialog(QDialog):
             self.max_s.setValue(self.min_s.value())
             self.max_s.blockSignals(False)
         self.probability_text.setText(f"{self.probability.value()} %")
-        self.mode_hint.setText(
-            _("Le flash de couleur est ajouté entre deux extraits : toutes les images restent "
-              "visibles, la durée totale augmente un peu.")
-            if self.mode.current() == "insert" else
-            _("Le fondu recouvre la fin d'un extrait et le début du suivant : la durée totale "
-              "ne change pas, mais quelques images sont voilées."))
+        kind = self.transition.current()
+        for widget in (self.probability, self.probability_text):
+            widget.setEnabled(kind != "none")
+        for widget in (self.fade_label, self.color, self.fade):
+            widget.setEnabled(kind in ("fade", "mix"))
+        for widget in (self.burst_label, self.burst):
+            widget.setEnabled(kind in ("burst", "mix"))
         chosen = [c for c in self._clips if self.boxes[c.id].isChecked()]
+        self.whole.blockSignals(True)
+        self.whole.setChecked(len(chosen) == len(self._clips))
+        self.whole.blockSignals(False)
         self.ok.setEnabled(bool(chosen))
         if not chosen:
             self.before.set_blocks([])
@@ -255,23 +310,21 @@ class MixFlashDialog(QDialog):
         settings = self.settings()
         lengths = [c.duration for c in chosen]
         items = plan(lengths, self._fps, settings)
-        self.before.set_blocks((c.duration, self._swatch[c.id], "", 0, 0) for c in chosen)
+        self.before.set_blocks((c.duration, self._swatch[c.id], []) for c in chosen)
         self.after.set_blocks(
-            (i.length, self._swatch[chosen[i.piece.source].id] if i.piece else "",
-             "" if i.piece else _hex(i.color),
-             (_hex(i.fade_in_color), i.fade_in) if i.fade_in else 0,
-             (_hex(i.color), i.fade_out) if i.fade_out else 0) for i in items)
-        pieces = [i for i in items if i.piece is not None]
-        fades = sum(1 for i in items if i.piece is None) + sum(1 for i in pieces if i.fade_out)
-        shortest = min(i.length for i in pieces) / self._fps
-        longest = max(i.length for i in pieces) / self._fps
+            (i.length, self._swatch[chosen[i.piece.source].id],
+             [("in", _hex(i.fade_in_color), i.fade_in), ("out", _hex(i.color), i.fade_out),
+              ("in", LIGHT, i.burst_in), ("out", LIGHT, i.burst_out)]) for i in items)
+        fades = sum(1 for i in items if i.after == "fade")
+        bursts = sum(1 for i in items if i.after == "burst")
+        shortest = min(i.length for i in items) / self._fps
+        longest = max(i.length for i in items) / self._fps
         total = sum(lengths)
         ok = covers(lengths, items)
-        result = sum(i.length for i in items)
         self.summary.setText(_(
-            "{n} extraits de {a} à {b} · {f} fondus · durée {d} → {r}\n{check}").format(
-            n=len(pieces), a=f"{shortest:.1f} s", b=f"{longest:.1f} s", f=fades,
-            d=seconds_to_short(total / self._fps), r=seconds_to_short(result / self._fps),
+            "{n} extraits de {a} à {b} · {f} fondus · {e} éclats · durée {d}\n{check}").format(
+            n=len(items), a=_decimal(shortest), b=_decimal(longest), f=fades, e=bursts,
+            d=seconds_to_short(total / self._fps),
             check=(_("✓ {t} images sur {t} replacées, sans trou ni doublon").format(t=total)
                    if ok else _("Découpage incomplet : impossible d'appliquer"))))
         self.ok.setEnabled(ok)
