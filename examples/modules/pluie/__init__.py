@@ -140,7 +140,7 @@ class Rain(VideoEffect, ClipSource):
             + core.keep_outside_transparent(cache, area, width, height)
         if s.brume > 0.001:
             haze = core.haze_image(cache / "pluie", s.brume)
-            result.append(("watermark", {"resource": str(haze),
+            result.append(("watermark", {"resource": str(haze), "producer.eof": "loop",
                                          "composite.geometry": core.geometry(area),
                                          "composite.distort": 1, "composite.fill": 1}))
         if not s.has_drops:

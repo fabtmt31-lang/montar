@@ -16,6 +16,19 @@ log = logging.getLogger(__name__)
 NAME = "pluie-appliquer"
 
 
+def _alive(widget) -> bool:
+    """Le widget existe-t-il encore côté Qt ? (montar a pu le détruire)"""
+    try:
+        from PyQt6 import sip
+
+        if sip.isdeleted(widget):
+            return False
+        widget.objectName()
+        return True
+    except (ImportError, RuntimeError):
+        return False
+
+
 class ApplyButton:
     def __init__(self, rain) -> None:
         self.rain = rain
@@ -72,13 +85,15 @@ class ApplyButton:
         controls = [c for e, c, _a in getattr(panel, "_module_controls", ())
                     if e is self.rain]
         current = self._widgets.get(id(panel))
-        shown = current is not None and box.indexOf(current[0]) >= 0
+        # montar reconstruit le panneau en détruisant ses éléments, notre bouton compris
+        shown = current is not None and all(_alive(w) for w in current) \
+            and box.indexOf(current[0]) >= 0
         if not isinstance(values, dict) or not controls:
             if shown:
                 for widget in current:
                     box.removeWidget(widget)
                     widget.deleteLater()
-                self._widgets.pop(id(panel), None)
+            self._widgets.pop(id(panel), None)
             return
         if not shown:  # panneau reconstruit par montar : le bouton est remis
             btn = button(_("Appliquer la pluie"), "primary", "droplets")

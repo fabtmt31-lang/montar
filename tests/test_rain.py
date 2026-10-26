@@ -59,7 +59,7 @@ def _filters(rain, context, clip, values, animated=True):
 
 
 def _mask(filters) -> str:
-    """Masque des gouttes utilisé : aperçu (.png) ou gouttes calculées (.mp4)."""
+    """Masque des gouttes utilisé : aperçu (dossier « apercu-… ») ou gouttes calculées."""
     return next(p["filter.resource"] for n, p in filters if n == "mask_start")
 
 
@@ -144,7 +144,7 @@ def test_layers_are_computed_then_used(rain, core, tmp_path):
     context = _context(tmp_path)
     values = {"temps": "averse"}
     first = _filters(rain, context, _clip(), values)
-    assert _mask(first).endswith("masque.png")  # pas encore calculées : l'aperçu
+    assert "/apercu-" in _mask(first)  # pas encore calculées : l'aperçu
     (key, work), = context.jobs.items()
     assert key.startswith("pluie:")
     _filters(rain, context, _clip(), values)
@@ -175,7 +175,7 @@ def test_outdated_layers_are_abandoned(rain, tmp_path):
     assert not [p for p in (context.cache_dir / "pluie").iterdir()
                 if p.is_dir() and not p.name.startswith("apercu-")]
     new(lambda r: None, lambda: False)
-    assert _mask(_filters(rain, context, _clip(), {"volume": 0.9})).endswith("masque.mp4")
+    assert "/apercu-" not in _mask(_filters(rain, context, _clip(), {"volume": 0.9}))
 
 
 @needs_ffmpeg
@@ -385,3 +385,59 @@ def test_rain_stays_inside_the_image(rain, core, tmp_path):
         got = content(transform, filters)
         assert abs(got[0] - expected[0]) <= 1 and abs(got[1] - expected[1]) <= 1, \
             (transform, expected, got)
+
+
+_WINDOWS_LIKE = r"""
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+sys.path.insert(0, sys.argv[1])
+from montar.core.project import Transform
+from montar.engine import get_engine
+from montar.engine.base import Canvas, ClipSpec, TimelineSpec, TrackSpec
+from montar.plugins import ModuleManager, builtin_modules_dir
+tmp = Path(sys.argv[2])
+m = ModuleManager(builtin_modules_dir(), tmp / "user")
+m.load_all()
+m.install_folder(Path(sys.argv[3]), link=True)
+rain = next(e for mid, e in m.effects() if mid == "pluie")
+jobs = []
+ctx = SimpleNamespace(project=SimpleNamespace(canvas_size=(320, 180)), fps=25,
+                      cache_dir=tmp / "cache", jobs=None,
+                      schedule_job=lambda k, t, w, d=None: jobs.append(w))
+clip = SimpleNamespace(id="c", duration=100, source_in=0, speed=1.0, transform=Transform(),
+                       keyframes={}, modules={})
+media = SimpleNamespace(kind="video", path=sys.argv[4], width=160, height=160)
+rain.resolve(ctx, clip, media)
+filters = rain.filters(rain.defaults())
+source = get_engine().build(TimelineSpec(Canvas(320, 180, 25), (TrackSpec(
+    "video", False, False, (ClipSpec(media.path, "video", 0, 100, media_size=(160, 160),
+                                     extra_filters=tuple(filters)),)),)))
+data = source.render(60, 320, 180)
+white = sum(1 for i in range(0, len(data), 4) if min(data[i:i + 3]) > 235)
+print("BLANCS", white)
+"""
+
+
+@needs_ffmpeg
+def test_no_white_area_without_gdk(tmp_path):
+    """Sous Windows, MLT n'a pas le module « gdk » : les images PNG sont ouvertes comme
+    des vidéos d'une image, et superposées elles devenaient blanches au-delà de la
+    première image du clip (carré blanc). Les calques fixes sont donc des vidéos."""
+    pytest.importorskip("mlt7")
+    import os
+    import subprocess
+    import sys
+
+    video = tmp_path / "carre.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                    "testsrc2=size=160x160:rate=25:duration=4", "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p", str(video)], check=True)
+    src = Path(__file__).resolve().parent.parent / "src"
+    env = {**os.environ, "MLT_REPOSITORY_DENY": "libmltgdk"}
+    done = subprocess.run([sys.executable, "-c", _WINDOWS_LIKE, str(src), str(tmp_path),
+                           str(FOLDER), str(video)], capture_output=True, text=True,
+                          env=env, timeout=120)
+    line = [x for x in done.stdout.splitlines() if x.startswith("BLANCS")]
+    assert line, done.stderr[-2000:]
+    assert int(line[0].split()[1]) < 50

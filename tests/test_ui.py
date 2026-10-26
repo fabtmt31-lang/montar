@@ -2022,3 +2022,18 @@ def test_rain_module_apply_button(window, media_dir):
     editor.controller.select(clip.id)
     _settle_rain()
     assert find() is not None
+
+    # second clip avec la pluie, après avoir appliqué sur le premier : son bouton est là
+    # (le panneau reconstruit détruit l'ancien bouton ; il doit être recréé)
+    editor.add_to_timeline(editor.project.media[0])
+    second = max(editor.project.clips, key=lambda c: c.start)
+    editor.controller.select(second.id)
+    editor.use_module_entry(entry)
+    for target in (second, clip, second):
+        editor.controller.select(target.id)
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+        _settle_rain()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+        _settle_rain()
+        assert find() is not None, target.id
+    assert find().isEnabled()  # le second clip n'est pas encore appliqué

@@ -24,7 +24,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-MODULE_VERSION = 2  # change le nom des calques en cache si leur dessin évolue
+MODULE_VERSION = 3  # change le nom des calques en cache si leur dessin évolue
 LOOP_SECONDS = 5  # durée de la boucle des gouttes animées
 MAX_SIDE = 1920  # calques limités à cette taille (le moteur les met à l'échelle)
 
@@ -160,34 +160,41 @@ HAZE_ROWS = 540
 
 
 def haze_image(folder: Path, amount: float) -> Path:
-    """Brume : voile gris-bleu, plus dense en haut de l'image (petite image PNG étirée)."""
+    """Brume : voile gris-bleu, plus dense en haut de l'image (petite image étirée)."""
     level = round(amount * 20)
-    path = folder / f"brume{MODULE_VERSION}_{level:02d}.png"
+    path = folder / f"brume{MODULE_VERSION}_{level:02d}.mov"
     if not path.exists():
-        folder.mkdir(parents=True, exist_ok=True)
         rows = []
         for y in range(HAZE_ROWS):  # assez de lignes pour un dégradé sans bandes
             a = round(255 * 0.35 * (level / 20) * (1 - 0.7 * y / (HAZE_ROWS - 1)))
             rows.append(bytes([140, 153, 168, a]) * 4)
-        tmp = path.with_suffix(".part")
-        tmp.write_bytes(_png(4, HAZE_ROWS, rows))
-        tmp.replace(path)
+        still_video(path, 4, HAZE_ROWS, b"".join(rows))
     return path
 
 
-def _png(width: int, height: int, rows, gray: bool = False, level: int = 9) -> bytes:
-    """Image PNG (RVBA, ou niveaux de gris) à partir de ses lignes d'octets."""
-    import struct
-    import zlib
+def still_video(path: Path, width: int, height: int, data: bytes, gray: bool = False) -> Path:
+    """Image fixe enregistrée comme une vidéo d'une image (lue en boucle).
 
-    def chunk(kind: bytes, payload: bytes) -> bytes:
-        return (struct.pack(">I", len(payload)) + kind + payload
-                + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF))
-
-    raw = b"".join(b"\0" + bytes(r) for r in rows)
-    header = struct.pack(">IIBBBBB", width, height, 8, 0 if gray else 6, 0, 0, 0)
-    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header)
-            + chunk(b"IDAT", zlib.compress(raw, level)) + chunk(b"IEND", b""))
+    Sans le module « gdk » de MLT (c'est le cas sous Windows), une image PNG est ouverte
+    comme une vidéo d'une seule image, et superposée au-delà de la première image du
+    clip elle devient blanche. Une vraie vidéo n'a pas ce défaut."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name("part-" + path.name)
+    if gray:  # masque : luminosité, comme le masque des gouttes animées
+        codec = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "12", "-pix_fmt",
+                 "yuv420p", "-f", "mp4"]
+    else:  # calque transparent
+        codec = ["-c:v", "qtrle", "-pix_fmt", "argb", "-f", "mov"]
+    proc, errors = _encoder(tmp, "gray" if gray else "rgba", width, height, 25, codec)
+    try:
+        proc.stdin.write(data)
+        _finish(proc, errors)
+    except BaseException:
+        _abort(proc)
+        tmp.unlink(missing_ok=True)
+        raise
+    tmp.replace(path)
+    return path
 
 
 # --- images fixes ----------------------------------------------------------------------------
@@ -289,15 +296,12 @@ def area_mask(cache_dir: Path, area: tuple, width: int, height: int) -> Path:
     (le noir laisserait passer 6 % de l'image)."""
     w, h = layer_size(width, height)
     x, y, bw, bh = _box(area, w, h)
-    path = cache_dir / "pluie" / f"zone{MODULE_VERSION}_{w}x{h}_{x}_{y}_{bw}_{bh}.png"
+    path = cache_dir / "pluie" / f"zone{MODULE_VERSION}_{w}x{h}_{x}_{y}_{bw}_{bh}.mov"
     if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
         inside, outside = b"\xff\xff\xff\xff", b"\0\0\0\0"
         row = outside * x + inside * bw + outside * max(0, w - x - bw)
-        rows = [row if y <= j < y + bh else outside * w for j in range(h)]
-        tmp = path.with_suffix(".part")
-        tmp.write_bytes(_png(w, h, rows))
-        tmp.replace(path)
+        still_video(path, w, h, b"".join(row if y <= j < y + bh else outside * w
+                                         for j in range(h)))
     return path
 
 
@@ -310,7 +314,7 @@ def keep_outside_transparent(cache_dir: Path, area: tuple, width: int,
         return []
     return [("shape", {"resource": str(area_mask(cache_dir, area, width, height)),
                        "use_luminance": 0, "use_mix": 0, "audio_match": 0,
-                       "alpha_operation": "minimum"})]
+                       "alpha_operation": "minimum", "producer.eof": "loop"})]
 
 
 def geometry(area: tuple) -> str:
@@ -344,7 +348,7 @@ def cache_folder(cache_dir: Path, s: Settings, width: int, height: int, fps: int
 
 
 MASK, OVERLAY = "masque.mp4", "calque.mov"
-PREVIEW_MASK, PREVIEW_OVERLAY, PREVIEW_RAIN = "masque.png", "calque.png", "pluie.mov"
+PREVIEW_MASK, PREVIEW_OVERLAY, PREVIEW_RAIN = "masque.mp4", "calque.mov", "pluie.mov"
 PREVIEW_SIDE = 960  # aperçu des réglages : gouttes figées, image réduite
 RAIN_SIDE, RAIN_FRAMES, RAIN_FPS = 640, 50, 25  # aperçu : pluie qui tombe (boucle de 2 s)
 
@@ -370,7 +374,7 @@ def preview_layers(cache_dir: Path, s: Settings, width: int, height: int,
     from dataclasses import replace
 
     k = min(1.0, PREVIEW_SIDE / max(width, height, 1))
-    w, h = max(2, round(width * k)), max(2, round(height * k))
+    w, h = max(2, round(width * k / 2) * 2), max(2, round(height * k / 2) * 2)
     key = json.dumps([MODULE_VERSION, "aperçu", w, h, list(area), scale,
                       [getattr(s, k) for k in DROP_KEYS if k != "anime"]])
     folder = cache_dir / "pluie" / ("apercu-" + hashlib.sha1(key.encode()).hexdigest()[:16])
@@ -382,11 +386,8 @@ def preview_layers(cache_dir: Path, s: Settings, width: int, height: int,
     still = _Scene(replace(s, anime=False, chute=0.0), box[2], box[3], 2, unit=h / 720 * scale)
     mask, over = still.frame(0, True, True)
     mask, over = _padded(mask, w, h, box), _padded(over, w, h, box)
-    for name, data in ((PREVIEW_MASK, _png(w, h, mask, gray=True, level=1)),
-                       (PREVIEW_OVERLAY, _png(w, h, over.reshape(h, -1), level=1))):
-        tmp = folder / (name + ".part")
-        tmp.write_bytes(data)
-        tmp.replace(folder / name)
+    still_video(folder / PREVIEW_MASK, w, h, mask.tobytes(), gray=True)
+    still_video(folder / PREVIEW_OVERLAY, w, h, over.tobytes())
     if s.chute > 0.001:  # la pluie qui tombe, seule : rapide à dessiner
         k = min(1.0, RAIN_SIDE / max(width, height, 1))
         rw, rh = max(2, round(width * k / 2) * 2), max(2, round(height * k / 2) * 2)
