@@ -135,12 +135,14 @@ def split_lengths(total: int, low: int, high: int, rng: random.Random) -> list[i
     if total <= 0:
         return []
     low, high = max(1, low), max(1, low, high)
-    if total <= high:
-        return [total]  # clip plus court que le maximum : un seul extrait
-    parts: list[int] = []
-    rest = total
-    while rest > high:
+    if total < 2 * low:
+        return [total]  # trop court pour deux extraits d'au moins la durée minimale
+    parts = [rng.randint(low, min(high, total - low))]  # au moins deux extraits
+    rest = total - parts[0]
+    while True:
         n = rng.randint(low, high)
+        if n >= rest:
+            break
         parts.append(n)
         rest -= n
     if rest >= low:

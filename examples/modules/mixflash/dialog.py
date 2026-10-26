@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 
-from PyQt6.QtCore import QRectF, Qt
+from PyQt6.QtCore import QRectF, Qt, QTimer
 from PyQt6.QtGui import QColor, QGuiApplication, QIcon, QLinearGradient, QPainter, QPen
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -279,6 +279,34 @@ class MixFlashDialog(QDialog):
         self.resize(min(max(self.width(), 640), area.width() - 40),
                     min(wanted, area.height() - 80))
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._keep_on_screen()
+        QTimer.singleShot(0, self._keep_on_screen)  # après le placement par le système
+
+    def _keep_on_screen(self) -> None:
+        """Toute la fenêtre (barre de titre et boutons compris) reste dans l'écran."""
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        area = screen.availableGeometry()
+        frame = self.frameGeometry()
+        border = frame.height() - self.height()  # barre de titre et bords
+        if frame.height() > area.height():
+            self.resize(self.width(), area.height() - border)
+            frame = self.frameGeometry()
+        x = min(max(frame.left(), area.left()), area.right() + 1 - frame.width())
+        y = min(max(frame.top(), area.top()), area.bottom() + 1 - frame.height())
+        if (x, y) != (frame.left(), frame.top()):
+            self.move(x, y)
+
+    @staticmethod
+    def _piece_counts(items, sources: int) -> list[int]:
+        counts = [0] * sources
+        for item in items:
+            counts[item.piece.source] += 1
+        return counts
+
     def _seconds(self, value: float, low: float, high: float) -> QDoubleSpinBox:
         box = QDoubleSpinBox()
         box.setRange(low, high)
@@ -353,10 +381,16 @@ class MixFlashDialog(QDialog):
         longest = max(i.length for i in items) / self._fps
         total = sum(lengths)
         ok = covers(lengths, items)
+        uncut = [c for c, n in zip(chosen, self._piece_counts(items, len(chosen)), strict=True)
+                 if n == 1 and self._kinds.get(c.id) != "timelapse"]
         self.summary.setText(_(
             "{n} extraits de {a} à {b} · {f} fondus · {e} éclats · durée {d}\n{check}").format(
             n=len(items), a=_decimal(shortest), b=_decimal(longest), f=fades, e=bursts,
             d=seconds_to_short(total / self._fps),
             check=(_("✓ {t} images sur {t} replacées, sans trou ni doublon").format(t=total)
                    if ok else _("Découpage incomplet : impossible d'appliquer"))))
+        if uncut:
+            self.summary.setText(self.summary.text() + "\n" + _(
+                "{n} clip(s) trop court(s) pour être coupé(s) (moins de deux fois la durée "
+                "minimale) : ils sont seulement déplacés.").format(n=len(uncut)))
         self.ok.setEnabled(ok)

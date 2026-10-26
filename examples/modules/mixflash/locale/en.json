@@ -49,6 +49,7 @@
  "déjà mélangé, redécoupé": "already mixed, cut again",
  "image": "image",
  "timelapse, gardé entier": "timelapse, kept whole",
+ "{n} clip(s) trop court(s) pour être coupé(s) (moins de deux fois la durée minimale) : ils sont seulement déplacés.": "{n} clip(s) too short to be cut (less than twice the minimum length): they are only moved.",
  "{n} extraits de {a} à {b} · {f} fondus · {e} éclats · durée {d}\n{check}": "{n} excerpts from {a} to {b} · {f} fades · {e} bursts · length {d}\n{check}",
  "Éclat": "Burst",
  "Éclats lumineux": "Light bursts",

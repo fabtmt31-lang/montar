@@ -14,6 +14,7 @@ from montar.plugins import ModuleManager, builtin_modules_dir
 
 from .conftest import needs_ffmpeg
 
+_APP = None
 FOLDER = Path(__file__).resolve().parent.parent / "examples" / "modules" / "mixflash"
 
 
@@ -58,6 +59,15 @@ def test_split_lengths_bounds_and_sum(core):
         assert sum(parts) == total
         if total > 125:
             assert all(12 <= p <= 125 for p in parts), (total, parts)
+
+
+def test_short_clips_are_cut_too(core):
+    rng = random.Random(5)
+    for total in range(25, 126):  # de 1 à 5 s, avec des extraits de 0,5 à 5 s
+        parts = core.split_lengths(total, 12, 125, rng)
+        assert sum(parts) == total and len(parts) >= 2
+        assert all(12 <= p <= 125 for p in parts), (total, parts)
+    assert core.split_lengths(20, 12, 125, rng) == [20]  # moins de 2 × 0,5 s : entier
 
 
 def test_split_lengths_tight_bounds(core):
@@ -216,7 +226,8 @@ def test_dialog_builds(core):
     pytest.importorskip("PyQt6.QtWidgets")
     from PyQt6.QtWidgets import QApplication
 
-    _app = QApplication.instance() or QApplication(["montar-tests"])
+    global _APP  # l'application vit jusqu'à la fin des tests (les suivants la reprennent)
+    _APP = _app = QApplication.instance() or QApplication(["montar-tests"])
     dialog_mod = importlib.import_module("montar_modules.fab_mixflash.dialog")
     p, t, clips = project(14.2, 9.6)
     dialog = dialog_mod.MixFlashDialog(None, clips, {clips[0].id}, 25, core.Settings(), False,
@@ -237,6 +248,13 @@ def test_dialog_builds(core):
     assert dialog.chosen_ids() == [clips[1].id] and not dialog.whole.isChecked()
     screen = _app.primaryScreen().availableGeometry()
     assert dialog.height() <= screen.height() - 40  # tient sur l'écran, le contenu défile
+    dialog.move(screen.left() + 50, screen.top() - 300)  # placée trop haut par le système
+    dialog.show()
+    _app.processEvents()
+    dialog._keep_on_screen()
+    frame = dialog.frameGeometry()
+    assert screen.contains(frame.topLeft()) and screen.contains(frame.bottomRight())
+    dialog.close()
 
 
 @needs_ffmpeg
