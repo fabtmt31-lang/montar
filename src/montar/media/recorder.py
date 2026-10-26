@@ -118,16 +118,20 @@ _GRABBER: str | None = None
 
 
 def windows_grabber() -> str:
-    """« ddagrab » si ffmpeg le propose (Windows 8 et plus récents), sinon « gdigrab »."""
+    """« ddagrab » s'il fonctionne sur cet ordinateur (Windows 8 et plus récents, carte
+    graphique), sinon « gdigrab »."""
     global _GRABBER
     if _GRABBER is None:
         _GRABBER = "gdigrab"
         ffmpeg = shutil.which("ffmpeg")
         if ffmpeg is not None:
+            # essai réel d'une image : ddagrab demande une carte graphique et une session
+            # de bureau (il échoue, par exemple, dans une machine virtuelle sans GPU)
             try:
-                out = subprocess.run([ffmpeg, "-hide_banner", "-filters"], capture_output=True,
-                                     text=True, errors="replace", timeout=15).stdout
-                if " ddagrab " in out:
+                done = subprocess.run([ffmpeg, "-v", "error", "-f", "lavfi", "-i",
+                                       "ddagrab=framerate=5", "-frames:v", "1", "-f", "null",
+                                       "-"], capture_output=True, timeout=15)
+                if done.returncode == 0:
                     _GRABBER = "ddagrab"
             except (OSError, subprocess.SubprocessError):
                 pass

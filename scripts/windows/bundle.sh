@@ -66,7 +66,7 @@ echo "== MLT, frei0r, FFmpeg"
 # modules de MLT dont montar se sert (les autres, et leurs DLL, alourdiraient l'installateur
 # d'autant : placebo et glaxnimate tirent Vulkan, shaderc, QML…)
 mkdir -p "$out/lib/mlt"
-for m in core avformat frei0r plus rubberband sox sdl2 gdk resample xml; do
+for m in core avformat frei0r plus normalize rubberband sox sdl2 gdk resample xml; do
     [ -e "$P/lib/mlt/libmlt$m.dll" ] && cp "$P/lib/mlt/libmlt$m.dll" "$out/lib/mlt/"
 done
 cp -r "$P/share/mlt" "$out/share/"
