@@ -8,19 +8,19 @@ d'images, dossier de cache, tâches de fond) et la durée du clip. La source ren
 du clip, inchangée. Les gouttes sont calculées en tâche de fond ; en attendant, l'ambiance
 seule est appliquée.
 
-Pour que l'utilisation reste légère, les réglages des gouttes montrent d'abord un aperçu
-immédiat (gouttes figées, pluie qui tombe) ; le calcul complet, où les gouttes ruissellent,
-n'est lancé que par l'outil « Appliquer la pluie » (clic droit sur le clip, ou rail
-Modules). La pluie ne couvre que l'image du clip, pas les bandes autour."""
+Pour que l'utilisation reste légère, le réglage « Gouttes » vaut d'abord « Aperçu rapide » :
+gouttes figées, pluie qui tombe, sans calcul de fond. En le passant à « Animées », on
+lance le calcul où les gouttes ruissellent. La pluie ne couvre que l'image du clip, pas
+les bandes autour."""
 from __future__ import annotations
 
-from montar.api import ZOOM, ClipSource, Param, SourceOverride, Tool, VideoEffect
+from montar.api import ZOOM, ClipSource, Param, SourceOverride, VideoEffect
 from montar.i18n import _
 
 from . import core
 
 MODULE_ID = "pluie"  # identifiant du module et de l'effet : `resolve` est alors appelé
-APPLIED = "_gouttes"  # réglages des gouttes appliqués (calcul complet demandé)
+PREVIEW, ANIMATED = "apercu", "animees"  # valeurs du réglage « Gouttes »
 
 
 def _placed(context, clip) -> bool:
@@ -51,12 +51,15 @@ class Rain(VideoEffect, ClipSource):
     name = "Pluie"
     description = ("Comme filmé sous la pluie : gouttes d'eau sur l'objectif ou une vitre, "
                    "image plus sombre et plus froide, pluie qui tombe, brume, éclairs. "
-                   "Curseurs à 50 % : réglage normal du temps choisi. Réglez, puis clic "
-                   "droit sur le clip → « Appliquer la pluie » pour animer les gouttes.")
+                   "Curseurs à 50 % : réglage normal du temps choisi. Réglez avec « Gouttes : "
+                   "Aperçu rapide », puis choisissez « Animées » pour qu'elles ruissellent.")
     icon = "droplets"
     params = [
         Param.choice("temps", "Temps", [("pluie", "Pluie"), ("bruine", "Bruine"),
                                         ("averse", "Averse"), ("orage", "Orage")]),
+        Param.choice("gouttes", "Gouttes", [
+            (PREVIEW, "Aperçu rapide (gouttes figées)"),
+            (ANIMATED, "Animées (calcul, quelques secondes)")]),
         Param.choice("surface", "Gouttes sur", [("objectif", "L'objectif de la caméra"),
                                                 ("vitre", "Une vitre")]),
         Param.float("volume", "Volume de gouttes", 0.0, 1.0, default=0.5),
@@ -66,7 +69,6 @@ class Rain(VideoEffect, ClipSource):
         Param.float("chute", "Pluie qui tombe", 0.0, 1.0, default=0.5),
         Param.float("brume", "Brume", 0.0, 1.0, default=0.5),
         Param.bool("eclairs", "Éclairs (toujours avec « Orage »)", False),
-        Param.bool("anime", "Gouttes animées (apparaissent, glissent)", True),
         Param.bool("mouille", "Objectif mouillé (image adoucie)", True),
         Param("variante", "Variante des gouttes", "int", 1, 1, 20),
     ]
@@ -94,9 +96,7 @@ class Rain(VideoEffect, ClipSource):
         return SourceOverride(media.path, clip.source_in, clip.speed, "video")
 
     def badge(self, settings):
-        applied = core.is_applied(core.Settings.from_values(settings),
-                                  settings.get(APPLIED))
-        return _("Pluie") if applied else _("Pluie · aperçu")
+        return _("Pluie") if settings.get("gouttes") == ANIMATED else _("Pluie · aperçu")
 
     # --- effet ---------------------------------------------------------------------------
 
@@ -121,7 +121,7 @@ class Rain(VideoEffect, ClipSource):
         if not s.has_drops:
             return result + last
         result += core.softening_filters(s, height)
-        if not core.is_applied(s, values.get(APPLIED)):
+        if values.get("gouttes") != ANIMATED:
             # réglages en cours : aperçu immédiat, gouttes figées, sans calcul de fond
             preview = core.preview_layers(cache, s, width, height, area, scale)
             return result + core.drop_filters(preview, s, height, preview=True) + last
@@ -146,32 +146,7 @@ class Rain(VideoEffect, ClipSource):
         return result + last  # en attendant les gouttes : l'ambiance seule
 
 
-class ApplyRain(Tool):
-    id = "pluie.appliquer"
-    name = "Appliquer la pluie"
-    icon = "droplets"
-    description = ("Calcule les gouttes qui ruissellent avec les réglages actuels de l'effet "
-                   "Pluie (en attendant, l'aperçu montre des gouttes figées sous la pluie qui "
-                   "tombe).")
-
-    def available(self, editor, clip) -> bool:
-        values = clip.modules.get(MODULE_ID) if clip is not None else None
-        if not isinstance(values, dict):
-            return False
-        return not core.is_applied(core.Settings.from_values(values), values.get(APPLIED))
-
-    def run(self, editor, clip) -> None:
-        clip_id = clip.id
-
-        def apply(timeline):
-            values = timeline.clip(clip_id).modules[MODULE_ID]
-            values[APPLIED] = core.drop_state(core.Settings.from_values(values))
-
-        editor.edit(_("Appliquer la pluie"), apply)
-
-
 def register(api) -> None:
     rain = Rain()
     api.add_video_effect(rain)
     api.add_clip_source(rain)
-    api.add_tool(ApplyRain)

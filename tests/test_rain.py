@@ -43,18 +43,15 @@ def _context(tmp_path, width=160, height=90, fps=10):
 MEDIA = SimpleNamespace(kind="video", path="/v.mp4")
 
 
-def _filters(rain, context, clip, values, applied=True):
-    """Comme le crochet de rendu de montar : resolve, puis filters. `applied` : comme après
-    l'outil « Appliquer la pluie »."""
-    import sys
-
-    core = sys.modules[type(rain).__module__ + ".core"]
+def _filters(rain, context, clip, values, animated=True):
+    """Comme le crochet de rendu de montar : resolve, puis filters. `animated` : réglage
+    « Gouttes : Animées »."""
     override = rain.resolve(context, clip, MEDIA)
     assert (override.path, override.source_in, override.speed) == ("/v.mp4", clip.source_in,
                                                                    clip.speed)
     values = {**rain.defaults(), **values}
-    if applied:
-        values["_gouttes"] = core.drop_state(core.Settings.from_values(values))
+    if animated:
+        values["gouttes"] = "animees"
     return rain.filters(values)
 
 
@@ -102,8 +99,8 @@ def test_flashes(core):
 
 
 def test_loop_and_cache_key(core, tmp_path):
-    assert core.loop_frames(core.Settings(anime=False, chute=0), 25) == (1, 1)
-    assert core.loop_frames(core.Settings(anime=False, chute=0.5), 25) == (1, 125)
+    assert core.loop_frames(core.Settings(volume=0, chute=0), 25) == (1, 1)
+    assert core.loop_frames(core.Settings(volume=0, chute=0.5), 25) == (1, 125)
     assert core.loop_frames(core.Settings(), 25) == (125, 125)
     base = core.cache_folder(tmp_path, core.Settings(), 1920, 1080, 25)
     # l'ambiance est faite de filtres instantanés : les gouttes ne sont pas recalculées
@@ -212,38 +209,24 @@ def test_rain_renders(rain, core, tmp_path, media_dir):
     assert wet != mood  # les gouttes sont posées sur l'image
 
 
-def test_settings_preview_then_apply(rain, core, tmp_path):
-    """Les réglages montrent un aperçu immédiat ; seul « Appliquer » lance le calcul."""
-    import sys
-
+def test_preview_until_animated_is_chosen(rain, core, tmp_path):
+    """Réglage « Gouttes » : l'aperçu rapide ne lance aucun calcul ; « Animées » le lance."""
     context = _context(tmp_path)
     clip = _clip()
+    params = [p.key for p in rain.params]
+    assert params[:2] == ["temps", "gouttes"]  # visible en haut des réglages
+    assert rain.defaults()["gouttes"] == "apercu"
     for volume in (0.2, 0.4, 0.6, 0.8):  # curseur déplacé plusieurs fois
-        filters = _filters(rain, context, clip, {"volume": volume}, applied=False)
+        filters = _filters(rain, context, clip, {"volume": volume}, animated=False)
         shape = next(p for n, p in filters if n == "mask_start")
         assert shape["filter.resource"].endswith(core.PREVIEW_MASK)
         assert Path(shape["filter.resource"]).exists()
     assert context.jobs == {}  # aucun calcul lourd pendant les réglages
-    values = {**rain.defaults(), "volume": 0.8}
-    assert rain.badge(values) == "Pluie · aperçu"
-
-    tool_module = sys.modules[type(rain).__module__]
-    tool = tool_module.ApplyRain()
-    project_clip = SimpleNamespace(id="c1", modules={"pluie": dict(values)})
-    assert tool.available(None, project_clip)
-    timeline = SimpleNamespace(clip=lambda clip_id: project_clip)
-    editor = SimpleNamespace(edit=lambda label, op: op(timeline))
-    tool.run(editor, project_clip)
-    applied = project_clip.modules["pluie"]
-    assert not tool.available(None, project_clip) and rain.badge(applied) == "Pluie"
-    rain.resolve(context, clip, MEDIA)
-    rain.filters(applied)
+    assert rain.badge(rain.defaults()) == "Pluie · aperçu"
+    animated = {**rain.defaults(), "volume": 0.8, "gouttes": "animees"}
+    assert rain.badge(animated) == "Pluie"
+    _filters(rain, context, clip, {"volume": 0.8})
     assert len(context.jobs) == 1  # le calcul complet est demandé
-    # l'ambiance ne touche pas aux gouttes : rien à réappliquer
-    assert not tool.available(None, SimpleNamespace(modules={"pluie": {**applied,
-                                                                     "ambiance": 0.1}}))
-    assert tool.available(None, SimpleNamespace(modules={"pluie": {**applied,
-                                                                 "volume": 0.1}}))
 
 
 @needs_ffmpeg
@@ -360,8 +343,7 @@ def test_rain_stays_inside_the_image(rain, core, tmp_path):
 
     for transform in (Transform(), Transform(scale=0.6)):
         clip = _clip(duration=50, transform=transform, keyframes={}, modules={})
-        values = {"temps": "averse", "_gouttes": core.drop_state(
-            core.Settings.from_values({"temps": "averse"}))}
+        values = {"temps": "averse", "gouttes": "animees"}
         rain.resolve(context, clip, media)
         rain.filters({**rain.defaults(), **values})
         for work in list(context.jobs.values()):

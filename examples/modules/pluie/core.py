@@ -91,7 +91,7 @@ class Settings:
                    chute=step("chute"), brume=slider("brume"),
                    eclairs=preset["eclairs"] or bool(values.get("eclairs", False)),
                    surface=surface if surface in SURFACES else "objectif",
-                   anime=bool(values.get("anime", True)),
+                   anime=True,
                    mouille=bool(values.get("mouille", True)), variante=variante)
 
     @property
@@ -351,15 +351,6 @@ RAIN_SIDE, RAIN_FRAMES, RAIN_FPS = 640, 50, 25  # aperçu : pluie qui tombe (bou
 
 def ready(folder: Path) -> bool:
     return (folder / MASK).exists() and (folder / OVERLAY).exists()
-
-
-def drop_state(s: Settings) -> dict:
-    """Réglages des gouttes, tels qu'enregistrés quand on applique la pluie."""
-    return {k: getattr(s, k) for k in DROP_KEYS}
-
-
-def is_applied(s: Settings, applied) -> bool:
-    return isinstance(applied, dict) and applied == drop_state(s)
 
 
 def preview_layers(cache_dir: Path, s: Settings, width: int, height: int,
