@@ -2,8 +2,8 @@
 """Enregistreur d'écran : réglages, puis petite fenêtre flottante pendant l'enregistrement."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtCore import QEventLoop, QPoint, QRect, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QGuiApplication, QPainter, QPen
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -16,11 +16,13 @@ from PyQt6.QtWidgets import (
 
 from montar.i18n import _
 from montar.media.recorder import (
+    ON_WINDOWS,
     RecordOptions,
     can_pick_window,
     can_record_system_audio,
     can_select_region,
     webcams,
+    window_titles,
 )
 from montar.ui.widgets import Segmented, button, label
 
@@ -61,6 +63,10 @@ class RecorderDialog(QDialog):
             self.screen.addItem(f"{screen.name() or _('Écran')} {i + 1} · {g.width()} × "
                                 f"{g.height()}", i)
         layout.addWidget(self.screen)
+        self.window_choice = QComboBox()  # Windows : fenêtre à filmer, choisie dans la liste
+        for title in window_titles():
+            self.window_choice.addItem(title, title)
+        layout.addWidget(self.window_choice)
         self.source_hint = label("", "small")
         self.source_hint.setWordWrap(True)
         layout.addWidget(self.source_hint)
@@ -95,12 +101,20 @@ class RecorderDialog(QDialog):
         self._source_changed("screen")
 
     def _source_changed(self, key: str) -> None:
-        self.screen.setVisible(key == "screen")
-        self.source_hint.setText({
-            "screen": "",
-            "region": _("Après le compte à rebours, dessinez la zone à filmer avec la souris."),
-            "window": _("Après le compte à rebours, cliquez sur la fenêtre à filmer."),
-        }[key])
+        # Windows : la zone se dessine sur l'écran choisi, avant le compte à rebours
+        self.screen.setVisible(key == "screen" or (ON_WINDOWS and key == "region"))
+        self.window_choice.setVisible(ON_WINDOWS and key == "window")
+        if ON_WINDOWS:
+            hints = {"region": _("Après validation, dessinez la zone à filmer avec la souris "
+                                 "(Échap pour annuler)."),
+                     "window": _("La fenêtre est filmée même si elle passe derrière une autre ; "
+                                 "elle ne doit pas être réduite.")
+                     if self.window_choice.count() else _("Aucune fenêtre à filmer.")}
+        else:
+            hints = {"region": _("Après le compte à rebours, dessinez la zone à filmer avec la "
+                                 "souris."),
+                     "window": _("Après le compte à rebours, cliquez sur la fenêtre à filmer.")}
+        self.source_hint.setText(hints.get(key, ""))
 
     def options(self) -> RecordOptions:
         screens = QGuiApplication.screens()
@@ -113,8 +127,93 @@ class RecorderDialog(QDialog):
                         round(g.width() * ratio), round(g.height() * ratio))
         return RecordOptions(self.source.current(), geometry,
                              microphone=self.microphone.isChecked(),
-                             system_audio=self.system_audio.isChecked(),
-                             webcam=self.webcam.currentData() or "")
+                             system_audio=self.system_audio.isChecked()
+                             and self.system_audio.isVisible(),
+                             webcam=self.webcam.currentData() or "",
+                             screen_index=self.screen.currentData() or 0,
+                             window_title=self.window_choice.currentData() or "")
+
+    def chosen_screen(self):
+        screens = QGuiApplication.screens()
+        return screens[self.screen.currentData() or 0] if screens else None
+
+
+class RegionSelector(QWidget):
+    """Écran assombri ; la zone à filmer se dessine à la souris (Échap : annuler)."""
+
+    def __init__(self, screen) -> None:
+        super().__init__(None, Qt.WindowType.FramelessWindowHint
+                         | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setCursor(Qt.CursorShape.CrossCursor)
+        self.setGeometry(screen.geometry())
+        self._start: QPoint | None = None
+        self._rect = QRect()
+        self.result: QRect | None = None
+        self._loop = QEventLoop()
+
+    def select(self) -> QRect | None:
+        """Zone choisie, en coordonnées de l'écran (pixels logiques), ou None."""
+        self.showFullScreen()
+        self.activateWindow()
+        self._loop.exec()
+        return self.result
+
+    def _finish(self, rect: QRect | None) -> None:
+        self.result = rect
+        self.close()
+        self._loop.quit()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 110))
+        if not self._rect.isNull():
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+            painter.fillRect(self._rect, Qt.GlobalColor.transparent)
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+            painter.setPen(QPen(QColor("#2E7D5B"), 2))
+            painter.drawRect(self._rect)
+            painter.setPen(QColor("white"))
+            painter.drawText(self._rect.bottomLeft() + QPoint(4, 18),
+                             f"{self._rect.width()} × {self._rect.height()}")
+        else:
+            painter.setPen(QColor("white"))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                             _("Dessinez la zone à filmer — Échap pour annuler"))
+        painter.end()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        self._start = event.position().toPoint()
+        self._rect = QRect(self._start, self._start)
+        self.update()
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if self._start is not None:
+            self._rect = QRect(self._start, event.position().toPoint()).normalized()
+            self.update()
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if self._start is not None and self._rect.width() > 16 and self._rect.height() > 16:
+            self._finish(self._rect)
+        else:  # simple clic : on recommence
+            self._start, self._rect = None, QRect()
+            self.update()
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        if event.key() == Qt.Key.Key_Escape:
+            self._finish(None)
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        if self._loop.isRunning():
+            self._loop.quit()
+        super().closeEvent(event)
+
+
+def physical_region(screen, rect: QRect) -> tuple[int, int, int, int]:
+    """Zone en pixels réels de l'écran (mise à l'échelle de Windows prise en compte)."""
+    ratio = screen.devicePixelRatio()
+    return (round(rect.x() * ratio), round(rect.y() * ratio),
+            round(rect.width() * ratio), round(rect.height() * ratio))
 
 
 class RecordingBar(QFrame):
@@ -152,6 +251,7 @@ class RecordingBar(QFrame):
             g = screen.availableGeometry()
             self.move(g.center().x() - self.width() // 2, g.bottom() - self.height() - 40)
         self.show()
+        exclude_from_capture(self)
         if seconds <= 0:
             self.countdownFinished.emit()
         else:
@@ -168,3 +268,15 @@ class RecordingBar(QFrame):
     def set_elapsed(self, seconds: float) -> None:
         s = int(seconds)
         self.time.setText(f"{s // 3600:02d}:{s // 60 % 60:02d}:{s % 60:02d}")
+
+
+def exclude_from_capture(widget: QWidget) -> None:
+    """Windows 10 (2004) et plus : la fenêtre n'apparaît pas dans l'enregistrement."""
+    if not ON_WINDOWS:
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.user32.SetWindowDisplayAffinity(int(widget.winId()), 0x11)
+    except (AttributeError, OSError):
+        pass

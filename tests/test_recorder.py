@@ -127,6 +127,8 @@ def test_command_on_windows(monkeypatch):
     monkeypatch.setattr(recorder, "ON_WINDOWS", True)
     monkeypatch.setattr(recorder, "dshow_devices",
                         lambda kind: recorder.parse_dshow(DSHOW_LISTING, kind))
+    # repli gdigrab (ffmpeg sans ddagrab)
+    monkeypatch.setattr(recorder, "windows_grabber", lambda: "gdigrab")
     cmd = command(RecordOptions(geometry=(1920, 0, 1281, 720), microphone=True,
                                 webcam="Integrated Camera"), "out.mp4")
     line = " ".join(cmd)
@@ -135,7 +137,45 @@ def test_command_on_windows(monkeypatch):
     assert "-i audio=Microphone (Realtek(R) Audio)" in line
     assert "-i video=Integrated Camera" in line and "overlay=W-w-24:H-h-24" in line
     assert "x11grab" not in line and "pulse" not in line and cmd[-1] == "out.mp4"
+    zone = " ".join(command(RecordOptions(source="region", geometry=(1920, 0, 2560, 1440),
+                                          region=(100, 50, 641, 360), microphone=False),
+                            "z.mp4"))
+    assert "-offset_x 2020 -offset_y 50 -video_size 640x360" in zone
     silent = " ".join(command(RecordOptions(microphone=False), "x.mp4"))
     assert "dshow" not in silent and "-c:a" not in silent
-    assert not recorder.can_select_region() and not recorder.can_pick_window()
+
+    # ddagrab : écran choisi, pixels réels, images à rapatrier de la carte graphique
+    monkeypatch.setattr(recorder, "windows_grabber", lambda: "ddagrab")
+    line = " ".join(command(RecordOptions(screen_index=1, microphone=False), "d.mp4"))
+    assert "-f lavfi -i ddagrab=output_idx=1:framerate=30:draw_mouse=1" in line
+    assert "[0:v]hwdownload,format=bgra,scale=" in line and "gdigrab" not in line
+    zone = " ".join(command(RecordOptions(source="region", region=(10, 20, 301, 200),
+                                          microphone=False), "z.mp4"))
+    assert ":offset_x=10:offset_y=20:video_size=300x200" in zone
+
+    # fenêtre : par son titre
+    window = " ".join(command(RecordOptions(source="window", window_title="Bloc-notes",
+                                            microphone=False), "w.mp4"))
+    assert "-f gdigrab" in window and "-i title=Bloc-notes" in window
+
+    # son de l'ordinateur : entrée « Mixage stéréo » si Windows la propose
     assert not recorder.can_record_system_audio()
+    listing = DSHOW_LISTING + '[dshow @ 0000] "Mixage stéréo (Realtek(R) Audio)" (audio)\n'
+    monkeypatch.setattr(recorder, "dshow_devices",
+                        lambda kind: recorder.parse_dshow(listing, kind))
+    assert recorder.can_record_system_audio()
+    both = " ".join(command(RecordOptions(microphone=True, system_audio=True), "s.mp4"))
+    assert "-i audio=Mixage stéréo (Realtek(R) Audio)" in both and "amix=inputs=2" in both
+    assert recorder.can_select_region() and recorder.can_pick_window()
+
+
+def test_physical_region():
+    from PyQt6.QtCore import QRect
+
+    from montar.ui.dialogs.recorder import physical_region
+
+    class Screen:
+        def devicePixelRatio(self):
+            return 1.5
+
+    assert physical_region(Screen(), QRect(10, 20, 200, 100)) == (15, 30, 300, 150)

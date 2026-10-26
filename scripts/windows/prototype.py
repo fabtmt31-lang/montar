@@ -189,6 +189,39 @@ def export_mp4(out: Path) -> dict:
             "flux": [s["codec_name"] for s in data["streams"]]}
 
 
+def screen_recording(out: Path) -> dict:
+    """Essai réel de l'enregistreur d'écran (2 s) avec chaque méthode de capture ; à titre
+    d'information : une machine sans écran actif peut refuser la capture."""
+    from montar.media import recorder
+
+    results = {}
+    for grabber in ("ddagrab", "gdigrab"):
+        recorder._GRABBER = grabber
+        target = out / f"ecran-{grabber}.mp4"
+        rec = recorder.Recorder(recorder.RecordOptions(geometry=(0, 0, 640, 480),
+                                                       microphone=False), target)
+        try:
+            rec.start()
+            time.sleep(2.5)
+            ok = rec.stop()
+        except Exception as exc:  # noqa: BLE001 - compte rendu, pas d'arrêt
+            results[grabber] = {"ok": False, "erreur": f"{type(exc).__name__} : {exc}"}
+            continue
+        entry = {"ok": ok}
+        if ok:
+            probe = subprocess.run([shutil.which("ffprobe"), "-v", "error", "-show_entries",
+                                    "stream=width,height:format=duration", "-of", "json",
+                                    str(target)], capture_output=True, text=True,
+                                   encoding="utf-8")
+            entry["fichier"] = json.loads(probe.stdout or "{}")
+        else:
+            entry["erreur"] = rec.error
+        results[grabber] = entry
+    recorder._GRABBER = None
+    results["méthode retenue"] = recorder.windows_grabber()
+    return results
+
+
 def main() -> int:
     out = Path(sys.argv[1] if len(sys.argv) > 1 else "prototype-windows").resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -198,6 +231,8 @@ def main() -> int:
     report.step("Médias de test", lambda: make_media(out))
     report.step("Image d'aperçu", lambda: render_frame(out))
     report.step("Export MP4", lambda: export_mp4(out))
+    if sys.platform == "win32":
+        report.step("Enregistrement d'écran (information)", lambda: screen_recording(out))
     return 0 if report.write() else 1
 
 

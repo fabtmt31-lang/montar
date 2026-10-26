@@ -35,8 +35,11 @@ dans la barre et le gestionnaire des tâches. Le `montar.exe` à la racine du do
   modules, frei0r), met `bin/` (ffmpeg) dans le `PATH` et lance les processus enfants sans
   fenêtre de console.
 - La voix off enregistre le micro par DirectShow.
-- Enregistrement d'écran : écran entier (gdigrab), micro et webcam par DirectShow ; la zone
-  dessinée à la souris, la fenêtre choisie et le son de l'ordinateur restent propres à Linux.
+- Enregistrement d'écran : écran ou zone dessinée à la souris par ddagrab (Desktop
+  Duplication : pixels réels, quelle que soit la mise à l'échelle de Windows ; repli sur
+  gdigrab), fenêtre choisie dans la liste des fenêtres ouvertes (gdigrab), micro et webcam
+  par DirectShow, son de l'ordinateur si Windows propose une entrée « Mixage stéréo » ; la
+  petite fenêtre d'arrêt n'apparaît pas dans la vidéo.
 - Police : rendu lissé et graisse un cran au-dessus sous Windows (`ui_font`).
 - La version portable garde ses réglages dans `%APPDATA%\montar`, comme la version installée.
 - Paramètres : `%APPDATA%\montar` ; cache et journaux : `%LOCALAPPDATA%\montar\cache` ;

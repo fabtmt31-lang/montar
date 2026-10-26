@@ -40,6 +40,7 @@ from montar.engine.geometry import offset_for_center, placement
 from montar.engine.master_job import MasteredExport
 from montar.engine.mastering import apply_master
 from montar.i18n import _
+from montar.media import recorder as recorder_module
 from montar.media.edit import MediaEdit, output_suffix, updated_media
 from montar.media.edit import apply as apply_edit
 from montar.media.frames import FrameError, extract_frame, source_seconds
@@ -62,7 +63,13 @@ from montar.ui.dialogs.export import ExportDialog
 from montar.ui.dialogs.generator import GeneratorDialog
 from montar.ui.dialogs.master_report import MasterReportDialog
 from montar.ui.dialogs.media_editor import MediaEditorDialog
-from montar.ui.dialogs.recorder import COUNTDOWN, RecorderDialog, RecordingBar
+from montar.ui.dialogs.recorder import (
+    COUNTDOWN,
+    RecorderDialog,
+    RecordingBar,
+    RegionSelector,
+    physical_region,
+)
 from montar.ui.dialogs.voice_over import VoiceOverDialog
 from montar.ui.editor.apply import ApplyAction, actions_for, apply_change
 from montar.ui.editor.busy import BusyOverlay, remaining_text
@@ -1042,9 +1049,18 @@ class EditorPage(QWidget):
         dialog = RecorderDialog(self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
+        options = dialog.options()
+        if recorder_module.ON_WINDOWS and options.source == "region":
+            screen = dialog.chosen_screen()
+            rect = RegionSelector(screen).select() if screen is not None else None
+            if rect is None:
+                return
+            options.region = physical_region(screen, rect)
+        if recorder_module.ON_WINDOWS and options.source == "window" and not options.window_title:
+            return
         stamp = time.strftime("%Y-%m-%d %H-%M-%S")
         target = self.project.media_dir / f"{_('Enregistrement')} {stamp}.mp4"
-        self.start_recording(dialog.options(), target)
+        self.start_recording(options, target)
 
     def start_recording(self, options, target: Path, countdown: int = COUNTDOWN) -> None:
         self._recorder = Recorder(options, target)
@@ -1058,7 +1074,7 @@ class EditorPage(QWidget):
         recorder = self._recorder
         if recorder is None:
             return
-        if recorder.options.source == "window":
+        if recorder.options.source == "window" and not recorder_module.ON_WINDOWS:
             recorder.options.window_id = pick_window()
         recorder.start()
         self._record_timer.start()
