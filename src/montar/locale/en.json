@@ -754,7 +754,6 @@
  "installé": "installed",
  "introuvable": "missing",
  "intégré": "built-in",
- "l'enregistrement d'écran n'est pas encore disponible sous Windows": "screen recording is not available on Windows yet",
  "l'enregistrement d'écran n'est pas encore possible dans une session Wayland ; ouvrez une session X11 (la session Cinnamon par défaut de Linux Mint)": "screen recording is not yet possible in a Wayland session; log into an X11 session (the default Cinnamon session of Linux Mint)",
  "la lecture inversée ne s'applique qu'aux vidéos et aux sons": "reverse playback only applies to videos and sounds",
  "la semaine dernière": "last week",

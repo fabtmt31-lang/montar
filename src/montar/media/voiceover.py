@@ -3,14 +3,13 @@
 (PulseAudio / PipeWire sous Linux, DirectShow sous Windows) pendant que la timeline est lue."""
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 from montar.i18n import N_
-from montar.media.recorder import Recorder
+from montar.media.recorder import Recorder, dshow_devices
 
 ON_WINDOWS = sys.platform == "win32"
 
@@ -39,26 +38,7 @@ def microphones() -> list[tuple[str, str]]:
 
 def dshow_microphones() -> list[str]:
     """Entrées son DirectShow (Windows), dans l'ordre donné par ffmpeg."""
-    ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is None:
-        return []
-    try:
-        out = subprocess.run([ffmpeg, "-hide_banner", "-list_devices", "true", "-f", "dshow",
-                              "-i", "dummy"], capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", timeout=10).stderr
-    except (OSError, subprocess.SubprocessError):
-        return []
-    return parse_dshow(out)
-
-
-def parse_dshow(listing: str) -> list[str]:
-    """Noms des entrées son dans la liste des périphériques de ffmpeg (`-list_devices`)."""
-    names = []
-    for line in listing.splitlines():
-        found = re.search(r'"([^"]+)"\s*\(audio\)', line)
-        if found and found.group(1) not in names:
-            names.append(found.group(1))
-    return names
+    return dshow_devices("audio")
 
 
 def command(device: str, target: str) -> list[str]:

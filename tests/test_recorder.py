@@ -34,7 +34,7 @@ def test_session_problem(monkeypatch):
     monkeypatch.setenv("XDG_SESSION_TYPE", "x11")
     assert recorder.session_problem() == "" or "ffmpeg" in recorder.session_problem()
     monkeypatch.setattr(recorder, "ON_WINDOWS", True)
-    assert "Windows" in recorder.session_problem() or "ffmpeg" in recorder.session_problem()
+    assert recorder.session_problem() in ("", "ffmpeg est introuvable")
 
 
 @pytest.fixture(scope="module")
@@ -107,11 +107,12 @@ dummy: Immediate exit requested
 def test_voice_over_on_windows(monkeypatch):
     from montar.media import voiceover
 
-    assert voiceover.parse_dshow(DSHOW_LISTING) == ["Microphone (Realtek(R) Audio)",
-                                                    "Casque (USB Audio)"]
+    assert recorder.parse_dshow(DSHOW_LISTING) == ["Microphone (Realtek(R) Audio)",
+                                                   "Casque (USB Audio)"]
+    assert recorder.parse_dshow(DSHOW_LISTING, "video") == ["Integrated Camera"]
     monkeypatch.setattr(voiceover, "ON_WINDOWS", True)
     monkeypatch.setattr(voiceover, "dshow_microphones",
-                        lambda: voiceover.parse_dshow(DSHOW_LISTING))
+                        lambda: recorder.parse_dshow(DSHOW_LISTING))
     assert voiceover.microphones()[1:] == [("Microphone (Realtek(R) Audio)",) * 2,
                                            ("Casque (USB Audio)",) * 2]
     cmd = voiceover.command("default", "v.wav")
@@ -119,3 +120,21 @@ def test_voice_over_on_windows(monkeypatch):
     assert cmd[cmd.index("-i") + 1] == "audio=Microphone (Realtek(R) Audio)"
     cmd = voiceover.command("Casque (USB Audio)", "v.wav")
     assert cmd[cmd.index("-i") + 1] == "audio=Casque (USB Audio)"
+
+
+def test_command_on_windows(monkeypatch):
+    monkeypatch.setattr(recorder, "ON_WINDOWS", True)
+    monkeypatch.setattr(recorder, "dshow_devices",
+                        lambda kind: recorder.parse_dshow(DSHOW_LISTING, kind))
+    cmd = command(RecordOptions(geometry=(1920, 0, 1281, 720), microphone=True,
+                                webcam="Integrated Camera"), "out.mp4")
+    line = " ".join(cmd)
+    assert "-f gdigrab" in line and "-i desktop" in line
+    assert "-offset_x 1920 -offset_y 0 -video_size 1280x720" in line
+    assert "-i audio=Microphone (Realtek(R) Audio)" in line
+    assert "-i video=Integrated Camera" in line and "overlay=W-w-24:H-h-24" in line
+    assert "x11grab" not in line and "pulse" not in line and cmd[-1] == "out.mp4"
+    silent = " ".join(command(RecordOptions(microphone=False), "x.mp4"))
+    assert "dshow" not in silent and "-c:a" not in silent
+    assert not recorder.can_select_region() and not recorder.can_pick_window()
+    assert not recorder.can_record_system_audio()

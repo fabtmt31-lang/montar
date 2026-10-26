@@ -2,6 +2,7 @@
 """Application du thème (clair, sombre, système) et chargement des polices."""
 from __future__ import annotations
 
+import sys
 from dataclasses import replace
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
@@ -12,6 +13,19 @@ from montar.platform.paths import assets_dir
 from montar.ui.theme import icons
 from montar.ui.theme.qss import build_stylesheet
 from montar.ui.theme.tokens import ACCENTS, DARK, FONT_UI, LIGHT, Palette
+
+
+def ui_font(pixel_size: int = 0) -> QFont:
+    """Police de l'interface. Sous Windows, le rendu par défaut (DirectWrite, calé sur la
+    grille des pixels) rend Manrope maigre et raide : rendu lissé et graisse un cran au-dessus,
+    plus proches de Linux."""
+    font = QFont(FONT_UI)
+    if pixel_size:
+        font.setPixelSize(pixel_size)
+    if sys.platform == "win32":
+        font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+        font.setWeight(QFont.Weight.Medium)
+    return font
 
 
 def load_fonts() -> None:
@@ -69,9 +83,7 @@ class ThemeManager(QObject):
                                    else self.accent)
         app = QApplication.instance()
         if app is not None:
-            font = QFont(FONT_UI)
-            font.setPixelSize(14)
-            app.setFont(font)
+            app.setFont(ui_font(14))
             app.setStyleSheet(build_stylesheet(self.palette))
         self.changed.emit()
 

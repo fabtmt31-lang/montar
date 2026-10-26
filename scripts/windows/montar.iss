@@ -12,9 +12,6 @@
 #ifndef OutputDir
   #define OutputDir "..\..\dist"
 #endif
-#ifndef IconFile
-  #define IconFile "..\..\build\windows\montar.ico"
-#endif
 #define AppId "appsdoc.montar"
 
 [Setup]
@@ -36,8 +33,8 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 LicenseFile={#BundleDir}\LICENSE
-SetupIconFile={#IconFile}
-UninstallDisplayIcon={app}\montar.ico
+SetupIconFile={#BundleDir}\montar.ico
+UninstallDisplayIcon={app}\bin\montar.exe
 OutputDir={#OutputDir}
 OutputBaseFilename=montar-{#AppVersion}-windows-x64
 Compression=lzma2/max
@@ -62,14 +59,13 @@ Name: "assoc"; Description: "{cm:AssocTask}"
 
 [Files]
 Source: "{#BundleDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#IconFile}"; DestDir: "{app}"; DestName: "montar.ico"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\montar"; Filename: "{app}\bin\pythonw.exe"; Parameters: "-X utf8 -I -m montar"; \
-    WorkingDir: "{userdocs}"; IconFilename: "{app}\montar.ico"; AppUserModelID: "{#AppId}"; \
+Name: "{autoprograms}\montar"; Filename: "{app}\bin\montar.exe"; \
+    WorkingDir: "{userdocs}"; AppUserModelID: "{#AppId}"; \
     Comment: "Montage vidéo simple et local"
-Name: "{autodesktop}\montar"; Filename: "{app}\bin\pythonw.exe"; Parameters: "-X utf8 -I -m montar"; \
-    WorkingDir: "{userdocs}"; IconFilename: "{app}\montar.ico"; AppUserModelID: "{#AppId}"; \
+Name: "{autodesktop}\montar"; Filename: "{app}\bin\montar.exe"; \
+    WorkingDir: "{userdocs}"; AppUserModelID: "{#AppId}"; \
     Tasks: desktopicon
 
 [Registry]
@@ -80,10 +76,10 @@ Root: HKA; Subkey: "Software\Classes\montar.projet"; ValueType: string; ValueNam
 Root: HKA; Subkey: "Software\Classes\montar.projet\DefaultIcon"; ValueType: string; \
     ValueName: ""; ValueData: "{app}\montar.ico"; Tasks: assoc
 Root: HKA; Subkey: "Software\Classes\montar.projet\shell\open\command"; ValueType: string; \
-    ValueName: ""; ValueData: """{app}\bin\pythonw.exe"" -X utf8 -I -m montar ""%1"""; Tasks: assoc
+    ValueName: ""; ValueData: """{app}\bin\montar.exe"" ""%1"""; Tasks: assoc
 
 [Run]
-Filename: "{app}\bin\pythonw.exe"; Parameters: "-X utf8 -I -m montar"; WorkingDir: "{userdocs}"; \
+Filename: "{app}\bin\montar.exe"; WorkingDir: "{userdocs}"; \
     Description: "{cm:LaunchProgram,montar}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]

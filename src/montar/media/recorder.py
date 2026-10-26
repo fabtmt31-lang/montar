@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Enregistreur d'écran simplifié (F-MED-06) : écran, zone ou fenêtre (X11), micro et son
-de l'ordinateur (PulseAudio / PipeWire), webcam en incrustation ; par ffmpeg."""
+de l'ordinateur (PulseAudio / PipeWire), webcam en incrustation ; par ffmpeg.
+Sous Windows : écran entier (gdigrab), micro et webcam par DirectShow."""
 from __future__ import annotations
 
 import glob
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -28,7 +30,7 @@ class RecordOptions:
     fps: int = 30
     microphone: bool = True
     system_audio: bool = False
-    webcam: str = ""  # périphérique v4l2 (/dev/video0), vide = pas de webcam
+    webcam: str = ""  # v4l2 (/dev/video0) ou nom DirectShow ; vide = pas de webcam
     show_cursor: bool = True
 
 
@@ -37,7 +39,7 @@ def session_problem() -> str:
     if shutil.which("ffmpeg") is None:
         return N_("ffmpeg est introuvable")
     if ON_WINDOWS:
-        return N_("l'enregistrement d'écran n'est pas encore disponible sous Windows")
+        return ""
     if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
         return N_("l'enregistrement d'écran n'est pas encore possible dans une session Wayland ; "
                   "ouvrez une session X11 (la session Cinnamon par défaut de Linux Mint)")
@@ -47,12 +49,47 @@ def session_problem() -> str:
 
 
 def webcams() -> list[str]:
-    """Caméras v4l2 présentes (les nœuds de métadonnées ne sont pas filtrés ici)."""
+    """Caméras v4l2 présentes (les nœuds de métadonnées ne sont pas filtrés ici), ou
+    caméras DirectShow sous Windows."""
+    if ON_WINDOWS:
+        return dshow_devices("video")
     return sorted(glob.glob("/dev/video*"))
 
 
+def dshow_devices(kind: str) -> list[str]:
+    """Périphériques DirectShow (Windows) d'un type (« audio » ou « video »)."""
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        return []
+    try:
+        out = subprocess.run([ffmpeg, "-hide_banner", "-list_devices", "true", "-f", "dshow",
+                              "-i", "dummy"], capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=10).stderr
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return parse_dshow(out, kind)
+
+
+def parse_dshow(listing: str, kind: str = "audio") -> list[str]:
+    """Noms des périphériques d'un type dans la liste de ffmpeg (`-list_devices true`)."""
+    names = []
+    for line in listing.splitlines():
+        found = re.search(r'"([^"]+)"\s*\((audio|video)\)', line)
+        if found and found.group(2) == kind and found.group(1) not in names:
+            names.append(found.group(1))
+    return names
+
+
 def can_pick_window() -> bool:
-    return shutil.which("xwininfo") is not None
+    return not ON_WINDOWS and shutil.which("xwininfo") is not None
+
+
+def can_select_region() -> bool:
+    return not ON_WINDOWS  # ffmpeg ne sait dessiner la zone à la souris que sous X11
+
+
+def can_record_system_audio() -> bool:
+    return not ON_WINDOWS  # Windows : pas de capture du son de sortie par DirectShow
 
 
 def pick_window(timeout: float = 60.0) -> str:
@@ -65,6 +102,8 @@ def pick_window(timeout: float = 60.0) -> str:
 
 
 def command(options: RecordOptions, target: str) -> list[str]:
+    if ON_WINDOWS:
+        return _command_windows(options, target)
     ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
     display = options.display or os.environ.get("DISPLAY", ":0")
     cmd = [ffmpeg, "-v", "error", "-y", "-thread_queue_size", "512", "-f", "x11grab",
@@ -88,7 +127,33 @@ def command(options: RecordOptions, target: str) -> list[str]:
     if options.webcam:
         cmd += ["-thread_queue_size", "512", "-f", "v4l2", "-i", options.webcam]
         webcam = inputs
+    return _encode(cmd, options, audio, webcam, target)
+
+
+def _command_windows(options: RecordOptions, target: str) -> list[str]:
+    """Écran par gdigrab (coordonnées en pixels physiques), micro et webcam par DirectShow."""
+    ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
+    x, y, w, h = options.geometry
+    cmd = [ffmpeg, "-v", "error", "-y", "-thread_queue_size", "512", "-f", "gdigrab",
+           "-framerate", str(options.fps), "-draw_mouse", "1" if options.show_cursor else "0",
+           "-offset_x", str(x), "-offset_y", str(y), "-video_size", f"{w - w % 2}x{h - h % 2}",
+           "-i", "desktop"]
+    inputs, audio, webcam = 1, [], None
+    microphone = next(iter(dshow_devices("audio")), "") if options.microphone else ""
+    if microphone:
+        cmd += ["-thread_queue_size", "1024", "-f", "dshow", "-audio_buffer_size", "50",
+                "-i", f"audio={microphone}"]
+        audio.append(inputs)
         inputs += 1
+    if options.webcam:
+        cmd += ["-thread_queue_size", "512", "-f", "dshow", "-i", f"video={options.webcam}"]
+        webcam = inputs
+    return _encode(cmd, options, audio, webcam, target)
+
+
+def _encode(cmd: list[str], options: RecordOptions, audio: list[int], webcam: int | None,
+            target: str) -> list[str]:
+    """Montage des entrées (écran, webcam en incrustation, sons mélangés) et encodage."""
     graph = ["[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p[screen]"]
     video = "[screen]"
     if webcam is not None:

@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QMenu,
     QMessageBox,
     QProgressBar,
+    QScrollArea,
     QSplitter,
     QStackedWidget,
     QToolButton,
@@ -1131,7 +1132,16 @@ class EditorPage(QWidget):
         layout = QVBoxLayout(dialog)
         card = ExtensionsCard(self.module_manager)
         card.disabledChanged.connect(self.disabledModulesChanged)
-        layout.addWidget(card, 1)
+        # beaucoup de modules ou un petit écran : la liste défile au lieu d'agrandir la fenêtre
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setFrameShape(QFrame.Shape.NoFrame)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        area.setWidget(card)
+        layout.addWidget(area, 1)
+        screen = self.screen().availableGeometry() if self.screen() else None
+        if screen is not None:
+            dialog.resize(min(760, screen.width() - 40), min(560, screen.height() - 80))
         close = button(_("Fermer"), "secondary")
         close.clicked.connect(dialog.accept)
         layout.addWidget(close, 0, Qt.AlignmentFlag.AlignRight)

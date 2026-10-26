@@ -15,7 +15,13 @@ from PyQt6.QtWidgets import (
 )
 
 from montar.i18n import _
-from montar.media.recorder import RecordOptions, can_pick_window, webcams
+from montar.media.recorder import (
+    RecordOptions,
+    can_pick_window,
+    can_record_system_audio,
+    can_select_region,
+    webcams,
+)
 from montar.ui.widgets import Segmented, button, label
 
 COUNTDOWN = 3
@@ -40,10 +46,13 @@ class RecorderDialog(QDialog):
         layout.addSpacing(6)
 
         layout.addWidget(label(_("Que filmer ?")))
-        sources = [("screen", _("Écran")), ("region", _("Zone"))]
+        sources = [("screen", _("Écran"))]
+        if can_select_region():
+            sources.append(("region", _("Zone")))
         if can_pick_window():
             sources.append(("window", _("Fenêtre")))
         self.source = Segmented(sources, "screen")
+        self.source.setVisible(len(sources) > 1)
         self.source.changed.connect(self._source_changed)
         layout.addWidget(self.source)
         self.screen = QComboBox()
@@ -63,6 +72,7 @@ class RecorderDialog(QDialog):
         self.system_audio = QCheckBox(_("Son de l'ordinateur"))
         layout.addWidget(self.microphone)
         layout.addWidget(self.system_audio)
+        self.system_audio.setVisible(can_record_system_audio())
         layout.addSpacing(6)
         layout.addWidget(label(_("Webcam (en incrustation, en bas à droite)")))
         self.webcam = QComboBox()

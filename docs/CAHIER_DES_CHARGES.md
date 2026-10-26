@@ -526,7 +526,14 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
 - ✅ suivi de mouvement (hors cahier initial) : un élément suit un objet, ou l'objet est pixelisé ;
 - ◐ partage en ligne (F-EXP-08) : non fait, il ne pourra être qu'un module optionnel.
 
-**Suite prévue** : portage Windows (D9) ; Flatpak, `.rpm`, arm64 ; dépôt APT signé.
+**Jalon J8 — portage Windows** (version 1.4, décision D9 ; détails dans `docs/WINDOWS.md`) :
+- ✅ moteur : pile MSYS2 UCRT64 (MLT 7.42 et ses bindings Python fournis), prototype vérifié en intégration continue (point ouvert n° 1 tranché : bindings MLT, pas de second moteur) ;
+- ✅ couche `platform/` : dossier « Vidéos » de Windows, processus, suivi de ffmpeg sans `select()`, préparation de MLT et frei0r ; toute la suite de tests passe sous Windows ;
+- ✅ installeur `.exe` (Inno Setup, pour soi seul ou tous les utilisateurs, association `.montar`) et version portable `.zip`, lanceur `montar.exe` ;
+- ✅ voix off et enregistrement d'écran (écran entier, micro, webcam) par DirectShow / gdigrab ;
+- ◐ installeur non signé (avertissement SmartScreen) ; zone, fenêtre et son de l'ordinateur à l'enregistrement d'écran propres à Linux ; accélération matérielle à l'export (NVENC, QSV, AMF) non vérifiée sous Windows.
+
+**Suite prévue** : Flatpak, `.rpm`, arm64 ; dépôt APT signé ; signature de l'installeur Windows.
 
 ---
 

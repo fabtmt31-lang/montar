@@ -69,7 +69,6 @@ jobs:
       - name: Dossier autonome (Python, Qt, MLT, FFmpeg et DLL)
         run: |
           bash scripts/windows/bundle.sh build/windows/montar
-          python scripts/windows/make_icon.py build/windows/montar.ico
       - name: Essai du dossier autonome, sans MSYS2
         run: |
           B=build/windows/montar
@@ -86,20 +85,24 @@ jobs:
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
           $version = (Select-String -Path src/montar/__init__.py -Pattern '__version__ = "(.+)"').Matches[0].Groups[1].Value
           & $iscc /Qp "/DAppVersion=$version" "/DBundleDir=$pwd\build\windows\montar" `
-            "/DOutputDir=$pwd\dist" "/DIconFile=$pwd\build\windows\montar.ico" scripts\windows\montar.iss
+            "/DOutputDir=$pwd\dist" scripts\windows\montar.iss
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          Get-ChildItem dist\montar-*-windows-x64.exe | Format-Table Name, Length
+          # version portable : le même dossier, à décompresser n'importe où
+          7z a -tzip -mx=7 "dist\montar-$version-windows-x64-portable.zip" .\build\windows\montar | Select-Object -Last 2
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-ChildItem dist\montar-*-windows-x64* | Format-Table Name, Length
       - name: Installation silencieuse, démarrage, désinstallation
         shell: pwsh
         run: |
           $dir = "$env:RUNNER_TEMP\montar-installe"
           $setup = Get-ChildItem dist\montar-*-windows-x64.exe | Select-Object -First 1
+          if (-not (Test-Path build\windows\montar\montar.exe)) { Write-Error "lanceur racine absent"; exit 1 }
           Start-Process -Wait -FilePath $setup.FullName -ArgumentList `
             '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', "/DIR=$dir", '/TASKS=assoc'
           & "$dir\bin\python.exe" -X utf8 -I -m montar --diagnostic
           if ($LASTEXITCODE) { exit 1 }
-          # l'interface doit démarrer et tenir 20 secondes
-          $p = Start-Process -FilePath "$dir\bin\pythonw.exe" -ArgumentList '-X', 'utf8', '-I', '-m', 'montar' -PassThru
+          # l'interface doit démarrer par le lanceur montar.exe et tenir 20 secondes
+          $p = Start-Process -FilePath "$dir\bin\montar.exe" -PassThru
           Start-Sleep 20
           $log = "$env:LOCALAPPDATA\montar\cache\logs\montar.log"
           if (Test-Path $log) { Get-Content $log }
@@ -112,8 +115,10 @@ jobs:
           "installation, démarrage et désinstallation : OK"
       - uses: actions/upload-artifact@v4
         with:
-          name: montar-windows-installateur
-          path: dist/montar-*-windows-x64.exe
+          name: montar-windows
+          path: |
+            dist/montar-*-windows-x64.exe
+            dist/montar-*-windows-x64-portable.zip
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()

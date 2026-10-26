@@ -34,6 +34,7 @@ from montar.ui.theme.icons import pixmap as icon_pixmap
 from montar.ui.widgets import button, label, rounded_pixmap
 
 TILE = QSize(126, 72)
+ICON_TILE = QSize(126, 50)  # tuiles à pictogramme (transitions) : plus basses
 TRANSITION_MIME = "application/x-montar-transition"  # type de transition glissée
 
 
@@ -101,17 +102,20 @@ class _Panel(QFrame):
         return lbl
 
 
-def _tile(pm: QPixmap, text: str = "", button: QPushButton | None = None) -> QPushButton:
+def _tile(pm: QPixmap, text: str = "", button: QPushButton | None = None,
+          size: QSize = TILE) -> QPushButton:
     b = button or QPushButton()
     b.setProperty("variant", "tile")
     b.setCheckable(True)
     b.setCursor(Qt.CursorShape.PointingHandCursor)
-    b.setFixedSize(TILE.width(), TILE.height() + (24 if text else 0))
+    # place du libellé d'après la police réelle (elle varie d'un système à l'autre)
+    text_height = b.fontMetrics().height() + 8 if text else 0
+    b.setFixedSize(size.width(), size.height() + text_height)
     layout = QVBoxLayout(b)
     layout.setContentsMargins(4, 4, 4, 4)
     layout.setSpacing(2)
     img = QLabel()
-    img.setPixmap(rounded_pixmap(pm, QSize(TILE.width() - 10, TILE.height() - 10), 10))
+    img.setPixmap(rounded_pixmap(pm, QSize(size.width() - 10, size.height() - 10), 10))
     img.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
     layout.addWidget(img, 0, Qt.AlignmentFlag.AlignHCenter)
     if text:
@@ -126,7 +130,7 @@ class TextPanel(_Panel):
     addRequested = pyqtSignal(str)  # identifiant du style
 
     def __init__(self) -> None:
-        super().__init__(_("Texte"))
+        super().__init__(_("Texte"), scroll=True)
         add = button(_("Ajouter une zone de texte"), "primary", "plus")
         add.setMinimumHeight(44)
         add.clicked.connect(lambda: self.addRequested.emit("title"))
@@ -170,7 +174,7 @@ class TransitionsPanel(_Panel):
     applyRequested = pyqtSignal(str)
 
     def __init__(self, controller: EditorController) -> None:
-        super().__init__(_("Transitions"))
+        super().__init__(_("Transitions"), scroll=True)
         self.controller = controller
         self.info = self.hint("")
         self.body.addWidget(self.info)
@@ -179,7 +183,8 @@ class TransitionsPanel(_Panel):
         self._tiles = []
         for i, kind in enumerate(VIDEO_TRANSITIONS):
             name, icon = TRANSITIONS[kind]
-            tile = _tile(self._icon_tile(icon), _(name), _DragTile(TRANSITION_MIME, kind))
+            tile = _tile(self._icon_tile(icon), _(name), _DragTile(TRANSITION_MIME, kind),
+                         ICON_TILE)
             tile.setCheckable(False)
             tile.setToolTip(_("Glissez la transition entre deux clips de la timeline, ou "
                               "cliquez pour la placer après le clip sélectionné"))
@@ -203,7 +208,8 @@ class TransitionsPanel(_Panel):
             if item.widget() is not None:
                 item.widget().deleteLater()
         for i, (_module_id, t) in enumerate(transitions):
-            tile = _tile(self._icon_tile(t.icon), _(t.name), _DragTile(TRANSITION_MIME, t.id))
+            tile = _tile(self._icon_tile(t.icon), _(t.name), _DragTile(TRANSITION_MIME, t.id),
+                         ICON_TILE)
             tile.setCheckable(False)
             tile.setToolTip(_(t.description) or _(t.name))
             tile.clicked.connect(lambda _=False, k=t.id: self.applyRequested.emit(k))
@@ -212,10 +218,10 @@ class TransitionsPanel(_Panel):
     @staticmethod
     def _icon_tile(icon: str) -> QPixmap:
         p = theme().palette
-        pm = QPixmap(TILE.width() * 2, TILE.height() * 2)
+        pm = QPixmap(ICON_TILE.width() * 2, ICON_TILE.height() * 2)
         pm.fill(QColor(p.mist))
         painter = QPainter(pm)
-        ip = icon_pixmap(icon, p.forest, 64, 1.0)
+        ip = icon_pixmap(icon, p.forest, 44, 1.0)
         painter.drawPixmap((pm.width() - ip.width()) // 2, (pm.height() - ip.height()) // 2, ip)
         painter.end()
         return pm
@@ -247,7 +253,7 @@ class TransitionsPanel(_Panel):
 
 class FiltersPanel(_Panel):
     def __init__(self, controller: EditorController) -> None:
-        super().__init__(_("Filtres"))
+        super().__init__(_("Filtres"), scroll=True)
         self.controller = controller
         self.info = self.hint(_("Sélectionnez une vidéo ou une image dans la timeline."))
         self.body.addWidget(self.info)

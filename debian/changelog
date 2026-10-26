@@ -1,10 +1,22 @@
+montar (1.4.0) unstable; urgency=medium
+
+  * Portage Windows : moteur sous MSYS2 (UCRT64), suite de tests verte sous
+    Windows, installateur (Inno Setup) et version portable, lanceur
+    montar.exe ; voix off et enregistrement d'écran par DirectShow / gdigrab.
+  * Panneaux Texte, Transitions et Filtres : défilent quand la place manque
+    (les tuiles ne se chevauchent plus) ; tuiles des transitions plus petites.
+  * Fenêtre « Modules » : la liste défile et la fenêtre tient dans l'écran.
+  * Windows : police de l'interface rendue lissée et un peu plus grasse.
+
+ -- Fabien <admin@appsdoc.fr>  Mon, 26 Oct 2026 10:00:00 +0100
+
 montar (1.3.1) unstable; urgency=medium
 
   * Inspecteur et panneaux : la molette ou le défilement à deux doigts fait
     défiler le panneau au lieu de modifier le réglage survolé (curseurs et
     listes ne réagissent à la molette qu'après un clic).
 
- -- Fabien <admin@appsdoc.fr>  Mon, 02 Nov 2026 10:00:00 +0100
+ -- Fabien <admin@appsdoc.fr>  Sun, 25 Oct 2026 18:00:00 +0100
 
 montar (1.3.0) unstable; urgency=medium
 

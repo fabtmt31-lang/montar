@@ -64,6 +64,23 @@ cp -r "$P/share/mlt" "$out/share/"
 cp "$P"/bin/ffmpeg.exe "$P"/bin/ffprobe.exe "$out/bin/"
 [ -d "$P/etc/fonts" ] && mkdir -p "$out/etc" && cp -r "$P/etc/fonts" "$out/etc/"
 
+echo "== Lanceur montar.exe (Python chargé dans le processus de montar)"
+python "$root/scripts/windows/make_icon.py" "$out/montar.ico"
+version=$(PYTHONPATH="$root/src" python -c 'import montar; print(montar.__version__)')
+work=$(mktemp -d)
+cp "$out/montar.ico" "$work/"
+printf '#define VERSION_DOTS "%s"\n#define VERSION_COMMAS %s,0\n' "$version" \
+    "$(printf '%s' "$version" | tr . ,)" > "$work/version.h"
+cp "$root/scripts/windows/launcher.rc" "$work/"
+(cd "$work" && windres launcher.rc -O coff -o launcher.res)
+pyinc=$(python -c 'import sysconfig; print(sysconfig.get_paths()["include"])')
+gcc -municode -mwindows -O2 -I"$pyinc" "$root/scripts/windows/launcher.c" "$work/launcher.res" \
+    -L"$P/lib" -l"$py" -o "$out/bin/montar.exe"
+# à la racine (version portable) : relais vers bin\montar.exe
+gcc -municode -mwindows -O2 "$root/scripts/windows/launcher_root.c" "$work/launcher.res" \
+    -o "$out/montar.exe"
+rm -rf "$work"
+
 echo "== DLL nécessaires (dépendances de chaque exécutable et module)"
 win_prefix=$(cygpath -w "$P" | tr '[:upper:]' '[:lower:]')
 

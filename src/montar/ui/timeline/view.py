@@ -36,7 +36,8 @@ from montar.ui.editor.media_panel import MEDIA_MIME
 from montar.ui.editor.panels import TRANSITION_MIME
 from montar.ui.theme import theme
 from montar.ui.theme.icons import pixmap as icon_pixmap
-from montar.ui.theme.tokens import FONT_MONO, FONT_UI
+from montar.ui.theme.manager import ui_font
+from montar.ui.theme.tokens import FONT_MONO
 
 HEADER_W = 176
 RULER_H = 30
@@ -288,7 +289,7 @@ class TimelineView(QAbstractScrollArea):
                 if rect is not None:
                     self._paint_clip(painter, clip, rect, True, ghost=True)
         if not self.controller.project.clips and self._drop is None:
-            f = QFont(FONT_UI)
+            f = ui_font()
             f.setPixelSize(13)
             painter.setFont(f)
             painter.setPen(QColor(p.text_muted))
@@ -355,7 +356,7 @@ class TimelineView(QAbstractScrollArea):
                 and clip.volume > 0 \
                 and (on_audio_track or media.kind == "audio" or self.video_waveforms):
             self._paint_waveform(painter, clip, media, rect, on_audio_track)
-        f = QFont(FONT_UI)
+        f = ui_font()
         f.setPixelSize(12)
         f.setWeight(QFont.Weight.DemiBold)
         painter.setFont(f)
@@ -711,7 +712,7 @@ class TimelineView(QAbstractScrollArea):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(p.mist))
             painter.drawRoundedRect(badge, 6, 6)
-            f = QFont(FONT_UI)
+            f = ui_font()
             f.setPixelSize(11)
             f.setWeight(QFont.Weight.Bold)
             painter.setFont(f)

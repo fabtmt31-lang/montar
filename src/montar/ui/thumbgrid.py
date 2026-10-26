@@ -14,7 +14,8 @@ from PyQt6.QtWidgets import (
 
 from montar.ui.theme import theme
 from montar.ui.theme.icons import pixmap as icon_pixmap
-from montar.ui.theme.tokens import FONT_MONO, FONT_UI
+from montar.ui.theme.manager import ui_font
+from montar.ui.theme.tokens import FONT_MONO
 
 ROLE_SUBTITLE = Qt.ItemDataRole.UserRole + 1
 ROLE_BADGE = Qt.ItemDataRole.UserRole + 2
@@ -115,7 +116,7 @@ class ThumbDelegate(QStyledItemDelegate):
             painter.setPen(pen)
             painter.drawRoundedRect(thumb.adjusted(1, 1, -1, -1), radius, radius)
 
-        f = QFont(FONT_UI)
+        f = ui_font()
         f.setPixelSize(self._view.title_px)
         f.setWeight(QFont.Weight.DemiBold if self._view.title_px > 13 else QFont.Weight.Medium)
         painter.setFont(f)
@@ -132,7 +133,7 @@ class ThumbDelegate(QStyledItemDelegate):
                              Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom
                              if subtitle else Qt.AlignmentFlag.AlignVCenter, title)
         if subtitle:
-            f2 = QFont(FONT_UI)
+            f2 = ui_font()
             f2.setPixelSize(12)
             painter.setFont(f2)
             painter.setPen(QColor(p.text_muted))
