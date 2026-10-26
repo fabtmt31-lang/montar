@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 
 from PyQt6.QtCore import QRectF, Qt
-from PyQt6.QtGui import QColor, QIcon, QLinearGradient, QPainter, QPen
+from PyQt6.QtGui import QColor, QGuiApplication, QIcon, QLinearGradient, QPainter, QPen
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -91,44 +91,58 @@ def _hex(color: str) -> str:
     return "#FFFFFF" if color == "white" else "#000000"
 
 
+# libellé ajouté au nom des clips qui ne sont pas des vidéos ordinaires
+KIND_TAGS = {"image": "image", "timelapse": "timelapse, gardé entier",
+             "mixed": "déjà mélangé, redécoupé"}
+
+
 class MixFlashDialog(QDialog):
     def __init__(self, parent, clips, chosen: set[str], fps: int, settings: Settings,
-                 remix: bool, names, skipped: int = 0) -> None:
+                 remix: bool, names, kinds: dict[str, str] | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(_("Mix Flash"))
-        self.setMinimumWidth(620)
+        self.setMinimumWidth(560)
         self._clips, self._fps, self._seed = list(clips), fps, settings.seed
+        self._kinds = dict(kinds or {})
         self._swatch = {c.id: SWATCHES[i % len(SWATCHES)] for i, c in enumerate(self._clips)}
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 22, 24, 18)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        body = QWidget()  # tout défile, sauf les boutons : la fenêtre tient sur l'écran
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(24, 22, 24, 12)
         layout.setSpacing(10)
+        page = QScrollArea()
+        page.setWidget(body)
+        page.setWidgetResizable(True)
+        page.setFrameShape(QFrame.Shape.NoFrame)
+        page.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        outer.addWidget(page, 1)
         layout.addWidget(label(_("Mix Flash"), "h2"))
-        intro = label(_("Les vidéos cochées sont découpées en extraits mélangés au hasard. "
+        intro = label(_("Les clips cochés sont découpés en extraits mélangés au hasard. "
                         "Aucune image n'est perdue ; les extraits n'ont pas de son."), "muted")
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
         heading = QHBoxLayout()
-        heading.addWidget(label(_("Vidéos de la piste") if not remix
-                                else _("Vidéos du mélange")))
+        heading.addWidget(label(_("Clips de la piste ({n})").format(n=len(self._clips))
+                                if not remix else _("Clips du mélange")))
         heading.addStretch()
-        self.whole = QCheckBox(_("Toute la piste"))  # coche ou décoche toutes les vidéos
-        self.whole.setEnabled(not remix and len(self._clips) > 1)
+        self.whole = QCheckBox(_("Toute la piste"))  # coche ou décoche tous les clips
+        self.whole.setEnabled(not remix)
         self.whole.clicked.connect(self._whole_clicked)
         heading.addWidget(self.whole)
         layout.addLayout(heading)
-        if skipped:
-            note = label(_("{n} autre(s) clip(s) de la piste (images, timelapses, extraits déjà "
-                           "mélangés…) ne sont pas pris.").format(n=skipped), "small")
-            note.setWordWrap(True)
-            layout.addWidget(note)
         listing = QWidget()
         rows = QVBoxLayout(listing)
         rows.setContentsMargins(0, 0, 0, 0)
         rows.setSpacing(6)
         self.boxes: dict[str, QCheckBox] = {}
         for c in self._clips:
-            box = QCheckBox(f"{names(c)}  ·  {seconds_to_short(c.duration / fps)}")
+            text = f"{names(c)}  ·  {seconds_to_short(c.duration / fps)}"
+            tag = KIND_TAGS.get(self._kinds.get(c.id, ""))
+            box = QCheckBox(f"{text}  ·  {_(tag)}" if tag else text)
+            box.setToolTip(names(c))
             box.setChecked(c.id in chosen)
             box.setEnabled(not remix)
             box.toggled.connect(self._update)
@@ -225,7 +239,10 @@ class MixFlashDialog(QDialog):
         il.addWidget(self.summary)
         layout.addWidget(info)
 
-        footer = QHBoxLayout()
+        bar = QFrame()  # boutons toujours visibles, sous la partie qui défile
+        bar.setObjectName("DialogFooter")
+        footer = QHBoxLayout(bar)
+        footer.setContentsMargins(24, 10, 24, 16)
         shuffle = QPushButton(_("Remélanger"))
         shuffle.setProperty("variant", "tonal")
         shuffle.setMinimumHeight(40)
@@ -245,8 +262,22 @@ class MixFlashDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         footer.addWidget(buttons)
-        layout.addLayout(footer)
+        outer.addWidget(bar)
+        self._body = body
         self._update()
+        self._fit_screen()
+
+    def _fit_screen(self) -> None:
+        """Hauteur limitée à l'écran ; au-delà, le contenu défile."""
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        wanted = self._body.sizeHint().height() + 90
+        if screen is None:
+            self.resize(self.width(), wanted)
+            return
+        area = screen.availableGeometry()
+        self.setMaximumHeight(area.height() - 40)
+        self.resize(min(max(self.width(), 640), area.width() - 40),
+                    min(wanted, area.height() - 80))
 
     def _seconds(self, value: float, low: float, high: float) -> QDoubleSpinBox:
         box = QDoubleSpinBox()
@@ -305,11 +336,12 @@ class MixFlashDialog(QDialog):
         if not chosen:
             self.before.set_blocks([])
             self.after.set_blocks([])
-            self.summary.setText(_("Cochez au moins une vidéo."))
+            self.summary.setText(_("Cochez au moins un clip."))
             return
         settings = self.settings()
         lengths = [c.duration for c in chosen]
-        items = plan(lengths, self._fps, settings)
+        items = plan(lengths, self._fps, settings,
+                     [self._kinds.get(c.id) == "timelapse" for c in chosen])
         self.before.set_blocks((c.duration, self._swatch[c.id], []) for c in chosen)
         self.after.set_blocks(
             (i.length, self._swatch[chosen[i.piece.source].id],

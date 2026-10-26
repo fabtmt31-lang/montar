@@ -85,11 +85,11 @@ class Couleur(VideoEffect):
         return result
 
 
-def _settings_dialog(editor, clips, chosen, settings, remix, skipped=0):
+def _settings_dialog(editor, clips, chosen, settings, remix, kinds):
     from .dialog import MixFlashDialog
 
     dialog = MixFlashDialog(editor.parent, clips, chosen, editor.project.fps, settings, remix,
-                            names=lambda c: editor.timeline.media_of(c).name, skipped=skipped)
+                            names=lambda c: editor.timeline.media_of(c).name, kinds=kinds)
     if dialog.exec() != dialog.DialogCode.Accepted:
         return None
     return dialog.chosen_ids(), dialog.settings()
@@ -114,10 +114,10 @@ class MixFlashTool(Tool):
 
     def run(self, editor, clip) -> None:
         clips = core.candidates(editor.timeline, clip)
-        skipped = len(editor.timeline.clips_on(clip.track_id)) - len(clips)
+        kinds = {c.id: core.kind_of(editor.timeline, c) for c in clips}
         # toute la piste est cochée d'emblée ; on décoche ce qui ne doit pas être mélangé
         result = _settings_dialog(editor, clips, {c.id for c in clips}, core.Settings(),
-                                  remix=False, skipped=skipped)
+                                  remix=False, kinds=kinds)
         if result is None:
             return
         ids, settings = result
@@ -139,8 +139,10 @@ class RemixTool(Tool):
         originals = [core._build(core.Clip, d) for d in data.get("originals", [])]
         settings = core.Settings.from_dict(data.get("settings", {}))
         settings.seed += 1
+        kinds = {c.id: "timelapse" if editor.timeline.timing_locked(c)
+                 else editor.timeline.media_of(c).kind for c in originals}
         result = _settings_dialog(editor, originals, {c.id for c in originals}, settings,
-                                  remix=True)
+                                  remix=True, kinds=kinds)
         if result is None:
             return
         _ids, settings = result

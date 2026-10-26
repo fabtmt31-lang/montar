@@ -185,15 +185,19 @@ def shuffle(pieces: list[Piece], rng: random.Random, no_adjacent: bool) -> list[
     return best  # sans ordre parfait (une seule source très courte), le moins de voisins
 
 
-def plan(lengths: list[int], fps: int, settings: Settings) -> list[Item]:
-    """Résultat du mélange pour des clips de `lengths` images (même tirage → même résultat)."""
+def plan(lengths: list[int], fps: int, settings: Settings,
+         whole: list[bool] | None = None) -> list[Item]:
+    """Résultat du mélange pour des clips de `lengths` images (même tirage → même résultat).
+
+    Les sources marquées dans `whole` (timelapses) restent d'un seul tenant."""
     rng = random.Random(settings.seed)
     low = max(1, round(settings.min_seconds * fps))
     high = max(low, round(settings.max_seconds * fps))
     pieces = []
     for source, total in enumerate(lengths):
         offset = 0
-        for index, length in enumerate(split_lengths(total, low, high, rng)):
+        parts = [total] if whole and whole[source] else split_lengths(total, low, high, rng)
+        for index, length in enumerate(parts):
             pieces.append(Piece(source, index, offset, length))
             offset += length
     order = shuffle(pieces, rng, settings.no_adjacent)
@@ -245,17 +249,31 @@ def group_of(clip: Clip | None) -> dict | None:
 
 
 def eligible(timeline, clip: Clip) -> bool:
-    """Clip vidéo d'une piste vidéo, que le Mix Flash peut découper."""
-    if clip.is_text or group_of(clip) is not None or timeline.timing_locked(clip):
+    """Clip d'image (vidéo ou photo) d'une piste vidéo, que le Mix Flash peut mélanger."""
+    if clip.is_text:
         return False
     media = timeline.media_of(clip)
-    return (media is not None and media.kind == "video"
+    return (media is not None and media.kind in ("video", "image")
             and timeline.track(clip.track_id).kind == "video")
+
+
+def kept_whole(timeline, clip: Clip) -> bool:
+    """Clip dont un module fige la durée (timelapse) : déplacé d'un bloc, jamais découpé."""
+    return timeline.timing_locked(clip)
 
 
 def candidates(timeline, clip: Clip) -> list[Clip]:
     """Clips de la piste de `clip` que l'on peut mélanger, dans l'ordre de la piste."""
     return [c for c in timeline.clips_on(clip.track_id) if eligible(timeline, c)]
+
+
+def kind_of(timeline, clip: Clip) -> str:
+    """Nature du clip, affichée dans la fenêtre : "video", "image", "timelapse", "mixed"."""
+    if kept_whole(timeline, clip):
+        return "timelapse"
+    if group_of(clip) is not None:
+        return "mixed"
+    return timeline.media_of(clip).kind
 
 
 _NESTED = {"transform": Transform, "color": ColorAdjust, "effects": Effects,
@@ -307,11 +325,14 @@ def apply(timeline, clip_ids: list[str], settings: Settings) -> list[Clip]:
     if settings.sound == "detach":
         for c in clips:
             media = timeline.media_of(c)
-            if media.has_audio and c.volume > 0:  # son déjà détaché : volume nul
+            # son déjà détaché : volume nul ; un timelapse garde son propre réglage du son
+            if media.has_audio and c.volume > 0 and not kept_whole(timeline, c):
                 timeline.detach_audio(c.id)
     sources = [copy.deepcopy(c) for c in clips]
+    for source in sources:  # un extrait d'un mélange précédent redevient un clip ordinaire
+        source.modules.pop(MODULE_ID, None)
     lengths = [c.duration for c in sources]
-    items = plan(lengths, timeline.fps, settings)
+    items = plan(lengths, timeline.fps, settings, [kept_whole(timeline, c) for c in clips])
     if not covers(lengths, items):
         raise TimelineError("le découpage ne couvre pas toutes les images")
     anchor = clips[0].start

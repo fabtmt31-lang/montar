@@ -142,6 +142,30 @@ def test_apply_replaces_clips_without_losing_frames(core):
     assert not any(core.group_of(x) for x in p.clips)
 
 
+def test_whole_track_with_images_timelapses_and_mixed(core):
+    p, t, (a, b) = project(12.0, 8.0)
+    photo = MediaItem("/photo.png", "image", width=1920, height=1080, id="img")
+    p.media.append(photo)
+    image = t.add_clip(photo)
+    image.duration = 150
+    t.clip(b.id).modules["timelapse"] = {"locks_timing": True, "factor": 4}
+    first = core.apply(t, [a.id], core.Settings(seed=4))  # a devient des extraits
+    track = core.candidates(t, first[0])
+    kinds = {core.kind_of(t, c) for c in track}
+    assert kinds == {"mixed", "timelapse", "image"}
+    before = sum(c.duration for c in track)
+    created = core.apply(t, [c.id for c in track], core.Settings(seed=9, probability=1.0))
+    assert sum(c.duration for c in created) == before
+    lapse = [c for c in created if "timelapse" in c.modules]
+    assert len(lapse) == 1 and lapse[0].duration == 200  # gardé entier
+    assert all(c.volume == 0 for c in created)
+    stills = [c for c in created if c.media_id == "img"]
+    assert len(stills) > 1 and sum(c.duration for c in stills) == 150
+    assert len({core.group_of(c)["group"] for c in created}) == 1  # un seul nouveau mélange
+    audio = [c for c in p.clips if t.track(c.track_id).kind == "audio"]
+    assert len(audio) == 1  # son de a détaché une fois ; pas celui du timelapse
+
+
 def test_remix_does_not_detach_twice(core):
     p, t, (a,) = project(20.0)
     created = core.apply(t, [a.id], core.Settings(seed=1))
@@ -196,8 +220,10 @@ def test_dialog_builds(core):
     dialog_mod = importlib.import_module("montar_modules.fab_mixflash.dialog")
     p, t, clips = project(14.2, 9.6)
     dialog = dialog_mod.MixFlashDialog(None, clips, {clips[0].id}, 25, core.Settings(), False,
-                                       names=lambda c: t.media_of(c).name, skipped=1)
+                                       names=lambda c: t.media_of(c).name,
+                                       kinds={clips[1].id: "timelapse"})
     assert dialog.chosen_ids() == [clips[0].id] and not dialog.whole.isChecked()
+    assert "timelapse" in dialog.boxes[clips[1].id].text()
     assert dialog.ok.isEnabled()
     dialog.whole.click()  # « Toute la piste »
     assert dialog.chosen_ids() == [c.id for c in clips] and dialog.whole.isChecked()
@@ -209,6 +235,8 @@ def test_dialog_builds(core):
     assert dialog.chosen_ids() == [] and not dialog.ok.isEnabled()
     dialog.boxes[clips[1].id].setChecked(True)
     assert dialog.chosen_ids() == [clips[1].id] and not dialog.whole.isChecked()
+    screen = _app.primaryScreen().availableGeometry()
+    assert dialog.height() <= screen.height() - 40  # tient sur l'écran, le contenu défile
 
 
 @needs_ffmpeg
