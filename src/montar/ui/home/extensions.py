@@ -91,6 +91,11 @@ class ExtensionsCard(QFrame):
         self._list.setSpacing(0)
         layout.addLayout(self._list)
         manager.listeners.append(self.refresh)
+        # liste détruite (fenêtre « Modules » de l'éditeur fermée…) : plus de mise à jour, sinon
+        # l'installation suivante toucherait un objet Qt disparu et ferait tomber montar
+        listener = self.refresh
+        self.destroyed.connect(
+            lambda *_a, m=manager, f=listener: f in m.listeners and m.listeners.remove(f))
         self.refresh()
 
     def refresh(self) -> None:
@@ -146,7 +151,7 @@ class ExtensionsCard(QFrame):
         if answer == QMessageBox.StandardButton.Yes:
             try:
                 self.manager.uninstall(module_id)
-            except ModuleError as exc:
+            except (ModuleError, OSError) as exc:
                 QMessageBox.warning(self, _("Supprimer le module"), str(exc))
 
     def install(self, archive: str | None = None, confirm: bool = True) -> None:
@@ -175,7 +180,7 @@ class ExtensionsCard(QFrame):
                 return
         try:
             info = self.manager.install(Path(archive))
-        except ModuleError as exc:
+        except (ModuleError, OSError) as exc:
             QMessageBox.warning(self, _("Installer un module"), str(exc))
             return
         self.disabledChanged.emit(sorted(self.manager.disabled))

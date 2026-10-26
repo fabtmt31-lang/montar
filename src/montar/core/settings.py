@@ -37,6 +37,8 @@ class Settings:
     shortcuts: dict[str, str] = field(default_factory=dict)  # touches personnalisées (F-UX-07)
     catalog_enabled: bool = False  # catalogue de modules en ligne (F-MOD-08), sur demande
     catalog_url: str = ""  # vide : adresse par défaut (montar.core.catalog.DEFAULT_URL)
+    side_width: int = 320  # largeur du volet de gauche de l'éditeur (réglée à la souris)
+    inspector_width: int = 360  # largeur de l'inspecteur
 
     @property
     def projects_path(self) -> Path:

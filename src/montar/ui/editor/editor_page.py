@@ -71,11 +71,18 @@ from montar.ui.editor.controller import EditorController
 from montar.ui.editor.finition import FinitionDialog
 from montar.ui.editor.graphics_panel import GraphicsPanel
 from montar.ui.editor.importer import MediaImporter
-from montar.ui.editor.inspector import Inspector
+from montar.ui.editor.inspector import INSPECTOR_MIN_WIDTH, INSPECTOR_WIDTH, Inspector
 from montar.ui.editor.media_panel import MediaPanel
 from montar.ui.editor.modules import CANCELLED, EditorModules
 from montar.ui.editor.modules_panel import ModuleEntry, ModulesPanel
-from montar.ui.editor.panels import EffectsPanel, FiltersPanel, TextPanel, TransitionsPanel
+from montar.ui.editor.panels import (
+    SIDE_MIN_WIDTH,
+    SIDE_WIDTH,
+    EffectsPanel,
+    FiltersPanel,
+    TextPanel,
+    TransitionsPanel,
+)
 from montar.ui.editor.player import Player
 from montar.ui.editor.preview import PreviewPanel, crop_box
 from montar.ui.editor.scopes import ScopesWindow
@@ -120,6 +127,7 @@ def media_file_filter() -> str:
 
 class EditorPage(QWidget):
     backRequested = pyqtSignal()
+    panesResized = pyqtSignal(int, int)  # largeurs du volet de gauche et de l'inspecteur
     saved = pyqtSignal(object)  # Path
     exportFinished = pyqtSignal(str)  # erreur (vide si réussite)
     recordingFinished = pyqtSignal(str)  # fichier enregistré (vide si échec)
@@ -175,11 +183,16 @@ class EditorPage(QWidget):
                            ("subtitles", self.subtitles_panel)):
             self._side_index[key] = self.side.addWidget(panel)
         body.addWidget(self._build_rail())
-        body.addWidget(self.side)
+        # volet, aperçu et inspecteur : largeurs réglables en faisant glisser les séparations
+        self.panes = QSplitter(Qt.Orientation.Horizontal)
+        self.panes.setChildrenCollapsible(False)
+        self.panes.setHandleWidth(6)
+        self.panes.addWidget(self.side)
+        body.addWidget(self.panes, 1)
         self._engine_factory = engine_factory
         self.player = Player(engine_factory, self)
         self.preview = PreviewPanel(self.player, preview_quality)
-        body.addWidget(self.preview, 1)
+        self.panes.addWidget(self.preview)
         self.inspector = Inspector(self.controller, self.modules)
         self.inspector.freezeRequested.connect(self.freeze_frame)
         self.inspector.playhead = self._playhead
@@ -192,7 +205,13 @@ class EditorPage(QWidget):
         self._scope_timer.timeout.connect(self._update_scopes)
         self.subtitles_panel.seekRequested.connect(self.player.seek)
         self.subtitles_panel.autoRequested.connect(self.auto_subtitles)
-        body.addWidget(self.inspector)
+        self.panes.addWidget(self.inspector)
+        self.panes.setStretchFactor(0, 0)
+        self.panes.setStretchFactor(1, 1)
+        self.panes.setStretchFactor(2, 0)
+        self.panes.setSizes([SIDE_WIDTH, 800, INSPECTOR_WIDTH])
+        self.panes.splitterMoved.connect(
+            lambda *_a: self.panesResized.emit(self.panes.sizes()[0], self.panes.sizes()[2]))
         self.effects_panel.set_modules(self.modules)
         self.effects_panel.addRequested.connect(self.open_apply)
         self.modules_panel.set_manager(self.module_manager)
@@ -1973,6 +1992,11 @@ class EditorPage(QWidget):
         view.video_waveforms = settings.video_waveforms
         view.viewport().update()
         if opening:
+            sizes = self.panes.sizes()
+            total = sum(sizes) or 1500
+            side = max(SIDE_MIN_WIDTH, settings.side_width)
+            inspector = max(INSPECTOR_MIN_WIDTH, settings.inspector_width)
+            self.panes.setSizes([side, max(200, total - side - inspector), inspector])
             self.timeline.magnet.setChecked(settings.snap)
             self.preview.set_volume(settings.preview_volume)
             self.preview.set_safe_zone(settings.safe_zone)

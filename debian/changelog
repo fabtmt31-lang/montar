@@ -1,3 +1,17 @@
+montar (1.5.0) unstable; urgency=medium
+
+  * Finition pro à l'export : étalonnage et mastering de tout le projet
+    (préréglages, looks et LUT, roues, courbes, niveaux légaux ; LUFS et
+    crête vraie, égaliseur, compression, limiteur ; stéréo, 5.1 ou stems),
+    export en trois passes et rapport de conformité.
+  * Modules : installer une nouvelle version d'un module déjà installé ne
+    fait plus planter montar ; l'ancienne version reste en place si elle ne
+    peut pas être remplacée.
+  * Éditeur : volet de gauche, aperçu et inspecteur redimensionnables en
+    faisant glisser les séparations ; largeurs retenues d'un projet à l'autre.
+
+ -- Fabien <admin@appsdoc.fr>  Mon, 26 Oct 2026 16:00:00 +0100
+
 montar (1.4.0) unstable; urgency=medium
 
   * Portage Windows : moteur sous MSYS2 (UCRT64), suite de tests verte sous

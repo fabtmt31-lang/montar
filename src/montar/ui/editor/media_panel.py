@@ -22,6 +22,7 @@ from montar.core.project import MediaItem
 from montar.core.timecode import seconds_to_short
 from montar.i18n import _
 from montar.media.thumbnails import FILMSTRIP_FRAMES, make_filmstrip
+from montar.ui.editor.panels import SIDE_MIN_WIDTH
 from montar.ui.thumbgrid import (
     ROLE_BADGE,
     ROLE_ICON,
@@ -144,7 +145,7 @@ class MediaPanel(QFrame):
     def __init__(self) -> None:
         super().__init__()
         self.setObjectName("SidePanel")
-        self.setFixedWidth(300)
+        self.setMinimumWidth(SIDE_MIN_WIDTH)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 18, 16, 12)
         layout.setSpacing(12)

@@ -33,6 +33,8 @@ from montar.ui.theme import theme
 from montar.ui.theme.icons import pixmap as icon_pixmap
 from montar.ui.widgets import button, label, rounded_pixmap
 
+SIDE_WIDTH = 320  # largeur de départ des volets de gauche (réglable par l'utilisateur)
+SIDE_MIN_WIDTH = 280
 TILE = QSize(126, 72)
 ICON_TILE = QSize(126, 50)  # tuiles à pictogramme (transitions) : plus basses
 TRANSITION_MIME = "application/x-montar-transition"  # type de transition glissée
@@ -72,7 +74,7 @@ class _Panel(QFrame):
     def __init__(self, title: str, scroll: bool = False) -> None:
         super().__init__()
         self.setObjectName("SidePanel")
-        self.setFixedWidth(300)
+        self.setMinimumWidth(SIDE_MIN_WIDTH)
         if not scroll:
             self.body = QVBoxLayout(self)
             self.body.setContentsMargins(16, 18, 16, 12)

@@ -61,6 +61,10 @@ def _signed(v: float) -> str:
     return f"{v:+.0f}" if round(v) else "0"
 
 
+INSPECTOR_WIDTH = 360  # largeur de départ (réglable en faisant glisser la séparation)
+INSPECTOR_MIN_WIDTH = 300
+
+
 class Inspector(QFrame):
     freezeRequested = pyqtSignal(str)  # clip : image fixe à la tête de lecture
     scopesRequested = pyqtSignal()  # fenêtre des scopes de l'étalonnage
@@ -70,7 +74,7 @@ class Inspector(QFrame):
         super().__init__()
         self.setObjectName("Inspector")
         self.modules = modules  # EditorModules (outils et réglages des modules)
-        self.setFixedWidth(340)
+        self.setMinimumWidth(INSPECTOR_MIN_WIDTH)
         self.controller = controller
         self.clip_id: str | None = None
         self.playhead: Callable[[], int] = lambda: 0  # fourni par l'éditeur

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Tests de l'interface (plateforme Qt « offscreen »)."""
 import dataclasses
+import json
 import time
 from pathlib import Path
 
@@ -2139,3 +2140,74 @@ def test_editor_finition_undo_preview_and_export(window, media_dir, monkeypatch)
     assert shown and shown[0].rows and all(r.ok for r in shown[0].rows), \
         report.read_text(encoding="utf-8")
     assert editor._master_analysis is not None and project.mastering.video.matches
+
+
+def _rain_module(folder: Path, version: str, extra_param: bool) -> Path:
+    """Module « pluie » minimal (effet vidéo) ; la 2e version ajoute un réglage."""
+    folder.mkdir(parents=True)
+    (folder / "module.json").write_text(json.dumps({
+        "id": "test.pluie", "name": "Pluie", "version": version, "api_version": "1.0"}))
+    params = 'Param.float("force", "Force", 0, 1, default=0.5)'
+    if extra_param:
+        params += ', Param.float("vent", "Vent", 0, 1, default=0.2)'
+    (folder / "__init__.py").write_text(
+        "from montar.api import Param, VideoEffect\n\n\n"
+        "class Pluie(VideoEffect):\n"
+        "    id = 'test.pluie.effet'\n"
+        "    name = 'Pluie'\n"
+        f"    params = [{params}]\n\n"
+        "    def filters(self, values):\n"
+        "        return [('brightness', {'level': 1.0})]\n\n\n"
+        "def register(api):\n"
+        "    api.add_video_effect(Pluie)\n")
+    return folder
+
+
+def test_reinstall_module_new_version(window, media_dir, tmp_path, monkeypatch):
+    """Installer une nouvelle version d'un module déjà installé, alors que son effet est
+    appliqué et que la fenêtre « Modules » de l'éditeur a été ouverte puis le projet fermé."""
+    from PyQt6.QtWidgets import QDialog
+
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr(QDialog, "exec", lambda self: 0)
+    card = window.preferences.extensions
+    card.install_folder(str(_rain_module(tmp_path / "v1", "1.0.0", False)))
+    assert window.modules.modules["test.pluie"].version == "1.0.0"
+    listeners = len(window.modules.listeners)
+
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    clip = editor.project.clips[0]
+    editor.controller.edit("pluie", lambda t: t.clip(clip.id).modules.update(
+        {"test.pluie.effet": {"force": 0.8}}))
+    editor.controller.select(clip.id)
+    editor.manage_modules()  # crée une liste des modules dans une fenêtre de l'éditeur
+    editor.manage_modules()
+    card.install_folder(str(_rain_module(tmp_path / "v2", "1.1.0", True)))
+    assert window.modules.modules["test.pluie"].version == "1.1.0"
+    assert not window.modules.modules["test.pluie"].error
+    pump(200)
+
+    window.show_home()  # l'éditeur et ses fenêtres disparaissent
+    pump(200)
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    assert len(window.modules.listeners) == listeners  # plus de liste détruite abonnée
+    card.install_folder(str(_rain_module(tmp_path / "v3", "1.2.0", True)))
+    assert window.modules.modules["test.pluie"].version == "1.2.0"
+    pump(200)
+
+
+def test_side_panels_are_resizable(window):
+    """Volet de gauche et inspecteur : largeurs réglables, retenues pour le projet suivant."""
+    editor = window.create_project(NewProjectParams("Volets", "16:9", "720p", 25))
+    window.resize(1500, 900)
+    pump(100)
+    assert editor.side.minimumWidth() < 320 and editor.inspector.minimumWidth() <= 300
+    editor.panes.setSizes([420, 600, 480])
+    editor.panesResized.emit(*editor.panes.sizes()[::2])
+    assert window.settings.side_width == editor.panes.sizes()[0] >= 400
+    assert window.settings.inspector_width == editor.panes.sizes()[2]
+    other = window.create_project(NewProjectParams("Volets 2", "16:9", "720p", 25))
+    pump(100)
+    assert abs(other.panes.sizes()[0] - window.settings.side_width) <= 2

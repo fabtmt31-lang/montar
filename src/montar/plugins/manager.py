@@ -170,7 +170,10 @@ class ModuleManager:
 
     def _notify(self) -> None:
         for listener in list(self.listeners):
-            listener()
+            try:
+                listener()
+            except Exception:  # une fenêtre en défaut ne doit pas bloquer les autres
+                log.exception("mise à jour après changement des modules")
 
     # --- état ---------------------------------------------------------------------------
 
@@ -272,11 +275,22 @@ class ModuleManager:
             raise ModuleError(f"« {data['id']} » est un module intégré à montar")
         target = self.user_dir / data["id"]
         self.user_dir.mkdir(parents=True, exist_ok=True)
-        _remove(target)
+        # nouvelle version copiée à côté d'abord (dossier caché, ignoré au chargement) :
+        # si l'ancienne ne peut pas être retirée, elle reste intacte et utilisable
+        staging = self.user_dir / f".{data['id']}.nouveau"
+        _remove(staging)
+        if not link:
+            shutil.copytree(folder, staging, ignore=shutil.ignore_patterns("__pycache__"))
+        try:
+            _remove(target)
+        except OSError as exc:
+            _remove(staging)
+            raise ModuleError(f"l'ancienne version de « {data['id']} » ne peut pas être "
+                              f"remplacée (fichier ouvert ?) : {exc}") from exc
         if link:
             target.symlink_to(folder, target_is_directory=True)
         else:
-            shutil.copytree(folder, target, ignore=shutil.ignore_patterns("__pycache__"))
+            staging.rename(target)
         self.disabled.discard(data["id"])
         self.load_all()
         return self.modules[data["id"]]

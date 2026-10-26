@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PyQt6.QtCore import QSize
+from PyQt6.QtCore import QSize, QTimer
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
@@ -56,6 +56,10 @@ class MainWindow(QMainWindow):
     def __init__(self, settings: Settings, settings_file: Path) -> None:
         super().__init__()
         self.settings, self._settings_file = settings, settings_file
+        self._panes_timer = QTimer(self)
+        self._panes_timer.setSingleShot(True)
+        self._panes_timer.setInterval(600)
+        self._panes_timer.timeout.connect(self._save_quietly)
         install_wheel_guard(QApplication.instance())  # la molette fait défiler les panneaux
         self.recent = RecentProjects(paths.data_dir() / "recent.json")
         self.session = Session(paths.data_dir() / "session.json")
@@ -123,6 +127,16 @@ class MainWindow(QMainWindow):
 
     def _safe_zone_changed(self, on: bool) -> None:
         self.settings.safe_zone = on
+        try:
+            self.settings.save(self._settings_file)
+        except OSError as exc:
+            log.warning("préférences non enregistrées : %s", exc)
+
+    def _panes_resized(self, side: int, inspector: int) -> None:
+        self.settings.side_width, self.settings.inspector_width = side, inspector
+        self._panes_timer.start()  # enregistré une fois le glisser terminé
+
+    def _save_quietly(self) -> None:
         try:
             self.settings.save(self._settings_file)
         except OSError as exc:
@@ -230,6 +244,7 @@ class MainWindow(QMainWindow):
         editor.disabledModulesChanged.connect(self.preferences.set_disabled_modules)
         editor.preview.volumeChanged.connect(self._volume_changed)
         editor.preview.safeZoneChanged.connect(self._safe_zone_changed)
+        editor.panesResized.connect(self._panes_resized)
         editor.library_provider = lambda: self.library_items(project.path)
         editor.thumbnail_provider = self._thumbnail_for
         self.editor = editor
