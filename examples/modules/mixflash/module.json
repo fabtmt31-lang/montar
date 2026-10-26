@@ -1,0 +1,10 @@
+{
+  "id": "fab.mixflash",
+  "name": "Mix Flash",
+  "version": "1.0.0",
+  "api_version": "1.4",
+  "author": "fab",
+  "license": "GPL-3.0-or-later",
+  "description": "Découpe une ou plusieurs vidéos d'une piste en extraits de 0,5 à 5 s, les mélange au hasard sans en perdre une image, avec des fondus au blanc ou au noir.",
+  "permissions": []
+}

@@ -7,7 +7,8 @@ ni compilation ni outil particulier.
 
 - API publique : `montar.api`, version **1.4**.
 - Exemples complets : les modules intégrés, dans `src/montar/modules/` (`effets`,
-  `essentiels`, `graphismes`, `timelapse`), et `examples/modules/negatif/`.
+  `essentiels`, `graphismes`, `timelapse`), `examples/modules/negatif/` et
+  `examples/modules/mixflash/` (outils, fenêtre PyQt6, effet animé sur une partie du clip).
 
 > **Sécurité et licence.** Un module s'exécute avec les droits de l'utilisateur ; montar
 > affiche un avertissement avant d'installer un module tiers. Un module chargé dans montar

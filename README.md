@@ -8,6 +8,14 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
 
 ## État d'avancement
 
+**Module Mix Flash** (`examples/modules/mixflash/`, à installer depuis le catalogue ou
+Préférences → Extensions) : clic droit sur un clip vidéo → **Mix Flash…**. On coche une ou
+plusieurs vidéos de la même piste ; elles sont découpées en extraits de 0,5 à 5 s mélangés au
+hasard, sans perdre une image (vérifié avant d'appliquer). Après les extraits de 3 à 5 s,
+fondus au noir, au blanc ou les deux, en **flash inséré** (toutes les images restent
+visibles) ou **par-dessus les images** (durée inchangée). Le son est détaché sur une piste
+audio ou supprimé. Sur un extrait : **Remélanger le Mix Flash…** ou **Défaire le Mix Flash**.
+
 **Version 1.3** (1.3.0) : exigences P3, étalonnage et suivi de mouvement.
 
 - **son** : réduction de bruit, volume régulier, « s'efface sous les voix » (clic droit sur

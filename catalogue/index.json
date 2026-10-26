@@ -2,6 +2,17 @@
   "format": 1,
   "modules": [
     {
+      "id": "fab.mixflash",
+      "name": "Mix Flash",
+      "version": "1.0.0",
+      "description": "Découpe une ou plusieurs vidéos d'une piste en extraits de 0,5 à 5 s, les mélange au hasard sans en perdre une image, avec des fondus au blanc ou au noir.",
+      "author": "fab",
+      "license": "GPL-3.0-or-later",
+      "api_version": "1.4",
+      "url": "modules/fab.mixflash-1.0.0.montar-module",
+      "sha256": "780c04fa21b28e5accf85e92215d1805a55cab1a4399a58e513ad5df6bdd7ee9"
+    },
+    {
       "id": "exemple.negatif",
       "name": "Négatif",
       "version": "1.0.0",
