@@ -93,6 +93,8 @@ class MainWindow(QMainWindow):
             ("templates", _("Modèles"), "layout-grid", self.templates_page),
             ("library", _("Médiathèque"), "library", self.library_page),
             ("brand", _("Kit de marque"), "palette", self.brand_page),
+            *([("modules", _("Modules"), "puzzle", self.preferences.modules_page)]
+              if self.preferences.modules_page is not None else []),
             ("trash", _("Corbeille"), "trash-2", self.trash_page),
         ])
         self.shell.pageShown.connect(self._page_shown)

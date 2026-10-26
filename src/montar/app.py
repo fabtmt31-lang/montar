@@ -113,7 +113,7 @@ def _module_tool(args) -> int:
             kinds = [k.strip() for t in (args.type or []) for k in t.split(",") if k.strip()]
             folder = new_module(Path(args.new_module), kinds=kinds or None)
             print(f"Module créé : {folder}")
-            print("Modifiez __init__.py, puis Préférences → Extensions → Installer un module "
+            print("Modifiez __init__.py, puis accueil → Modules → Installer un module "
                   "→ « Lier un dossier (développement) ».")
         else:
             print(f"Archive créée : {pack_module(Path(args.pack_module))}")

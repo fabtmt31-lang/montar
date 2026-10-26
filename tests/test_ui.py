@@ -13,7 +13,7 @@ pytest.importorskip("PyQt6.QtSvg")
 from PyQt6.QtCore import QEvent, QEventLoop, QPoint, QPointF, QRectF, Qt, QTimer  # noqa: E402
 from PyQt6.QtGui import QMouseEvent, QShortcut  # noqa: E402
 from PyQt6.QtTest import QTest  # noqa: E402
-from PyQt6.QtWidgets import QApplication, QDialog, QLabel, QMessageBox  # noqa: E402
+from PyQt6.QtWidgets import QApplication, QDialog, QLabel, QMessageBox, QPushButton  # noqa: E402
 
 from montar.core import keyframes  # noqa: E402
 from montar.core import mastering as cm  # noqa: E402
@@ -1212,10 +1212,13 @@ def test_module_types_in_editor(window, media_dir):
     clip = editor.project.clips[0]
     editor.controller.select(clip.id)
 
-    # effet audio : appliqué depuis le panneau Modules, réglé dans le panneau Effets
-    entry = next(e for e in editor.modules_panel.visible_entries()
-                 if e.item.id == "essentiels.egaliseur")
-    editor.use_module_entry(entry)
+    # effet audio : appliqué par « Appliquer un effet ou un module… », réglé dans Effets
+    from montar.ui.editor.apply import actions_for
+    action = next(a for a in actions_for(clip, True, editor.modules, True)
+                  if a.key == "essentiels.egaliseur")
+    editor.apply_action(action, clip.id)
+    clip = editor.project.clips[0]
+    editor.show_side("effects")
     panel = editor.effects_panel
     control = next(c for e, c, audio in panel._module_controls
                    if audio and e.id == "essentiels.egaliseur" and c.param.key == "graves")
@@ -1225,7 +1228,6 @@ def test_module_types_in_editor(window, media_dir):
     assert editor.modules.hook(clip, editor.project.media[0]).audio_filters
 
     # fenêtre « Appliquer… » : les effets audio y figurent
-    from montar.ui.editor.apply import actions_for
     kinds = {a.kind for a in actions_for(clip, True, editor.modules, True)}
     assert "audio_effect" in kinds
 
@@ -1280,34 +1282,6 @@ def test_language_preference(window):
 
 
 # --- J6 : panneau Modules et effets intégrés -------------------------------------------------
-
-
-@needs_ffmpeg
-def test_modules_panel(window, media_dir):
-    editor = imported_editor(window, media_dir, ["clip.mp4"])
-    editor.add_to_timeline(editor.project.media[0])
-    clip = editor.project.clips[0]
-    panel = editor.modules_panel
-    editor.show_side("modules")
-    names = {e.item.id for e in panel.visible_entries()}
-    assert {"timelapse.apply", "effets.vhs", "effets.zoom_lent", "essentiels.echo",
-            "essentiels.cercle", "essentiels.fond", "essentiels.mkv"} <= names
-    panel.search.setText("zoom")
-    assert {e.item.id for e in panel.visible_entries()} == {
-        "effets.zoom_lent", "effets.zoom_rapide", "effets.dezoom_lent", "effets.dezoom_rapide"}
-    panel.search.clear()
-
-    # appliquer un effet vidéo au clip sélectionné ; il apparaît dans le panneau Effets
-    editor.controller.select(clip.id)
-    vhs = next(e for e in panel.visible_entries() if e.item.id == "effets.vhs")
-    editor.use_module_entry(vhs)
-    assert "effets.vhs" in clip.modules
-    effects = editor.effects_panel
-    assert [e.id for e, _c, _a in effects._module_controls][:1] == ["effets.vhs"]
-    assert editor.side.currentWidget() is effects
-    editor.controller.undo()  # l'historique remplace les objets : relire le clip
-    assert "effets.vhs" not in editor.project.clips[0].modules
-    assert not effects._module_controls
 
 
 def test_graphics_panel(window):
@@ -2169,12 +2143,10 @@ def _rain_module(folder: Path, version: str, extra_param: bool) -> Path:
 
 def test_reinstall_module_new_version(window, media_dir, tmp_path, monkeypatch):
     """Installer une nouvelle version d'un module déjà installé, alors que son effet est
-    appliqué et que la fenêtre « Modules » de l'éditeur a été ouverte puis le projet fermé."""
-    from PyQt6.QtWidgets import QDialog
+    appliqué, puis après la fermeture du projet."""
 
     monkeypatch.setattr(QMessageBox, "question",
                         staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
-    monkeypatch.setattr(QDialog, "exec", lambda self: 0)
     card = window.preferences.extensions
     card.install_folder(str(_rain_module(tmp_path / "v1", "1.0.0", False)))
     assert window.modules.modules["test.pluie"].version == "1.0.0"
@@ -2186,8 +2158,7 @@ def test_reinstall_module_new_version(window, media_dir, tmp_path, monkeypatch):
     editor.controller.edit("pluie", lambda t: t.clip(clip.id).modules.update(
         {"test.pluie.effet": {"force": 0.8}}))
     editor.controller.select(clip.id)
-    editor.manage_modules()  # crée une liste des modules dans une fenêtre de l'éditeur
-    editor.manage_modules()
+    window.shell.show_page("modules")  # page « Modules » de l'accueil
     card.install_folder(str(_rain_module(tmp_path / "v2", "1.1.0", True)))
     assert window.modules.modules["test.pluie"].version == "1.1.0"
     assert not window.modules.modules["test.pluie"].error
@@ -2215,3 +2186,78 @@ def test_side_panels_are_resizable(window):
     other = window.create_project(NewProjectParams("Volets 2", "16:9", "720p", 25))
     pump(100)
     assert abs(other.panes.sizes()[0] - window.settings.side_width) <= 2
+
+
+def test_inspector_slider_gesture_does_not_rebuild(window, media_dir, monkeypatch):
+    """Glisser un curseur (rotation) : l'aperçu suit, l'inspecteur n'est pas reconstruit à
+    chaque mouvement (saccades) ; une seule mise à jour complète au lâcher."""
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    clip = editor.project.clips[0]
+    editor.controller.select(clip.id)
+    inspector = editor.inspector
+    rotation = next(r for r in inspector._animated if "Rotation" in r.findChild(QLabel).text())
+    rebuilt, reloads = [], []
+    monkeypatch.setattr(inspector, "show_clip", lambda *a, **k: rebuilt.append(1))
+    original = editor.player.load
+    monkeypatch.setattr(editor.player, "load", lambda spec: (reloads.append(1), original(spec)))
+    rotation.pressed.emit()
+    for _step in range(10):
+        rotation.slider.setValue(rotation.slider.value() + 40)
+        pump(40)
+    assert not rebuilt and reloads  # l'aperçu suit le geste
+    assert editor.project.clips[0].transform.rotation != 0
+    rotation.released.emit()
+    pump(50)
+    assert len(rebuilt) == 1
+    assert editor.controller.history.undo_label()
+
+
+def test_slider_value_can_be_typed(app):
+    from montar.ui.editor.controls import SliderRow, number_in
+
+    assert number_in("100 %") == 100 and number_in("−12,5") == -12.5 and number_in("×1.5") == 1.5
+    row = SliderRow("Échelle", 10, 400, lambda v: f"{v:.0f} %")
+    got = []
+    row.moved.connect(got.append)
+    row.set_value(100)
+    row.value_label.setText("137,5")
+    row.value_label.editingFinished.emit()
+    assert got == [137.5] and row.value() == 137.5 and row.value_label.text() == "138 %"
+    row.value_label.setText("9999")  # borné
+    row.value_label.editingFinished.emit()
+    assert got[-1] == 400
+    row.value_label.setText("abc")  # ignoré
+    row.value_label.editingFinished.emit()
+    assert len(got) == 2 and row.value_label.text() == "400 %"
+    # affichage converti : 0,25 affiché « 25 % »
+    pct = SliderRow("Opacité", 0, 1, lambda v: f"{v * 100:.0f} %")
+    pct.value_label.setText("25")
+    pct.value_label.editingFinished.emit()
+    assert abs(pct.value() - 0.25) < 1e-9
+
+
+def test_rotate_buttons(window, media_dir):
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    clip_id = editor.project.clips[0].id
+    editor.controller.select(clip_id)
+    buttons = {b.toolTip(): b for b in editor.inspector.findChildren(QPushButton)}
+    buttons["Pivoter de 90° vers la gauche"].click()
+    pump(50)
+    assert editor.controller.timeline.clip(clip_id).transform.rotation == -90
+    buttons["Pivoter de 90° vers la droite"].click()
+    buttons["Pivoter de 90° vers la droite"].click()
+    pump(50)
+    assert editor.controller.timeline.clip(clip_id).transform.rotation == 90
+    buttons["Réinitialiser la transformation"].click()
+    assert editor.controller.timeline.clip(clip_id).transform.rotation == 0
+
+
+def test_modules_managed_from_home(window):
+    """Les modules se gèrent depuis la page « Modules » de l'accueil, plus depuis l'éditeur."""
+    window.shell.show_page("modules")
+    assert window.shell.pages.currentWidget() is window.preferences.modules_page
+    assert window.preferences.extensions.isVisibleTo(window.preferences.modules_page)
+    editor = window.create_project(NewProjectParams("Sans modules", "16:9", "720p", 25))
+    assert "modules" not in editor.rail_buttons

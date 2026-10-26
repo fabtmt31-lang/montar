@@ -37,7 +37,7 @@ ni compilation ni outil particulier.
 ```sh
 montar --new-module ~/mes-modules/mon-effet --type effet-video   # 1. squelette
 #  … modifiez ~/mes-modules/mon-effet/__init__.py …
-#  2. montar : Préférences → Extensions → Installer un module
+#  2. montar : accueil → Modules → Installer un module
 #     → « Lier un dossier (développement) » ; après chaque modification : « Recharger »
 montar --pack-module ~/mes-modules/mon-effet                     # 3. archive à partager
 ```
@@ -74,7 +74,7 @@ mon-effet/
 | Champ | Rôle |
 |-------|------|
 | `id` | Identifiant unique (lettres, chiffres, `.`, `-`, `_`). Préfixez-le de votre nom (`moi.…`) pour éviter les collisions. |
-| `name`, `description`, `author` | Affichés dans Préférences → Extensions. |
+| `name`, `description`, `author` | Affichés dans la page Modules de l'accueil. |
 | `version` | Version du module (libre, par exemple `1.2.0`). |
 | `api_version` | Version de l'API attendue, `1.x` (voir §15). |
 | `permissions` | Liste indicative affichée avant l'installation (`"réseau"`, `"fichiers"`…). |
@@ -415,7 +415,7 @@ d'origine. Pour une fenêtre écrite en PyQt6, utilisez `from montar.i18n import
 
 - **Recharger** : avec un dossier lié (§1), « Recharger » relit tout le code du module.
 - **Erreurs** : une exception dans `register` ou pendant le rendu désactive le module (pas
-  montar) ; le message apparaît dans Préférences → Extensions. Le journal détaillé est dans
+  montar) ; le message apparaît dans la page Modules de l'accueil. Le journal détaillé est dans
   `~/.cache/montar/logs/montar.log`.
 - **Tests automatiques** : les classes du module se testent sans interface.
 
@@ -436,15 +436,14 @@ def test_mon_effet(tmp_path):
 `montar --pack-module DOSSIER` vérifie le manifeste et crée `<id>-<version>.montar-module`
 (une archive zip ; un `.zip` contenant le dossier du module convient aussi).
 
-Dans montar : **Préférences → Extensions → Installer un module** (ou **Modules → Gérer les
-modules…** pendant le montage) :
+Dans montar : **accueil → Modules → Installer un module** :
 
 - *Depuis un fichier* : `.montar-module` ou `.zip` ;
 - *Depuis un dossier* : le dossier est copié ;
 - *Lier un dossier (développement)* : le dossier reste à sa place.
 
 Les modules installés se trouvent dans `~/.local/share/montar/modules/` ; on peut les
-activer, les désactiver ou les supprimer dans Préférences → Extensions.
+activer, les désactiver ou les supprimer dans la page Modules de l'accueil.
 
 ### Catalogue en ligne
 

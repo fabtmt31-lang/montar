@@ -195,18 +195,33 @@ class PreferencesPage(QWidget):
         layout.addWidget(self.shortcuts)
         if cache is not None:
             layout.addWidget(self._storage_card(cache))
+        layout.addStretch()
+        # modules : page à part dans le volet de gauche de l'accueil (« Modules »)
+        self.modules_page: QWidget | None = None
         if modules is not None:
+            from montar.ui.home.catalog_card import CatalogCard
             from montar.ui.home.extensions import ExtensionsCard
 
+            self.modules_page = QWidget()
+            self.modules_page.setObjectName("Page")
+            page_layout = QVBoxLayout(self.modules_page)
+            page_layout.setContentsMargins(0, 0, 0, 0)
+            area = QScrollArea()
+            area.setWidgetResizable(True)
+            page_layout.addWidget(area)
+            inner = QWidget()
+            area.setWidget(inner)
+            ml = QVBoxLayout(inner)
+            ml.setContentsMargins(40, 32, 40, 32)
+            ml.setSpacing(20)
+            ml.addWidget(label(_("Modules"), "h1"))
             self.extensions = ExtensionsCard(modules)
             self.extensions.disabledChanged.connect(self._set_disabled)
-            layout.addWidget(self.extensions)
-            from montar.ui.home.catalog_card import CatalogCard
-
+            ml.addWidget(self.extensions)
             self.catalog = CatalogCard(settings, self.extensions)
             self.catalog.changed.connect(self.settingsChanged)
-            layout.addWidget(self.catalog)
-        layout.addStretch()
+            ml.addWidget(self.catalog)
+            ml.addStretch()
 
     def _saving_card(self, settings: Settings) -> QFrame:
         card = QFrame()

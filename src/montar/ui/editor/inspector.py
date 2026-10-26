@@ -6,8 +6,9 @@ import math
 from collections.abc import Callable
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
+    QAbstractSpinBox,
     QButtonGroup,
     QCheckBox,
     QComboBox,
@@ -79,6 +80,10 @@ class Inspector(QFrame):
         self.clip_id: str | None = None
         self.playhead: Callable[[], int] = lambda: 0  # fourni par l'éditeur
         self._refreshing = False
+        self._gesture_timer = QTimer(self)
+        self._gesture_timer.setSingleShot(True)
+        self._gesture_timer.setInterval(self.GESTURE_END_MS)
+        self._gesture_timer.timeout.connect(self._end_gesture)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea()
@@ -110,6 +115,21 @@ class Inspector(QFrame):
         self._transition = self._build_transition_page()
         for w in (self._info, self._clip, self._text, self._transition):
             self.pages.addWidget(w)
+        self._follow_gestures()
+
+    def _follow_gestures(self) -> None:
+        """Curseurs, roues, saisie du texte : chaque réglage continu devient un geste."""
+        for row in self.findChildren(SliderRow):
+            row.pressed.connect(lambda: self._gesture(hold=True))
+            row.released.connect(lambda: self._end_gesture(released=True))
+            row.moved.connect(lambda _v: self._gesture())
+        for wheel in self.findChildren(ColorWheel):
+            wheel.moved.connect(lambda *_a: self._gesture(hold=True))
+            wheel.released.connect(lambda: self._end_gesture(released=True))
+        for spin in self.findChildren(QAbstractSpinBox):
+            if hasattr(spin, "valueChanged"):
+                spin.valueChanged.connect(lambda *_a: self._gesture())
+        self.text_edit.textChanged.connect(lambda: self._gesture())
 
     # --- édition ------------------------------------------------------------------
 
@@ -119,7 +139,36 @@ class Inspector(QFrame):
     def _edit(self, label_: str, key: str, change: Callable[[Clip], None]) -> None:
         if self._refreshing or self.clip_id is None:
             return
+        if getattr(self, "_gesture_owned", False):
+            if self._gesture_key is None:  # geste commencé au clic sur le curseur
+                self._gesture_key = key
+            elif key != self._gesture_key:  # autre réglage : le geste précédent est fini
+                self._end_gesture(released=True)
+        self._last_key = key
         self.controller.edit_clip(label_, self.clip_id, change, merge=(self.clip_id, key))
+
+    # Un réglage (curseur, saisie du texte, touches) est un geste : pendant qu'il dure, seuls
+    # les valeurs et l'aperçu suivent ; le reste de l'éditeur est remis à jour à la fin.
+    # Sans cela, chaque mouvement reconstruisait tout l'inspecteur (saccades).
+    GESTURE_END_MS = 400
+
+    def _gesture(self, hold: bool = False) -> None:
+        if not self.controller.live:
+            self.controller.begin_live(preview=True)
+            self._gesture_owned = True
+            self._gesture_key = None if hold else getattr(self, "_last_key", None)
+        if getattr(self, "_gesture_owned", False):
+            self._held = getattr(self, "_held", False) or hold
+            if not self._held:
+                self._gesture_timer.start()
+
+    def _end_gesture(self, released: bool = False) -> None:
+        if released:
+            self._held = False
+        if getattr(self, "_gesture_owned", False) and not getattr(self, "_held", False):
+            self._gesture_owned = False
+            self._gesture_timer.stop()
+            self.controller.end_live()
 
     def _slider(self, layout, title: str, minimum: float, maximum: float, key: str,
                 getter: Callable[[Clip], float], setter: Callable[[Clip, float], None],
@@ -195,14 +244,20 @@ class Inspector(QFrame):
                                                       lambda c: setattr(c.transform, "fit", k)))
         il.addWidget(self.fit)
         tools = QHBoxLayout()
+        def turn(c: Clip, degrees: float) -> None:
+            # à la tête de lecture : un clip animé reçoit une clé, comme avec le curseur
+            current = keyframes.transform_at(c, self._local(c)).rotation
+            keyframes.set_property(c, "rotation", ((current + degrees + 180) % 360) - 180,
+                                   self._local(c))
+
         for icon, tip, change in (
-            ("rotate-cw", _("Pivoter de 90°"), lambda c: setattr(
-                c.transform, "rotation", ((c.transform.rotation + 90 + 180) % 360) - 180)),
+            ("rotate-ccw", _("Pivoter de 90° vers la gauche"), lambda c: turn(c, -90)),
+            ("rotate-cw", _("Pivoter de 90° vers la droite"), lambda c: turn(c, 90)),
             ("flip-horizontal-2", _("Retourner horizontalement"),
              lambda c: setattr(c.transform, "flip_h", not c.transform.flip_h)),
             ("flip-vertical-2", _("Retourner verticalement"),
              lambda c: setattr(c.transform, "flip_v", not c.transform.flip_v)),
-            ("rotate-ccw", _("Réinitialiser la transformation"),
+            ("eraser", _("Réinitialiser la transformation"),
              lambda c: (setattr(c, "transform", Transform()), c.keyframes.clear())),
         ):
             b = button("", "secondary", icon, tooltip=tip)

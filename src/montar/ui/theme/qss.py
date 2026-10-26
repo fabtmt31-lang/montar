@@ -119,6 +119,11 @@ QLineEdit[variant="title"] {{ background: transparent; border: 1px solid transpa
                               font-weight: 700; font-size: 16px; padding: 2px 4px; }}
 QLineEdit[variant="title"]:hover {{ border-color: {border}; }}
 QLineEdit[variant="title"]:focus {{ border-color: {forest}; background: {field}; }}
+QLineEdit#ValueField, #Inspector QLineEdit#ValueField {{
+    background: transparent; border: 1px solid transparent; border-radius: 6px;
+    padding: 1px 4px; font-size: 12px; }}
+QLineEdit#ValueField:hover {{ border-color: {border}; }}
+QLineEdit#ValueField:focus {{ border-color: {forest}; background: {field}; }}
 QComboBox::drop-down {{ border: none; width: 24px; }}
 QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{ width: 0; border: none; }}
 QComboBox QAbstractItemView {{ background: {surface}; border: 1px solid {border};

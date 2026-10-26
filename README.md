@@ -74,7 +74,7 @@ l'aperçu, effets **VHS** et **bande dessinée** refaits (option « Trait vivant
   et stickers, placés à la tête de lecture (les arrière-plans sous la vidéo) ;
 - **écrire ses modules** : guide complet [docs/MODULES.md](docs/MODULES.md),
   `montar --new-module DOSSIER --type effet-video` (squelette) et
-  `montar --pack-module DOSSIER` (archive) ; **Préférences → Extensions → Installer un
+  `montar --pack-module DOSSIER` (archive) ; **accueil → Modules → Installer un
   module** depuis un fichier `.montar-module` ou `.zip`, un dossier, ou un dossier lié pour
   le développement (**Recharger** relit le code).
 
@@ -140,7 +140,7 @@ l'aperçu, effets **VHS** et **bande dessinée** refaits (option « Trait vivant
   « Retirer le timelapse » rend au clip sa forme d'origine ;
 - **modules** en Python : effets, outils, sources de clip — voir
   [docs/MODULES.md](docs/MODULES.md) et l'exemple `examples/modules/negatif/` ;
-  **Préférences → Extensions** pour activer, installer (`.montar-module`) ou supprimer ;
+  **accueil → Modules** pour activer, installer (`.montar-module`) ou supprimer ;
 - 0.4.1 : dans l'aperçu, redimensionnement par les coins avec le coin opposé fixe,
   aimantation au centre et aux bords (Ctrl la désactive), cadre qui suit la rotation ;
   **Isoler** coupe un clip aux bornes de la sélection ; déposer un clip entre deux pistes

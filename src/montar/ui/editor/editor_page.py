@@ -23,7 +23,6 @@ from PyQt6.QtWidgets import (
     QMenu,
     QMessageBox,
     QProgressBar,
-    QScrollArea,
     QSplitter,
     QStackedWidget,
     QToolButton,
@@ -74,7 +73,6 @@ from montar.ui.editor.importer import MediaImporter
 from montar.ui.editor.inspector import INSPECTOR_MIN_WIDTH, INSPECTOR_WIDTH, Inspector
 from montar.ui.editor.media_panel import MediaPanel
 from montar.ui.editor.modules import CANCELLED, EditorModules
-from montar.ui.editor.modules_panel import ModuleEntry, ModulesPanel
 from montar.ui.editor.panels import (
     SIDE_MIN_WIDTH,
     SIDE_WIDTH,
@@ -106,7 +104,6 @@ _RAIL = (
     ("transitions", "Transitions", "columns-2"),
     ("effects", "Effets", "sparkles"),
     ("filters", "Filtres", "blend"),
-    ("modules", "Modules", "puzzle"),
     ("subtitles", "Sous-titres", "captions"),
     ("record", "Enregistrer", "circle-dot"),
 )
@@ -169,7 +166,6 @@ class EditorPage(QWidget):
         self.transitions_panel = TransitionsPanel(self.controller)
         self.effects_panel = EffectsPanel(self.controller)
         self.filters_panel = FiltersPanel(self.controller)
-        self.modules_panel = ModulesPanel()
         self.graphics_panel = GraphicsPanel()
         self.subtitles_panel = SubtitlesPanel(self.controller)
         self.subtitles_panel.playhead = self._playhead
@@ -179,7 +175,6 @@ class EditorPage(QWidget):
                            ("graphics", self.graphics_panel),
                            ("transitions", self.transitions_panel),
                            ("effects", self.effects_panel), ("filters", self.filters_panel),
-                           ("modules", self.modules_panel),
                            ("subtitles", self.subtitles_panel)):
             self._side_index[key] = self.side.addWidget(panel)
         body.addWidget(self._build_rail())
@@ -214,9 +209,6 @@ class EditorPage(QWidget):
             lambda *_a: self.panesResized.emit(self.panes.sizes()[0], self.panes.sizes()[2]))
         self.effects_panel.set_modules(self.modules)
         self.effects_panel.addRequested.connect(self.open_apply)
-        self.modules_panel.set_manager(self.module_manager)
-        self.modules_panel.activated.connect(self.use_module_entry)
-        self.modules_panel.manageRequested.connect(self.manage_modules)
         self.graphics_panel.set_graphics(self.module_manager.graphics())
         self.graphics_panel.graphicRequested.connect(self.insert_graphic)
         self.graphics_panel.logoRequested.connect(self.insert_logo)
@@ -1118,74 +1110,6 @@ class EditorPage(QWidget):
         if self.notifications is not None:
             self.notifications.add(title, text, kind, path)
 
-    # --- panneau Modules --------------------------------------------------------------------
-
-    def use_module_entry(self, entry: ModuleEntry) -> None:
-        """Clic dans le panneau Modules : appliquer au clip sélectionné, placer la
-        transition, créer le média ou ouvrir l'export."""
-        if entry.kind == "transition":
-            if self.transitions_panel.target() is None:
-                QMessageBox.information(self, _("Modules"), _(
-                    "Sélectionnez un clip suivi (ou précédé) d'un autre clip collé à lui, ou "
-                    "glissez la transition depuis le panneau Transitions."))
-                return
-            self.add_transition(entry.item.id)
-            return
-        if entry.kind == "generator":
-            dialog = GeneratorDialog(self.module_manager.generators(), self)
-            dialog.select(entry.item.id)
-            if dialog.exec() == QDialog.DialogCode.Accepted and dialog.chosen is not None:
-                self.generate(*dialog.chosen, dialog.values)
-            return
-        if entry.kind == "export_format":
-            self.open_export(entry.item.id)
-            return
-        clip = self.controller.selected_clip()
-        if clip is None:
-            QMessageBox.information(self, _("Modules"),
-                                    _("Sélectionnez d'abord un clip dans la timeline."))
-            return
-        if entry.kind == "tool":
-            usable = any(t is entry.item for _m, t in self.modules.tools_for(clip))
-        elif entry.kind == "audio_effect":
-            usable = self._has_sound(clip)
-        else:
-            usable = self._is_visual(clip)
-        if not usable:
-            QMessageBox.information(self, _("Modules"), _(
-                "« {name} » ne s'applique pas à ce clip.").format(name=entry.name))
-            return
-        action = ApplyAction(entry.kind, entry.item.id, entry.name, entry.description,
-                             entry.icon, entry.module_id, "",
-                             entry.item if entry.kind == "tool" else None)
-        self.apply_action(action, clip.id)
-
-    def manage_modules(self) -> None:
-        """Préférences → Extensions, dans une fenêtre, sans quitter le montage."""
-        from montar.ui.home.extensions import ExtensionsCard
-
-        dialog = QDialog(self)
-        dialog.setObjectName("ExportDialog")
-        dialog.setWindowTitle(_("Modules"))
-        dialog.resize(760, 560)
-        layout = QVBoxLayout(dialog)
-        card = ExtensionsCard(self.module_manager)
-        card.disabledChanged.connect(self.disabledModulesChanged)
-        # beaucoup de modules ou un petit écran : la liste défile au lieu d'agrandir la fenêtre
-        area = QScrollArea()
-        area.setWidgetResizable(True)
-        area.setFrameShape(QFrame.Shape.NoFrame)
-        area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        area.setWidget(card)
-        layout.addWidget(area, 1)
-        screen = self.screen().availableGeometry() if self.screen() else None
-        if screen is not None:
-            dialog.resize(min(760, screen.width() - 40), min(560, screen.height() - 80))
-        close = button(_("Fermer"), "secondary")
-        close.clicked.connect(dialog.accept)
-        layout.addWidget(close, 0, Qt.AlignmentFlag.AlignRight)
-        dialog.exec()
-
     # --- image fixe ------------------------------------------------------------------------
 
     FREEZE_SECONDS = 2
@@ -1261,7 +1185,7 @@ class EditorPage(QWidget):
                     return True
         QMessageBox.information(self, _("Sous-titres automatiques"), _(
             "Aucun clip avec du son à transcrire, ou le module « Sous-titres automatiques » "
-            "est désactivé (Préférences → Extensions)."))
+            "est désactivé (accueil → Modules)."))
         return False
 
     # --- kit de marque -------------------------------------------------------------------
@@ -1591,7 +1515,6 @@ class EditorPage(QWidget):
         self.timeline.view.viewport().update()
         self.effects_panel.rebuild_modules()
         self.transitions_panel.set_module_transitions(self.module_manager.transitions())
-        self.modules_panel.set_manager(self.module_manager)
         self.graphics_panel.set_graphics(self.module_manager.graphics())
         self._on_clip_selected(self.controller.selected)
 
@@ -1834,6 +1757,8 @@ class EditorPage(QWidget):
         self.mark_dirty()
         self.inspector.refresh_values()
         self._update_preview_selection()
+        if self.controller.live_preview:  # curseur de l'inspecteur : l'aperçu suit
+            self._schedule_reload()
 
     def _on_project_changed(self) -> None:
         self.mark_dirty()

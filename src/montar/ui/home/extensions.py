@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Préférences → Extensions : modules intégrés et installés (cahier des charges §3.11)."""
+"""Page « Modules » de l'accueil : modules intégrés et installés (cahier des charges §3.11)."""
 from __future__ import annotations
 
 from pathlib import Path

@@ -32,6 +32,7 @@ class EditorController(QObject):
         self.selected: str | None = None
         self.selected_transition: str | None = None
         self.live = False
+        self.live_preview = False
         self._live_pending = False
 
     def edit(self, label: str, operation: Callable[[Timeline], T],
@@ -92,12 +93,16 @@ class EditorController(QObject):
             self.changed.emit()
         self.historyChanged.emit()
 
-    def begin_live(self) -> None:
+    def begin_live(self, preview: bool = False) -> None:
+        """Début d'un geste (glisser, curseur, saisie) : les modifications ne notifient que
+        `liveChanged` ; avec `preview`, l'aperçu suit le geste (curseurs de l'inspecteur)."""
         self.live = True
+        self.live_preview = preview
 
     def end_live(self) -> None:
         """Fin du geste : une seule notification complète."""
         self.live = False
+        self.live_preview = False
         if self._live_pending:
             self._live_pending = False
             self.changed.emit()
