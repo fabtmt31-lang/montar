@@ -91,6 +91,20 @@ jobs:
           7z a -tzip -mx=7 "dist\montar-$version-windows-x64-portable.zip" .\build\windows\montar | Select-Object -Last 2
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           Get-ChildItem dist\montar-*-windows-x64* | Format-Table Name, Length
+      - name: Délai d'ouverture de l'installateur (information)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $setup = Get-ChildItem dist\montar-*-windows-x64.exe | Select-Object -First 1
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          $p = Start-Process -FilePath $setup.FullName -PassThru
+          $shown = $null
+          while ($sw.Elapsed.TotalSeconds -lt 120 -and -not $shown) {
+            Start-Sleep -Milliseconds 200
+            $shown = Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -match 'montar|Setup|Installation' } | Select-Object -First 1
+          }
+          "fenêtre de l'installateur ouverte après {0:N1} s ({1})" -f $sw.Elapsed.TotalSeconds, $shown.MainWindowTitle | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+          Get-Process | Where-Object { $_.Path -like "$env:TEMP*" -or $_.Id -eq $p.Id } | Stop-Process -Force -ErrorAction SilentlyContinue
       - name: Installation silencieuse, démarrage, désinstallation
         shell: pwsh
         run: |

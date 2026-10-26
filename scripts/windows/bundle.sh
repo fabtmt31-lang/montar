@@ -20,7 +20,8 @@ cp "$P"/bin/python.exe "$P"/bin/pythonw.exe "$out/bin/"
 mkdir -p "$out/lib/$py"
 for item in "$P/lib/$py"/*; do
     case "$(basename "$item")" in
-        site-packages|__pycache__|test|idlelib|tkinter|turtledemo|ensurepip|lib2to3|config-*) ;;
+        site-packages|__pycache__|test|idlelib|tkinter|turtledemo|ensurepip|lib2to3|config-*\
+        |unittest|pydoc_data|venv|sqlite3|dbm|curses|_pyrepl) ;;
         *) cp -r "$item" "$out/lib/$py/" ;;
     esac
 done
@@ -37,7 +38,11 @@ find "$site/PyQt6" -maxdepth 1 \( -name 'QtQml*' -o -name 'QtQuick*' -o -name 'Q
      -o -name 'Qt3D*' -o -name 'QtDesigner*' -o -name 'QtBluetooth*' -o -name 'QtNfc*' \
      -o -name 'QtSql*' -o -name 'QtTest*' -o -name 'QtRemoteObjects*' -o -name 'QtSensors*' \
      -o -name 'QtSerialPort*' -o -name 'QtPositioning*' -o -name 'QtHelp*' -o -name 'QtPdf*' \
-     -o -name 'QtSpatialAudio*' -o -name 'QtTextToSpeech*' -o -name 'uic' -o -name 'lupdate' \) \
+     -o -name 'QtSpatialAudio*' -o -name 'QtTextToSpeech*' -o -name 'uic' -o -name 'lupdate' \
+     -o -name 'QtMultimedia*' -o -name 'QtNetwork*' -o -name 'QtOpenGL*' -o -name 'QtDBus*' \
+     -o -name 'QtXml*' -o -name 'QtPrintSupport*' -o -name 'QtCharts*' -o -name 'QtSerialBus*' \
+     -o -name 'QtDataVisualization*' -o -name 'QtStateMachine*' -o -name 'QtShaderTools*' \
+     -o -name 'QtGraphs*' -o -name 'QtHttpServer*' -o -name 'QtWebSockets*' \) \
      -exec rm -rf {} +
 
 echo "== montar"
@@ -46,7 +51,7 @@ find "$out" -name __pycache__ -prune -exec rm -rf {} +
 
 echo "== Qt (modules d'extension, traductions)"
 mkdir -p "$out/share/qt6/plugins" "$out/share/qt6/translations"
-for d in platforms styles imageformats iconengines tls networkinformation multimedia generic; do
+for d in platforms styles imageformats iconengines; do
     [ -d "$P/share/qt6/plugins/$d" ] && cp -r "$P/share/qt6/plugins/$d" "$out/share/qt6/plugins/"
 done
 cp "$P"/share/qt6/translations/qtbase_{fr,en}.qm "$out/share/qt6/translations/" 2>/dev/null || true
@@ -58,7 +63,12 @@ Translations = share/qt6/translations
 EOF
 
 echo "== MLT, frei0r, FFmpeg"
-cp -r "$P/lib/mlt" "$out/lib/"
+# modules de MLT dont montar se sert (les autres, et leurs DLL, alourdiraient l'installateur
+# d'autant : placebo et glaxnimate tirent Vulkan, shaderc, QML…)
+mkdir -p "$out/lib/mlt"
+for m in core avformat frei0r plus rubberband sox sdl2 gdk resample xml; do
+    [ -e "$P/lib/mlt/libmlt$m.dll" ] && cp "$P/lib/mlt/libmlt$m.dll" "$out/lib/mlt/"
+done
 cp -r "$P/share/mlt" "$out/share/"
 [ -d "$P/lib/frei0r-1" ] && cp -r "$P/lib/frei0r-1" "$out/lib/"
 cp "$P"/bin/ffmpeg.exe "$P"/bin/ffprobe.exe "$out/bin/"
