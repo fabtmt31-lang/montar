@@ -1270,6 +1270,8 @@ def test_english_interface(app, isolated_home, monkeypatch):
         assert editor.preview.zoom_button.text() == "Fit"
         w.show_home()
         w.close()
+        w.deleteLater()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
     finally:
         i18n.set_language("fr")
 
@@ -2281,5 +2283,6 @@ def test_occitan_interface(app, isolated_home, monkeypatch):
         w.show_home()
         w.close()
         w.deleteLater()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
     finally:
         i18n.set_language("fr")
