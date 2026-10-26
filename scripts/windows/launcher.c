@@ -9,8 +9,8 @@
 #include <windows.h>
 #include <shellapi.h>
 
-static const wchar_t *FIXED[] = {L"-X", L"utf8", L"-I", L"-m", L"montar"};
-#define NFIXED (sizeof(FIXED) / sizeof(FIXED[0]))
+static const wchar_t *MONTAR_ARGS[] = {L"-X", L"utf8", L"-I", L"-m", L"montar"};
+#define NMONTAR_ARGS (sizeof(MONTAR_ARGS) / sizeof(MONTAR_ARGS[0]))
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR line, int show)
 {
@@ -19,13 +19,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR line, int show
     wchar_t **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (argv == NULL)
         return 1;
-    wchar_t **args = (wchar_t **)LocalAlloc(LPTR, sizeof(wchar_t *) * (argc + NFIXED + 1));
+    wchar_t **args = (wchar_t **)LocalAlloc(LPTR, sizeof(wchar_t *) * (argc + NMONTAR_ARGS + 1));
     if (args == NULL)
         return 1;
     int n = 0;
     args[n++] = argv[0];
-    for (size_t i = 0; i < NFIXED; i++)
-        args[n++] = (wchar_t *)FIXED[i];
+    for (size_t i = 0; i < NMONTAR_ARGS; i++)
+        args[n++] = (wchar_t *)MONTAR_ARGS[i];
     for (int i = 1; i < argc; i++)  /* projet .montar éventuel, options de montar */
         args[n++] = argv[i];
     args[n] = NULL;

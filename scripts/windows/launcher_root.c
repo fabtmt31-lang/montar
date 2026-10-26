@@ -26,7 +26,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR line, int show
     if (command == NULL)
         return 1;
     _snwprintf(command, size, L"\"%ls\" %ls", target, line);
-    STARTUPINFOW si = {sizeof(si)};
+    STARTUPINFOW si;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
     PROCESS_INFORMATION pi;
     BOOL ok = CreateProcessW(target, command, NULL, NULL, FALSE, 0, NULL, path, &si, &pi);
     LocalFree(command);
