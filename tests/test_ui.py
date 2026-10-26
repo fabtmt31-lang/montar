@@ -2261,3 +2261,25 @@ def test_modules_managed_from_home(window):
     assert window.preferences.extensions.isVisibleTo(window.preferences.modules_page)
     editor = window.create_project(NewProjectParams("Sans modules", "16:9", "720p", 25))
     assert "modules" not in editor.rail_buttons
+
+
+def test_occitan_interface(app, isolated_home, monkeypatch):
+    """Occitan : catalogue en cours ; ce qui n'est pas traduit reste en français."""
+    from montar import i18n
+    from montar.ui.main_window import MainWindow
+
+    for name in ("warning", "information"):
+        monkeypatch.setattr(QMessageBox, name, staticmethod(lambda *a, **k: None))
+    assert i18n.LANGUAGES["oc"] == "Occitan"
+    i18n.set_language("oc")
+    try:
+        w = MainWindow(Settings(language="oc"), isolated_home / ".config/montar/settings.json")
+        w.show()
+        editor = w.create_project(NewProjectParams("Filme", "16:9", "720p", 25))
+        assert editor.export_button.text() == "Exportar"
+        assert i18n._("Cette phrase n'existe pas") == "Cette phrase n'existe pas"
+        w.show_home()
+        w.close()
+        w.deleteLater()
+    finally:
+        i18n.set_language("fr")

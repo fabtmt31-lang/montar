@@ -9,6 +9,7 @@ définies au niveau d'un fichier (dictionnaires, tuples) et, dans les modules, l
 
     python3 scripts/i18n_extract.py             # chaînes manquantes du catalogue anglais
     python3 scripts/i18n_extract.py --update    # les ajoute (valeur vide) aux catalogues
+    python3 scripts/i18n_extract.py --coverage oc   # avancement d'une langue en cours
 """
 from __future__ import annotations
 
@@ -97,7 +98,23 @@ def missing() -> dict[Path, list[str]]:
     return result
 
 
+def coverage(language: str) -> int:
+    """Part des chaînes traduites dans une langue en cours (sans échec)."""
+    global LANGUAGE
+    LANGUAGE = language
+    total = done = 0
+    for catalog, texts in groups().items():
+        known = json.loads(catalog.read_text(encoding="utf-8")) if catalog.exists() else {}
+        n = sum(1 for t in texts if known.get(t))
+        total, done = total + len(texts), done + n
+        print(f"{catalog.relative_to(ROOT.parent.parent)} : {n} / {len(texts)}")
+    print(f"total : {done} / {total} ({100 * done / max(1, total):.0f} %)")
+    return 0
+
+
 def main() -> int:
+    if "--coverage" in sys.argv:
+        return coverage(sys.argv[sys.argv.index("--coverage") + 1])
     gaps = missing()
     if "--update" in sys.argv:
         for catalog, absent in gaps.items():

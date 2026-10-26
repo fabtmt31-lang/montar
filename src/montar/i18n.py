@@ -17,7 +17,8 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 SOURCE_LANGUAGE = "fr"
-LANGUAGES = {"fr": "Français", "en": "English"}
+# occitan : catalogue en cours (les textes non traduits restent en français)
+LANGUAGES = {"fr": "Français", "en": "English", "oc": "Occitan"}
 LOCALE_DIR = Path(__file__).resolve().parent / "locale"
 
 _catalog: dict[str, str] = {}

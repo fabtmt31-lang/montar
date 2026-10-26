@@ -92,7 +92,7 @@ l'aperçu, effets **VHS** et **bande dessinée** refaits (option « Trait vivant
   l'enregistrement est placé sur une piste « Voix off ») ;
 - préférences : sauvegarde automatique activable (sinon Ctrl+S et proposition à la
   fermeture), intervalle des copies de sauvegarde, **Stockage & cache** (taille, « Vider le
-  cache », espace libre), **langue** : français, anglais ou langue du système ;
+  cache », espace libre), **langue** : français, anglais, occitan (traduction en cours) ou langue du système ;
 - modules (API 1.2) : **effets audio**, **transitions**, **générateurs** (bouton
   **Créer…** du panneau Médias) et **formats d'export** ; nouveau module intégré
   **Essentiels** : écho, graves et aigus, volume égalisé, transitions cercle / volet /
