@@ -45,6 +45,10 @@ def window(app, isolated_home, monkeypatch):
     w.show()
     yield w
     w.close()
+    # fenêtre détruite tout de suite : laissées à la sortie de Python, les fenêtres des
+    # tests étaient détruites dans le désordre et le processus plantait en se fermant
+    w.deleteLater()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
 
 
 def pump(ms: int = 50) -> None:
