@@ -94,6 +94,7 @@ jobs:
       - name: Délai d'ouverture de l'installateur (information)
         shell: pwsh
         continue-on-error: true
+        timeout-minutes: 4
         run: |
           $setup = Get-ChildItem dist\montar-*-windows-x64.exe | Select-Object -First 1
           $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -104,9 +105,16 @@ jobs:
             $shown = Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -match 'montar|Setup|Installation' } | Select-Object -First 1
           }
           "fenêtre de l'installateur ouverte après {0:N1} s ({1})" -f $sw.Elapsed.TotalSeconds, $shown.MainWindowTitle | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
-          Get-Process | Where-Object { $_.Path -like "$env:TEMP*" -or $_.Id -eq $p.Id } | Stop-Process -Force -ErrorAction SilentlyContinue
+          # l'installateur (montar-…-windows-x64.exe) et son assistant (….tmp) : fermés, sinon
+          # l'installation silencieuse qui suit les attend
+          $p | Stop-Process -Force -ErrorAction SilentlyContinue
+          Get-Process | Where-Object { $_.ProcessName -like 'montar-*windows-x64*' } |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep 2
+          Get-Process | Where-Object { $_.ProcessName -like 'montar-*windows-x64*' } | Format-Table ProcessName, Id
       - name: Installation silencieuse, démarrage, désinstallation
         shell: pwsh
+        timeout-minutes: 10
         run: |
           $dir = "$env:RUNNER_TEMP\montar-installe"
           $setup = Get-ChildItem dist\montar-*-windows-x64.exe | Select-Object -First 1
