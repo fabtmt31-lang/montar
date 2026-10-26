@@ -24,7 +24,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-MODULE_VERSION = 1  # change le nom des calques en cache si leur dessin évolue
+MODULE_VERSION = 2  # change le nom des calques en cache si leur dessin évolue
 LOOP_SECONDS = 5  # durée de la boucle des gouttes animées
 MAX_SIDE = 1920  # calques limités à cette taille (le moteur les met à l'échelle)
 
@@ -223,6 +223,102 @@ def still_image(cache_dir: Path, path: str) -> str:
     return str(target)
 
 
+# --- zone couverte par l'image du clip ----------------------------------------------------
+
+FULL = (0.0, 0.0, 1.0, 1.0)
+MAX_CROP = 0.45
+
+
+def clip_area(cw: int, ch: int, mw: int, mh: int, transform=None) -> tuple:
+    """Zone (x, y, largeur, hauteur, en fractions de la toile) qu'occupe l'image du clip là
+    où le moteur applique les filtres : l'image recadrée, ajustée à la toile en gardant ses
+    proportions, le reste étant transparent. La pluie ne déborde pas de cette zone."""
+    if not (cw and ch and mw and mh):
+        return FULL
+
+    def crop(name: str) -> float:
+        try:
+            return max(0.0, min(MAX_CROP, float(getattr(transform, name, 0.0) or 0.0)))
+        except (TypeError, ValueError):
+            return 0.0
+
+    vw = mw * (1 - crop("crop_left") - crop("crop_right"))
+    vh = mh * (1 - crop("crop_top") - crop("crop_bottom"))
+    k = min(cw / vw, ch / vh)
+    w, h = min(1.0, vw * k / cw), min(1.0, vh * k / ch)
+    return (round((1 - w) / 2, 4), round((1 - h) / 2, 4), round(w, 4), round(h, 4))
+
+
+def clip_frame(cw: int, ch: int, mw: int, mh: int, transform=None,
+               placed: bool = False) -> tuple[tuple[int, int], tuple, float]:
+    """Cadre que reçoivent les filtres du clip : (taille en pixels de la toile, zone de
+    l'image dans ce cadre, hauteur de la toile / hauteur du cadre).
+
+    Sans transformation, c'est la toile entière, l'image y étant ajustée entre des bandes
+    transparentes. Si le clip est placé (déplacé, redimensionné, recadré, images clés,
+    zoom…), le moteur donne aux filtres l'image seule, sans bandes."""
+    area = clip_area(cw, ch, mw, mh, transform)
+    if not placed or area == FULL:
+        return (cw, ch), area, 1.0
+    w, h = max(2, round(area[2] * cw)), max(2, round(area[3] * ch))
+    return (w, h), FULL, round(ch / h, 4)
+
+
+def _box(area: tuple, w: int, h: int) -> tuple[int, int, int, int]:
+    """Zone en pixels d'un calque w×h : (x, y, largeur, hauteur)."""
+    x0, y0 = round(area[0] * w), round(area[1] * h)
+    x1, y1 = round((area[0] + area[2]) * w), round((area[1] + area[3]) * h)
+    return x0, y0, max(2, min(w, x1) - x0), max(2, min(h, y1) - y0)
+
+
+def _padded(image, w: int, h: int, box: tuple):
+    """Calque de la toile entière, transparent (ou sec) hors de la zone de l'image."""
+    import numpy as np
+
+    if image.shape[:2] == (h, w):
+        return image
+    out = np.zeros((h, w) + image.shape[2:], image.dtype)
+    x, y, bw, bh = box
+    out[y:y + bh, x:x + bw] = image[:h - y, :w - x]
+    return out
+
+
+def area_mask(cache_dir: Path, area: tuple, width: int, height: int) -> Path:
+    """Masque de la zone de l'image (opaque dedans, transparent dehors), à la taille de la
+    toile. Le canal alpha est exact ; la luminosité serait lue sur une échelle réduite
+    (le noir laisserait passer 6 % de l'image)."""
+    w, h = layer_size(width, height)
+    x, y, bw, bh = _box(area, w, h)
+    path = cache_dir / "pluie" / f"zone{MODULE_VERSION}_{w}x{h}_{x}_{y}_{bw}_{bh}.png"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        inside, outside = b"\xff\xff\xff\xff", b"\0\0\0\0"
+        row = outside * x + inside * bw + outside * max(0, w - x - bw)
+        rows = [row if y <= j < y + bh else outside * w for j in range(h)]
+        tmp = path.with_suffix(".part")
+        tmp.write_bytes(_png(w, h, rows))
+        tmp.replace(path)
+    return path
+
+
+def keep_outside_transparent(cache_dir: Path, area: tuple, width: int,
+                             height: int) -> list[tuple[str, dict]]:
+    """Les calques superposés rendent opaque tout le cadre du clip : hors de la zone de
+    l'image, il redevient transparent (sinon une image incrustée sur une autre piste
+    masquerait celle du dessous par des bandes noires)."""
+    if area == FULL:
+        return []
+    return [("shape", {"resource": str(area_mask(cache_dir, area, width, height)),
+                       "use_luminance": 0, "use_mix": 0, "audio_match": 0,
+                       "alpha_operation": "minimum"})]
+
+
+def geometry(area: tuple) -> str:
+    """Rectangle MLT (en %) de la zone de l'image."""
+    x, y, w, h = (100 * v for v in area)
+    return f"{x:.3f}%/{y:.3f}%:{w:.3f}%x{h:.3f}%"
+
+
 # --- calques des gouttes -------------------------------------------------------------------
 
 
@@ -240,15 +336,17 @@ def loop_frames(s: Settings, fps: int) -> tuple[int, int]:
     return mask, overlay
 
 
-def cache_folder(cache_dir: Path, s: Settings, width: int, height: int, fps: int) -> Path:
-    key = json.dumps([MODULE_VERSION, layer_size(width, height), fps,
+def cache_folder(cache_dir: Path, s: Settings, width: int, height: int, fps: int,
+                 area: tuple = FULL, scale: float = 1.0) -> Path:
+    key = json.dumps([MODULE_VERSION, layer_size(width, height), fps, list(area), scale,
                       [getattr(s, k) for k in DROP_KEYS]])
     return cache_dir / "pluie" / hashlib.sha1(key.encode()).hexdigest()[:20]
 
 
 MASK, OVERLAY = "masque.mp4", "calque.mov"
-PREVIEW_MASK, PREVIEW_OVERLAY = "masque.png", "calque.png"
+PREVIEW_MASK, PREVIEW_OVERLAY, PREVIEW_RAIN = "masque.png", "calque.png", "pluie.mov"
 PREVIEW_SIDE = 960  # aperçu des réglages : gouttes figées, image réduite
+RAIN_SIDE, RAIN_FRAMES, RAIN_FPS = 640, 50, 25  # aperçu : pluie qui tombe (boucle de 2 s)
 
 
 def ready(folder: Path) -> bool:
@@ -264,26 +362,50 @@ def is_applied(s: Settings, applied) -> bool:
     return isinstance(applied, dict) and applied == drop_state(s)
 
 
-def preview_layers(cache_dir: Path, s: Settings, width: int, height: int) -> Path:
-    """Aperçu immédiat des gouttes (une image fixe, en une fraction de seconde) pendant
-    les réglages ; le calcul complet, animé, se fait quand on applique la pluie."""
-    k = min(1.0, PREVIEW_SIDE / max(width, height, 1))
-    w, h = max(2, round(width * k)), max(2, round(height * k))
-    key = json.dumps([MODULE_VERSION, "aperçu", w, h, [getattr(s, k) for k in DROP_KEYS
-                                                         if k not in ("anime",)]])
-    folder = cache_dir / "pluie" / ("apercu-" + hashlib.sha1(key.encode()).hexdigest()[:16])
-    if (folder / PREVIEW_MASK).exists() and (folder / PREVIEW_OVERLAY).exists():
-        return folder
+def preview_layers(cache_dir: Path, s: Settings, width: int, height: int,
+                   area: tuple = FULL, scale: float = 1.0) -> Path:
+    """Aperçu immédiat pendant les réglages (une fraction de seconde) : gouttes figées et
+    pluie qui tombe ; le calcul complet, où les gouttes ruissellent, se fait quand on
+    applique la pluie."""
     from dataclasses import replace
 
-    scene = _Scene(replace(s, anime=False), w, h, max(2, round(LOOP_SECONDS * 25)))
-    mask, over = scene.frame(0, True, True)
+    k = min(1.0, PREVIEW_SIDE / max(width, height, 1))
+    w, h = max(2, round(width * k)), max(2, round(height * k))
+    key = json.dumps([MODULE_VERSION, "aperçu", w, h, list(area), scale,
+                      [getattr(s, k) for k in DROP_KEYS if k != "anime"]])
+    folder = cache_dir / "pluie" / ("apercu-" + hashlib.sha1(key.encode()).hexdigest()[:16])
+    names = [PREVIEW_MASK, PREVIEW_OVERLAY] + ([PREVIEW_RAIN] if s.chute > 0.001 else [])
+    if all((folder / n).exists() for n in names):
+        return folder
     folder.mkdir(parents=True, exist_ok=True)
+    box = _box(area, w, h)
+    still = _Scene(replace(s, anime=False, chute=0.0), box[2], box[3], 2, unit=h / 720 * scale)
+    mask, over = still.frame(0, True, True)
+    mask, over = _padded(mask, w, h, box), _padded(over, w, h, box)
     for name, data in ((PREVIEW_MASK, _png(w, h, mask, gray=True, level=1)),
                        (PREVIEW_OVERLAY, _png(w, h, over.reshape(h, -1), level=1))):
         tmp = folder / (name + ".part")
         tmp.write_bytes(data)
         tmp.replace(folder / name)
+    if s.chute > 0.001:  # la pluie qui tombe, seule : rapide à dessiner
+        k = min(1.0, RAIN_SIDE / max(width, height, 1))
+        rw, rh = max(2, round(width * k / 2) * 2), max(2, round(height * k / 2) * 2)
+        rbox = _box(area, rw, rh)
+        rain = _Scene(replace(s, volume=0.0), rbox[2], rbox[3], RAIN_FRAMES,
+                      unit=rh / 720 * scale)
+        tmp = folder / ("part-" + PREVIEW_RAIN)
+        proc, errors = _encoder(tmp, "rgba", rw, rh, RAIN_FPS,
+                                ["-c:v", "qtrle", "-pix_fmt", "argb", "-f", "mov"])
+        try:
+            for i in range(RAIN_FRAMES):
+                _m, over = rain.frame(i, False, True)
+                proc.stdin.write(_padded(over, rw, rh, rbox).tobytes())
+            _finish(proc, errors)
+        except BaseException:
+            _abort(proc)
+            tmp.unlink(missing_ok=True)
+            raise
+        tmp.replace(folder / PREVIEW_RAIN)
     return folder
 
 
@@ -384,16 +506,22 @@ class _Layers:
 class _Scene:
     """Gouttes, gouttelettes et traits de pluie tirés au hasard (graine = variante)."""
 
-    def __init__(self, s: Settings, w: int, h: int, loop: int) -> None:
+    def __init__(self, s: Settings, w: int, h: int, loop: int,
+                 unit: float | None = None) -> None:
         import numpy as np
 
         self.s, self.w, self.h, self.loop = s, w, h, loop
         rng = np.random.default_rng(1000 + s.variante)
-        unit = h / 720  # tailles exprimées pour une image de 720 lignes
+        # tailles exprimées pour une toile de 720 lignes (la scène peut n'en couvrir qu'une
+        # partie : la zone de l'image du clip)
+        unit = unit or h / 720
         self.unit = unit
         soft = s.surface == "objectif"  # gouttes floues sur l'objectif, nettes sur une vitre
         self.gain, self.rim_power, self.spec = (2.5, 2.0, 0.45) if soft else (5.0, 3.0, 0.6)
         size = 0.5 + s.taille
+        # surface couverte, en toiles de 1280×720 : même densité de gouttes quelle que soit
+        # la résolution (aperçu réduit, export 4K)
+        surface = (w * h) / (1280 * 720 * unit * unit)
         animated = s.anime and loop > 1
         self.drops: list[_Drop] = []
         self.drizzle = None
@@ -414,12 +542,12 @@ class _Scene:
                     d.walk = np.cumsum(rng.normal(0, 0.3, round(h / unit / 2) + 2))
                 self.drops.append(d)
             # gouttelettes très fines (bruine) : elles restent en place
-            n = round((300 + 3500 * s.volume) * (w * h) / (1280 * 720))
+            n = round((300 + 3500 * s.volume) * surface)
             self.drizzle = (rng.uniform(0, w, n), rng.uniform(0, h, n),
                             rng.uniform(0.8, 3.0, n) * (0.6 + 0.6 * s.taille) * unit)
         # traits de pluie : chacun parcourt un nombre entier de fois la hauteur pendant la
         # boucle, pour qu'elle se referme sans saut
-        count = round(2200 * s.chute * (w * h) / (1280 * 720))
+        count = round(2200 * s.chute * surface)
         span = h + 120 * unit
         self.streaks = (rng.uniform(-0.2 * w, w, count), rng.uniform(0, span, count),
                         rng.uniform(18, 46, count) * unit, rng.uniform(0.16, 0.47, count),
@@ -534,11 +662,16 @@ def _abort(proc) -> None:
 
 
 def render_layers(folder: Path, s: Settings, width: int, height: int, fps: int,
-                  progress=lambda ratio: None, cancelled=lambda: False) -> Path:
-    """Calcule le masque et le calque des gouttes dans `folder` (écrit d'abord ailleurs)."""
+                  progress=lambda ratio: None, cancelled=lambda: False,
+                  area: tuple = FULL, scale: float = 1.0) -> Path:
+    """Calcule le masque et le calque des gouttes dans `folder` (écrit d'abord ailleurs) ;
+    hors de la zone de l'image du clip, ils sont vides. `width` × `height` : cadre que
+    reçoivent les filtres ; `scale` : hauteur de la toile / hauteur de ce cadre (les
+    gouttes gardent leur taille par rapport à la toile)."""
     w, h = layer_size(width, height)
     n_mask, n_over = loop_frames(s, fps)
-    scene = _Scene(s, w, h, max(n_mask, n_over))
+    box = _box(area, w, h)
+    scene = _Scene(s, box[2], box[3], max(n_mask, n_over), unit=h / 720 * scale)
     folder.parent.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix=folder.name + ".", dir=folder.parent))
     gop = ["-g", str(max(1, fps))]
@@ -555,9 +688,9 @@ def render_layers(folder: Path, s: Settings, width: int, height: int, fps: int,
             mask, over = scene.frame(i, i < n_mask, i < n_over)
             try:
                 if mask is not None:
-                    mask_proc.stdin.write(mask.tobytes())
+                    mask_proc.stdin.write(_padded(mask, w, h, box).tobytes())
                 if over is not None:
-                    over_proc.stdin.write(over.tobytes())
+                    over_proc.stdin.write(_padded(over, w, h, box).tobytes())
             except BrokenPipeError:
                 break  # l'erreur de ffmpeg est remontée par _finish
             progress((i + 1) / (total + 1))
@@ -594,4 +727,7 @@ def drop_filters(folder: Path, s: Settings, height: int,
         ]
     result.append(("watermark", {"resource": str(folder / overlay),
                                  "producer.eof": "loop", "distort": 1}))
+    if preview and (folder / PREVIEW_RAIN).exists():  # la pluie tombe aussi dans l'aperçu
+        result.append(("watermark", {"resource": str(folder / PREVIEW_RAIN),
+                                     "producer.eof": "loop", "distort": 1}))
     return result

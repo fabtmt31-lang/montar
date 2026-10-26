@@ -279,3 +279,97 @@ def test_rain_on_webp_image(rain, core, tmp_path):
     middle = [tuple(data[i:i + 3]) for i in range(0, len(data), 4)
               if 14 <= (i // 4) % 64 < 50]
     assert len(set(middle)) > 300  # l'image est bien là (fond gris uni : < 100 couleurs)
+
+
+def test_clip_frame(core):
+    from montar.core.project import Transform
+
+    # photo 4:3 dans une toile 16:9 : bandes à gauche et à droite
+    assert core.clip_area(1280, 720, 1024, 768) == (0.125, 0.0, 0.75, 1.0)
+    assert core.clip_area(1280, 720, 1920, 1080) == core.FULL
+    cropped = core.clip_area(1280, 720, 1280, 720, Transform(crop_top=0.25, crop_bottom=0.25))
+    assert cropped == (0.0, 0.25, 1.0, 0.5)  # recadrée : bandes en haut et en bas
+    # sans transformation : la toile entière, la pluie limitée à la zone de l'image
+    assert core.clip_frame(1280, 720, 1024, 768) == ((1280, 720), (0.125, 0.0, 0.75, 1.0),
+                                                     1.0)
+    # clip placé : le moteur donne l'image seule aux filtres
+    assert core.clip_frame(1280, 720, 1024, 768, placed=True) == ((960, 720), core.FULL, 1.0)
+
+
+def test_placed_clip_is_detected(rain):
+    import sys
+
+    from montar.core.project import Transform
+
+    placed = sys.modules[type(rain).__module__]._placed
+    assert not placed(None, _clip(transform=Transform(), keyframes={}, modules={}))
+    assert placed(None, _clip(transform=Transform(scale=0.5), keyframes={}, modules={}))
+    assert placed(None, _clip(transform=Transform(), keyframes={"x": [(0, 0.1)]}, modules={}))
+
+
+@needs_ffmpeg
+def test_preview_rain_falls(rain, core, tmp_path):
+    """Pendant les réglages, les gouttes sont figées mais la pluie tombe."""
+    folder = core.preview_layers(tmp_path, core.Settings(chute=0.6), 320, 180)
+    assert (folder / core.PREVIEW_RAIN).exists()
+    names = [p.get("resource", "") for _n, p in core.drop_filters(folder, core.Settings(chute=0.6),
+                                                                  180, preview=True)]
+    assert any(n.endswith(core.PREVIEW_RAIN) for n in names)
+    dry = core.preview_layers(tmp_path, core.Settings(chute=0.0), 320, 180)
+    assert not (dry / core.PREVIEW_RAIN).exists()
+
+
+@needs_ffmpeg
+def test_rain_stays_inside_the_image(rain, core, tmp_path):
+    """Photo 4:3 dans une toile 16:9, sur une piste au-dessus d'une vidéo rouge : la pluie
+    ne déborde pas sur les bandes, qui laissent voir la piste du dessous, et l'image garde
+    sa taille, qu'elle soit posée telle quelle ou réduite."""
+    pytest.importorskip("mlt7")
+    import subprocess
+
+    from montar.core.project import Transform
+    from montar.engine import get_engine
+
+    def make(*args):
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", *args], check=True)
+
+    photo, red = tmp_path / "photo.jpg", tmp_path / "rouge.mp4"
+    make("-i", "color=c=gray:size=400x300", "-frames:v", "1", str(photo))
+    make("-i", "color=c=red:size=160x90:rate=25:duration=2", "-c:v", "libx264",
+         "-pix_fmt", "yuv420p", str(red))
+    context = _context(tmp_path, 160, 90, 25)
+    media = SimpleNamespace(kind="image", path=str(photo), width=400, height=300)
+    engine = get_engine()
+
+    def content(transform, filters):
+        spec = TimelineSpec(Canvas(160, 90, 25), (
+            TrackSpec("video", False, False, (ClipSpec(str(red), "video", 0, 50,
+                                                       media_size=(160, 90)),)),
+            TrackSpec("video", False, False, (ClipSpec(str(photo), "image", 0, 50,
+                                                       media_size=(400, 300),
+                                                       transform=transform,
+                                                       extra_filters=tuple(filters)),))))
+        source = engine.build(spec)
+        try:
+            data = source.render(10, 160, 90)
+        finally:
+            source.close()
+        row = [tuple(data[(45 * 160 + x) * 4:(45 * 160 + x) * 4 + 3]) for x in range(160)]
+        inside = [x for x, (r, g, b) in enumerate(row) if not (r > 200 and g < 60 and b < 60)]
+        return inside[0], inside[-1]
+
+    for transform in (Transform(), Transform(scale=0.6)):
+        clip = _clip(duration=50, transform=transform, keyframes={}, modules={})
+        values = {"temps": "averse", "_gouttes": core.drop_state(
+            core.Settings.from_values({"temps": "averse"}))}
+        rain.resolve(context, clip, media)
+        rain.filters({**rain.defaults(), **values})
+        for work in list(context.jobs.values()):
+            work(lambda r: None, lambda: False)
+        rain.resolve(context, clip, media)
+        filters = rain.filters({**rain.defaults(), **values})
+        assert "mask_start" in _names(filters)
+        expected = content(transform, [])
+        got = content(transform, filters)
+        assert abs(got[0] - expected[0]) <= 1 and abs(got[1] - expected[1]) <= 1, \
+            (transform, expected, got)
