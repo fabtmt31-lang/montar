@@ -244,3 +244,38 @@ def test_settings_preview_then_apply(rain, core, tmp_path):
                                                                      "ambiance": 0.1}}))
     assert tool.available(None, SimpleNamespace(modules={"pluie": {**applied,
                                                                  "volume": 0.1}}))
+
+
+@needs_ffmpeg
+def test_rain_on_webp_image(rain, core, tmp_path):
+    """Une image WebP (ouverte par le moteur comme une vidéo d'une image) disparaissait
+    derrière la pluie : le module en utilise une copie PNG."""
+    pytest.importorskip("mlt7")
+    import subprocess
+
+    from montar.engine import get_engine
+
+    image = tmp_path / "photo.webp"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                    "testsrc2=size=320x240", "-frames:v", "1", str(image)], check=True)
+    context = _context(tmp_path, 64, 36, 25)
+    clip = _clip(duration=125, source_in=0)
+    override = rain.resolve(context, clip, SimpleNamespace(kind="image", path=str(image)))
+    assert override.path.endswith(".png") and Path(override.path).exists()
+    assert rain.resolve(context, clip, SimpleNamespace(kind="image", path=str(image))).path \
+        == override.path  # copie faite une seule fois
+    jpeg = SimpleNamespace(kind="image", path="/photos/chien.jpg")
+    assert rain.resolve(context, clip, jpeg).path == "/photos/chien.jpg"
+    rain.resolve(context, clip, SimpleNamespace(kind="image", path=str(image)))
+    filters = rain.filters(rain.defaults())
+    spec = ClipSpec(override.path, "image", 0, 125, media_size=(320, 240),
+                    extra_filters=tuple(filters))
+    source = get_engine().build(TimelineSpec(Canvas(64, 36, 25),
+                                             (TrackSpec("video", False, False, (spec,)),)))
+    try:
+        data = source.render(56, 64, 36)
+    finally:
+        source.close()
+    middle = [tuple(data[i:i + 3]) for i in range(0, len(data), 4)
+              if 14 <= (i // 4) % 64 < 50]
+    assert len(set(middle)) > 300  # l'image est bien là (fond gris uni : < 100 couleurs)

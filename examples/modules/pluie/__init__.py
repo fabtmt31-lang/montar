@@ -58,8 +58,10 @@ class Rain(VideoEffect, ClipSource):
         if media is None or media.kind not in ("video", "image"):
             return None
         # la source du clip, telle quelle : le clip n'est jamais « en attente de calcul »
-        return SourceOverride(media.path, clip.source_in, clip.speed,
-                              "image" if media.kind == "image" else "video")
+        if media.kind == "image":
+            return SourceOverride(core.still_image(context.cache_dir, media.path), 0, 1.0,
+                                  "image")
+        return SourceOverride(media.path, clip.source_in, clip.speed, "video")
 
     def badge(self, settings):
         applied = core.is_applied(core.Settings.from_values(settings),

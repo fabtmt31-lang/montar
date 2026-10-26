@@ -190,6 +190,39 @@ def _png(width: int, height: int, rows, gray: bool = False, level: int = 9) -> b
             + chunk(b"IDAT", zlib.compress(raw, level)) + chunk(b"IEND", b""))
 
 
+# --- images fixes ----------------------------------------------------------------------------
+
+# formats d'image que le moteur ouvre comme de vraies images fixes ; les autres (WebP, GIF,
+# BMP, TIFF…) sont ouverts comme une vidéo d'une seule image, et l'image disparaît alors
+# derrière les filtres de la pluie (fond gris) : le module en utilise une copie PNG
+STILL_FORMATS = (".png", ".jpg", ".jpeg")
+
+
+def still_image(cache_dir: Path, path: str) -> str:
+    """Chemin d'une image que le moteur ouvre comme image fixe (copie PNG faite une fois)."""
+    source = Path(path)
+    if source.suffix.lower() in STILL_FORMATS:
+        return path
+    try:
+        stat = source.stat()
+    except OSError:
+        return path
+    key = json.dumps([str(source.resolve()), stat.st_mtime_ns, stat.st_size])
+    target = cache_dir / "pluie" / "images" / f"{hashlib.sha1(key.encode()).hexdigest()}.png"
+    if target.exists():
+        return str(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(target.stem + ".part.png")
+    done = subprocess.run([shutil.which("ffmpeg") or "ffmpeg", "-v", "error", "-y", "-i", path,
+                           "-frames:v", "1", "-update", "1", str(tmp)],
+                          capture_output=True, timeout=60)
+    if done.returncode != 0 or not tmp.exists():
+        tmp.unlink(missing_ok=True)
+        return path  # copie impossible : l'image d'origine, telle quelle
+    tmp.replace(target)
+    return str(target)
+
+
 # --- calques des gouttes -------------------------------------------------------------------
 
 
