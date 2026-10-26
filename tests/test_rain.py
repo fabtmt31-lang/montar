@@ -43,12 +43,19 @@ def _context(tmp_path, width=160, height=90, fps=10):
 MEDIA = SimpleNamespace(kind="video", path="/v.mp4")
 
 
-def _filters(rain, context, clip, values):
-    """Comme le crochet de rendu de montar : resolve, puis filters."""
+def _filters(rain, context, clip, values, applied=True):
+    """Comme le crochet de rendu de montar : resolve, puis filters. `applied` : comme après
+    l'outil « Appliquer la pluie »."""
+    import sys
+
+    core = sys.modules[type(rain).__module__ + ".core"]
     override = rain.resolve(context, clip, MEDIA)
     assert (override.path, override.source_in, override.speed) == ("/v.mp4", clip.source_in,
                                                                    clip.speed)
-    return rain.filters({**rain.defaults(), **values})
+    values = {**rain.defaults(), **values}
+    if applied:
+        values["_gouttes"] = core.drop_state(core.Settings.from_values(values))
+    return rain.filters(values)
 
 
 def _names(filters):
@@ -203,3 +210,37 @@ def test_rain_renders(rain, core, tmp_path, media_dir):
     wet = render(_filters(rain, context, clip, values))
     assert brightness(mood) < brightness(plain) * 0.85  # jour de pluie : plus sombre
     assert wet != mood  # les gouttes sont posées sur l'image
+
+
+def test_settings_preview_then_apply(rain, core, tmp_path):
+    """Les réglages montrent un aperçu immédiat ; seul « Appliquer » lance le calcul."""
+    import sys
+
+    context = _context(tmp_path)
+    clip = _clip()
+    for volume in (0.2, 0.4, 0.6, 0.8):  # curseur déplacé plusieurs fois
+        filters = _filters(rain, context, clip, {"volume": volume}, applied=False)
+        shape = next(p for n, p in filters if n == "mask_start")
+        assert shape["filter.resource"].endswith(core.PREVIEW_MASK)
+        assert Path(shape["filter.resource"]).exists()
+    assert context.jobs == {}  # aucun calcul lourd pendant les réglages
+    values = {**rain.defaults(), "volume": 0.8}
+    assert rain.badge(values) == "Pluie · aperçu"
+
+    tool_module = sys.modules[type(rain).__module__]
+    tool = tool_module.ApplyRain()
+    project_clip = SimpleNamespace(id="c1", modules={"pluie": dict(values)})
+    assert tool.available(None, project_clip)
+    timeline = SimpleNamespace(clip=lambda clip_id: project_clip)
+    editor = SimpleNamespace(edit=lambda label, op: op(timeline))
+    tool.run(editor, project_clip)
+    applied = project_clip.modules["pluie"]
+    assert not tool.available(None, project_clip) and rain.badge(applied) == "Pluie"
+    rain.resolve(context, clip, MEDIA)
+    rain.filters(applied)
+    assert len(context.jobs) == 1  # le calcul complet est demandé
+    # l'ambiance ne touche pas aux gouttes : rien à réappliquer
+    assert not tool.available(None, SimpleNamespace(modules={"pluie": {**applied,
+                                                                     "ambiance": 0.1}}))
+    assert tool.available(None, SimpleNamespace(modules={"pluie": {**applied,
+                                                                 "volume": 0.1}}))

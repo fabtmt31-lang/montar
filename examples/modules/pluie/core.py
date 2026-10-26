@@ -170,12 +170,13 @@ def haze_image(folder: Path, amount: float) -> Path:
             a = round(255 * 0.35 * (level / 20) * (1 - 0.7 * y / (HAZE_ROWS - 1)))
             rows.append(bytes([140, 153, 168, a]) * 4)
         tmp = path.with_suffix(".part")
-        tmp.write_bytes(_png_rgba(4, HAZE_ROWS, rows))
+        tmp.write_bytes(_png(4, HAZE_ROWS, rows))
         tmp.replace(path)
     return path
 
 
-def _png_rgba(width: int, height: int, rows: list[bytes]) -> bytes:
+def _png(width: int, height: int, rows, gray: bool = False, level: int = 9) -> bytes:
+    """Image PNG (RVBA, ou niveaux de gris) à partir de ses lignes d'octets."""
     import struct
     import zlib
 
@@ -183,10 +184,10 @@ def _png_rgba(width: int, height: int, rows: list[bytes]) -> bytes:
         return (struct.pack(">I", len(payload)) + kind + payload
                 + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF))
 
-    raw = b"".join(b"\0" + r for r in rows)
-    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6,
-                                                               0, 0, 0))
-            + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+    raw = b"".join(b"\0" + bytes(r) for r in rows)
+    header = struct.pack(">IIBBBBB", width, height, 8, 0 if gray else 6, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header)
+            + chunk(b"IDAT", zlib.compress(raw, level)) + chunk(b"IEND", b""))
 
 
 # --- calques des gouttes -------------------------------------------------------------------
@@ -213,10 +214,44 @@ def cache_folder(cache_dir: Path, s: Settings, width: int, height: int, fps: int
 
 
 MASK, OVERLAY = "masque.mp4", "calque.mov"
+PREVIEW_MASK, PREVIEW_OVERLAY = "masque.png", "calque.png"
+PREVIEW_SIDE = 960  # aperçu des réglages : gouttes figées, image réduite
 
 
 def ready(folder: Path) -> bool:
     return (folder / MASK).exists() and (folder / OVERLAY).exists()
+
+
+def drop_state(s: Settings) -> dict:
+    """Réglages des gouttes, tels qu'enregistrés quand on applique la pluie."""
+    return {k: getattr(s, k) for k in DROP_KEYS}
+
+
+def is_applied(s: Settings, applied) -> bool:
+    return isinstance(applied, dict) and applied == drop_state(s)
+
+
+def preview_layers(cache_dir: Path, s: Settings, width: int, height: int) -> Path:
+    """Aperçu immédiat des gouttes (une image fixe, en une fraction de seconde) pendant
+    les réglages ; le calcul complet, animé, se fait quand on applique la pluie."""
+    k = min(1.0, PREVIEW_SIDE / max(width, height, 1))
+    w, h = max(2, round(width * k)), max(2, round(height * k))
+    key = json.dumps([MODULE_VERSION, "aperçu", w, h, [getattr(s, k) for k in DROP_KEYS
+                                                         if k not in ("anime",)]])
+    folder = cache_dir / "pluie" / ("apercu-" + hashlib.sha1(key.encode()).hexdigest()[:16])
+    if (folder / PREVIEW_MASK).exists() and (folder / PREVIEW_OVERLAY).exists():
+        return folder
+    from dataclasses import replace
+
+    scene = _Scene(replace(s, anime=False), w, h, max(2, round(LOOP_SECONDS * 25)))
+    mask, over = scene.frame(0, True, True)
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, data in ((PREVIEW_MASK, _png(w, h, mask, gray=True, level=1)),
+                       (PREVIEW_OVERLAY, _png(w, h, over.reshape(h, -1), level=1))):
+        tmp = folder / (name + ".part")
+        tmp.write_bytes(data)
+        tmp.replace(folder / name)
+    return folder
 
 
 @dataclass
@@ -507,14 +542,16 @@ def render_layers(folder: Path, s: Settings, width: int, height: int, fps: int,
     return folder
 
 
-def drop_filters(folder: Path, s: Settings, height: int) -> list[tuple[str, dict]]:
-    """Filtres qui posent les gouttes calculées sur l'image du clip."""
+def drop_filters(folder: Path, s: Settings, height: int,
+                 preview: bool = False) -> list[tuple[str, dict]]:
+    """Filtres qui posent les gouttes calculées (ou leur aperçu) sur l'image du clip."""
+    mask, overlay = (PREVIEW_MASK, PREVIEW_OVERLAY) if preview else (MASK, OVERLAY)
     result = []
     if s.volume > 0.001:
         # dans les gouttes : l'image vue à travers l'eau, floue et un peu plus claire
         blur = (3.0 + 4.0 * s.taille) * (1.6 if s.surface == "objectif" else 1.0)
         result += [
-            ("mask_start", {"filter": "shape", "filter.resource": str(folder / MASK),
+            ("mask_start", {"filter": "shape", "filter.resource": str(folder / mask),
                             "filter.use_luminance": 1, "filter.use_mix": 0,
                             "filter.audio_match": 0, "filter.producer.eof": "loop"}),
             ("avfilter.gblur", {"av.sigma": round(blur * height / 720, 2)}),
@@ -522,6 +559,6 @@ def drop_filters(folder: Path, s: Settings, height: int) -> list[tuple[str, dict
                              "av.saturation": 0.85}),
             ("mask_apply", {}),
         ]
-    result.append(("watermark", {"resource": str(folder / OVERLAY),
+    result.append(("watermark", {"resource": str(folder / overlay),
                                  "producer.eof": "loop", "distort": 1}))
     return result
