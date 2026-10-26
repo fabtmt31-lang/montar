@@ -441,3 +441,14 @@ def test_no_white_area_without_gdk(tmp_path):
     line = [x for x in done.stdout.splitlines() if x.startswith("BLANCS")]
     assert line, done.stderr[-2000:]
     assert int(line[0].split()[1]) < 50
+
+
+def test_transitions_are_pinned(rain, core, tmp_path):
+    """Depuis MLT 7.24 environ, watermark et mask_apply changent de transition par défaut
+    (affine, qtblend) : sous Windows, une zone blanche remplaçait l'image. Le module
+    impose « composite », identique dans toutes les versions de MLT."""
+    context = _context(tmp_path)
+    for animated in (False, True):
+        filters = _filters(rain, context, _clip(), {"chute": 0.6}, animated=animated)
+        layered = [p for n, p in filters if n in ("watermark", "mask_apply")]
+        assert layered and all(p.get("transition") == "composite" for p in layered)

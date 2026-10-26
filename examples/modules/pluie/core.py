@@ -348,6 +348,13 @@ def cache_folder(cache_dir: Path, s: Settings, width: int, height: int, fps: int
 
 
 MASK, OVERLAY = "masque.mp4", "calque.mov"
+
+# Transition qui pose les calques (watermark) et l'image vue à travers les gouttes
+# (mask_apply). Imposée : depuis MLT 7.24 environ, watermark utilise « affine » et
+# mask_apply « qtblend » par défaut (MLT de montar sous Windows), et l'image du clip y
+# laissait place à une zone blanche. « composite » fait partie du cœur de MLT et se
+# comporte de la même façon dans toutes ses versions.
+COMPOSITE = "composite"
 PREVIEW_MASK, PREVIEW_OVERLAY, PREVIEW_RAIN = "masque.mp4", "calque.mov", "pluie.mov"
 PREVIEW_SIDE = 960  # aperçu des réglages : gouttes figées, image réduite
 RAIN_SIDE, RAIN_FRAMES, RAIN_FPS = 640, 50, 25  # aperçu : pluie qui tombe (boucle de 2 s)
@@ -724,11 +731,12 @@ def drop_filters(folder: Path, s: Settings, height: int,
             ("avfilter.gblur", {"av.sigma": round(blur * height / 720, 2)}),
             ("avfilter.eq", {"av.brightness": 0.04, "av.contrast": 0.9,
                              "av.saturation": 0.85}),
-            ("mask_apply", {}),
+            ("mask_apply", {"transition": COMPOSITE}),
         ]
-    result.append(("watermark", {"resource": str(folder / overlay),
+    result.append(("watermark", {"resource": str(folder / overlay), "transition": COMPOSITE,
                                  "producer.eof": "loop", "distort": 1}))
     if preview and (folder / PREVIEW_RAIN).exists():  # la pluie tombe aussi dans l'aperçu
         result.append(("watermark", {"resource": str(folder / PREVIEW_RAIN),
-                                     "producer.eof": "loop", "distort": 1}))
+                                     "transition": COMPOSITE, "producer.eof": "loop",
+                                     "distort": 1}))
     return result
