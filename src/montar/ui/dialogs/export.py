@@ -2,6 +2,8 @@
 """Dialogue « Exporter la vidéo » (maquette 05)."""
 from __future__ import annotations
 
+import copy
+from collections.abc import Callable
 from pathlib import Path
 
 from PyQt6.QtCore import QSize, Qt
@@ -25,6 +27,8 @@ from PyQt6.QtWidgets import (
 )
 
 from montar.core import formats
+from montar.core import mastering as cm
+from montar.core.mastering import Mastering
 from montar.core.project import Project
 from montar.core.timecode import frames_to_timecode, seconds_to_short
 from montar.engine.export import (
@@ -43,7 +47,7 @@ from montar.engine.export import (
     human_size,
 )
 from montar.i18n import _
-from montar.ui.widgets import Segmented, button, label, rounded_pixmap
+from montar.ui.widgets import Segmented, Switch, button, label, rounded_pixmap
 
 GIF_RESOLUTIONS = ("480p",)  # un GIF plus grand pèse vite des centaines de Mo
 PREVIEW_SIZE = QSize(380, 214)
@@ -93,9 +97,15 @@ class ExportDialog(QDialog):
     def __init__(self, project: Project, frames: int, preview: QImage | None,
                  folder: Path, hardware: bool = False, parent: QWidget | None = None,
                  extra_formats=(), selection: tuple[int, int] | None = None,
-                 playhead: int = 0) -> None:
+                 playhead: int = 0, analysis=None,
+                 finition: Callable[[], object] | None = None,
+                 set_mastering: Callable[[Mastering], None] | None = None) -> None:
         super().__init__(parent)
         self.project, self.frames = project, frames
+        # finition pro : `finition()` ouvre la fenêtre de réglage et renvoie l'analyse,
+        # `set_mastering` enregistre des réglages (annulable dans l'éditeur)
+        self.analysis = analysis
+        self._finition, self._set_mastering = finition, set_mastering
         self.selection, self.playhead = selection, playhead
         # formats des modules (montar.api.ExportFormat), par identifiant
         self.extra = {f.id: f for f in extra_formats}
@@ -134,14 +144,18 @@ class ExportDialog(QDialog):
         self.summary_output = label("", "mono")
         self.summary_size = label("")
         self.summary_size.setStyleSheet("font-weight: 600;")
+        self.summary_finition = label("")
+        self.summary_finition.setStyleSheet("font-weight: 600;")
         for row, (title, value) in enumerate(((_("Projet"), label(project.name)),
                                               (_("Sortie"), self.summary_output),
-                                              (_("Taille estimée"), self.summary_size))):
+                                              (_("Taille estimée"), self.summary_size),
+                                              (_("Finition"), self.summary_finition))):
             grid.addWidget(label(title, "muted"), row, 0)
             grid.addWidget(value, row, 1)
         grid.setColumnStretch(1, 1)
         sl.addLayout(grid)
         sl.addStretch()
+        sl.addWidget(self._build_analysis())
         side.setFixedWidth(440)
         outer.addWidget(side)
 
@@ -257,6 +271,8 @@ class ExportDialog(QDialog):
             marks.addWidget(m, 1)
         ml.addLayout(marks)
         ml.addSpacing(8)
+        ml.addWidget(self._build_finition())
+        ml.addSpacing(8)
 
         self.codec_box = QWidget()
         cg = QGridLayout(self.codec_box)
@@ -296,6 +312,153 @@ class ExportDialog(QDialog):
         ml.addLayout(buttons)
         outer.addWidget(main, 1)
         self._format_changed()
+
+    # --- finition pro ----------------------------------------------------------------
+
+    def _build_finition(self) -> QWidget:
+        card = QFrame()
+        card.setObjectName("FinitionCard")
+        card.setProperty("card", True)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(10)
+        head = QHBoxLayout()
+        titles = QVBoxLayout()
+        titles.setSpacing(0)
+        titles.addWidget(label(_("Finition pro"), "h3"))
+        titles.addWidget(label(_("Étalonnage et mastering appliqués à tout le projet, au "
+                                 "moment de l'export"), "small"))
+        head.addLayout(titles, 1)
+        self.finition_switch = Switch(self.project.mastering.enabled)
+        self.finition_switch.setToolTip(_("Activer la finition pro"))
+        self.finition_switch.toggled.connect(self._toggle_finition)
+        head.addWidget(self.finition_switch)
+        layout.addLayout(head)
+        cards = QHBoxLayout()
+        self.finition_video = label("")
+        self.finition_audio = label("")
+        for title, value in ((_("IMAGE"), self.finition_video), (_("SON"), self.finition_audio)):
+            box = QFrame()
+            box.setProperty("card", True)
+            bl = QVBoxLayout(box)
+            bl.setContentsMargins(10, 8, 10, 8)
+            bl.setSpacing(2)
+            bl.addWidget(label(title, "section"))
+            value.setWordWrap(True)
+            value.setMinimumHeight(value.fontMetrics().lineSpacing() * 4)
+            bl.addWidget(value)
+            cards.addWidget(box, 1)
+        layout.addLayout(cards)
+        row = QHBoxLayout()
+        self.finition_button = button(_("Régler la finition…"), "secondary", "sparkles")
+        self.finition_button.clicked.connect(self._open_finition)
+        self.finition_button.setVisible(self._finition is not None)
+        row.addWidget(self.finition_button)
+        row.addStretch(1)
+        row.addWidget(label(_("Préréglage :"), "muted"))
+        self.finition_preset = QComboBox()
+        self.finition_preset.setMinimumHeight(36)
+        for key, text in cm.PRESETS.items():
+            self.finition_preset.addItem(_(text), f"builtin:{key}")
+        for name in sorted(cm.user_presets()):
+            self.finition_preset.addItem(name, f"user:{name}")
+        self.finition_preset.activated.connect(self._finition_preset)
+        row.addWidget(self.finition_preset)
+        layout.addLayout(row)
+        self._refresh_finition()
+        return card
+
+    def _build_analysis(self) -> QWidget:
+        box = QFrame()
+        box.setProperty("card", True)
+        layout = QGridLayout(box)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setVerticalSpacing(6)
+        layout.addWidget(label(_("ANALYSE DU PROJET"), "section"), 0, 0, 1, 2)
+        self.analysis_rows: list[QLabel] = []
+        for row, title in enumerate((_("Loudness actuelle"), _("Crête max."),
+                                     _("Pixels écrêtés"), _("Écart de couleur entre plans")),
+                                    start=1):
+            layout.addWidget(label(title), row, 0)
+            value = label("—", "mono")
+            value.setAlignment(Qt.AlignmentFlag.AlignRight)
+            layout.addWidget(value, row, 1)
+            self.analysis_rows.append(value)
+        self.analysis_hint = label(_("L'analyse est faite dans « Régler la finition… » ; elle "
+                                     "est refaite à chaque export."), "small")
+        self.analysis_hint.setWordWrap(True)
+        layout.addWidget(self.analysis_hint, 5, 0, 1, 2)
+        self.analysis_box = box
+        return box
+
+    def _refresh_finition(self) -> None:
+        m = self.project.mastering
+        self.finition_switch.blockSignals(True)
+        self.finition_switch.setChecked(m.enabled)
+        self.finition_switch.blockSignals(False)
+        self.finition_video.setText(m.summary_video())
+        self.finition_audio.setText(m.summary_audio())
+        for w in (self.finition_video, self.finition_audio):
+            w.setEnabled(m.enabled)
+        index = self.finition_preset.findData(f"builtin:{m.preset}")
+        if index < 0:
+            index = self.finition_preset.findData(f"user:{m.preset}")
+        if index >= 0:
+            self.finition_preset.setCurrentIndex(index)
+        self.summary_finition.setText(_("Active · 2 passes") if m.enabled else _("Désactivée"))
+        self.summary_finition.setStyleSheet(
+            "font-weight: 600;" + (" color: #2F7A56;" if m.enabled else ""))
+        a = self.analysis
+        values = ["—"] * 4
+        if a is not None:
+            if a.loudness is not None:
+                values[0] = f"{a.loudness.integrated:.1f} LUFS"
+                values[1] = f"{a.loudness.true_peak:+.1f} dBTP"
+            if a.clipped is not None:
+                values[2] = f"{a.clipped * 100:.1f} %"
+            if a.shots:
+                spread = a.spread
+                values[3] = _("Faible") if spread < 0.05 else _("Moyen") if spread < 0.12 \
+                    else _("Fort")
+        for widget, value in zip(self.analysis_rows, values, strict=True):
+            widget.setText(value.replace("-", "−").replace(".", ","))
+        self.analysis_hint.setVisible(a is None)
+
+    def _store(self, mastering: Mastering) -> None:
+        if self._set_mastering is not None:
+            self._set_mastering(mastering)
+        else:
+            self.project.mastering = mastering
+        self._refresh_finition()
+        self._update()
+
+    def _toggle_finition(self, on: bool) -> None:
+        m = copy.deepcopy(self.project.mastering)
+        m.enabled = on
+        self._store(m)
+
+    def _finition_preset(self, _index: int) -> None:
+        kind, _sep, key = (self.finition_preset.currentData() or "").partition(":")
+        if kind == "builtin":
+            m = cm.preset(key, self.project.mastering)
+        else:
+            m = cm.user_presets().get(key)
+            if m is None:
+                return
+            current = self.project.mastering
+            m.enabled, m.preview = current.enabled, current.preview
+            m.video.match_reference = current.video.match_reference
+            m.video.matches = copy.deepcopy(current.video.matches)
+        self._store(m)
+
+    def _open_finition(self) -> None:
+        if self._finition is None:
+            return
+        analysis = self._finition()
+        if analysis is not None:
+            self.analysis = analysis
+        self._refresh_finition()
+        self._update()
 
     # --- état --------------------------------------------------------------------
 

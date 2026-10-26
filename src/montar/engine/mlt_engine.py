@@ -281,6 +281,18 @@ class _TimelineGraph:
                 blend.set("always_active", 1)
                 field.plant_transition(blend, 0, index)
                 self._keep.append(blend)
+        self._master: list = []
+        self._attach_master()
+
+    def _attach_master(self) -> None:
+        """Finition : filtres posés sur le tracteur, donc sur l'image composée et le son
+        mixé de toutes les pistes."""
+        for f in self._master:
+            self.tractor.detach(f)
+        self._collect = []
+        for name, props in self.spec.master.video + self.spec.master.audio:
+            self._attach(self.tractor, name, props)
+        self._master, self._collect = self._collect, None
 
     # --- pistes ---------------------------------------------------------------------
 
@@ -289,6 +301,7 @@ class _TimelineGraph:
         déplacement dans l'aperçu). Renvoie False si la structure a changé."""
         if _structure(spec) != _structure(self.spec):
             return False
+        master_changed = spec.master != self.spec.master
         for ti, (old_track, new_track) in enumerate(zip(self.spec.tracks, spec.tracks,
                                                          strict=True)):
             for ci, (old, new) in enumerate(zip(old_track.clips, new_track.clips, strict=True)):
@@ -299,6 +312,8 @@ class _TimelineGraph:
                     producer.detach(f)
                 self._attach_clip_filters(producer, new, span, kind, (ti, ci))
         self.spec = spec
+        if master_changed:
+            self._attach_master()
         return True
 
     def _attach_clip_filters(self, producer, clip: ClipSpec, span: tuple[int, int],

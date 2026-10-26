@@ -689,11 +689,11 @@ def snapshot(project: Project) -> tuple:
     """Copie de l'état modifiable du projet (pour annuler / rétablir)."""
     return copy.deepcopy((project.media, project.tracks, project.clips, project.transitions,
                           project.markers, project.subtitles, project.subtitle_style,
-                          project.subtitles_shown))
+                          project.subtitles_shown, project.mastering))
 
 
 def restore(project: Project, state: tuple) -> None:
     (project.media, project.tracks, project.clips, project.transitions,
      project.markers, project.subtitles, project.subtitle_style,
-     project.subtitles_shown) = copy.deepcopy(state)
+     project.subtitles_shown, project.mastering) = copy.deepcopy(state)
 

@@ -8,10 +8,13 @@ import tempfile
 import uuid
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from montar.core import formats
 from montar.i18n import _
+
+if TYPE_CHECKING:
+    from montar.core.mastering import Mastering
 
 FORMAT_VERSION = 4  # 2 : clips ; 3 : réglages, textes, transitions ; 4 : réglages de modules
 PROJECT_SUFFIX = ".montar"
@@ -300,6 +303,8 @@ class Project:
     subtitles: list[Subtitle] = field(default_factory=list)
     subtitle_style: TextStyle = field(default_factory=lambda: default_subtitle_style())
     subtitles_shown: bool = True  # affichés dans l'aperçu
+    # finition pro (étalonnage et mastering de tout le projet, à l'export)
+    mastering: Mastering = field(default_factory=lambda: _new_mastering())
     path: Path | None = None  # emplacement du fichier .montar, non sérialisé
 
     def __post_init__(self) -> None:
@@ -351,6 +356,7 @@ class Project:
             "subtitles": [asdict(s) for s in self.subtitles],
             "subtitle_style": asdict(self.subtitle_style),
             "subtitles_shown": self.subtitles_shown,
+            "mastering": self.mastering.to_dict(),
         }
 
     @classmethod
@@ -391,6 +397,7 @@ class Project:
                 subtitles=subtitles,
                 subtitle_style=subtitle_style,
                 subtitles_shown=bool(data.get("subtitles_shown", True)),
+                mastering=_load_mastering(data.get("mastering")),
                 path=path,
             )
         except (KeyError, ValueError, TypeError) as exc:
@@ -428,6 +435,18 @@ class Project:
         if not isinstance(data, dict):
             raise ProjectError(f"{path} n'est pas un projet montar")
         return cls.from_dict(data, path)
+
+
+def _new_mastering() -> Mastering:
+    from montar.core.mastering import Mastering
+
+    return Mastering()
+
+
+def _load_mastering(data: Any) -> Mastering:
+    from montar.core.mastering import Mastering
+
+    return Mastering.from_dict(data)
 
 
 def _portable_path(path: str, base: Path | None) -> str:

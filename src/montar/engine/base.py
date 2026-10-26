@@ -69,6 +69,7 @@ class ClipSpec:
     duck: tuple[tuple[int, float], ...] = ()  # atténuation sous la voix : (image, dB)
     grade: Grade = field(default_factory=Grade)  # étalonnage avancé
     lut: str = ""  # chemin absolu de la LUT de l'étalonnage
+    key: str = ""  # identifiant du clip dans le projet (corrections de la finition)
 
 
 @dataclass(frozen=True)
@@ -88,6 +89,15 @@ class TrackSpec:
     clips: tuple[ClipSpec, ...]
     volume: float = 1.0
     transitions: tuple[TransitionSpec, ...] = ()
+    role: str = ""  # video | voice (piste de voix) | music (autre piste audio) | vide
+
+
+@dataclass(frozen=True)
+class MasterSpec:
+    """Filtres de la finition, appliqués à l'image composée et au son mixé."""
+
+    video: tuple[tuple[str, dict], ...] = ()
+    audio: tuple[tuple[str, dict], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -99,6 +109,7 @@ class TimelineSpec:
 
     canvas: Canvas
     tracks: tuple[TrackSpec, ...]
+    master: MasterSpec = field(default_factory=MasterSpec)
 
     @property
     def length(self) -> int:
@@ -142,7 +153,7 @@ def _clip_spec(clip: Clip, path: str, kind: str, size: tuple[int, int],
         tuple(o.extra_filters), tuple(o.audio_filters),
         clip.reverse and o.path is None, media_length, (),
         tuple(sorted((k, tuple((float(f), float(v)) for f, v in points))
-                     for k, points in clip.keyframes.items() if points)))
+                     for k, points in clip.keyframes.items() if points)), key=clip.id)
 
 
 def timeline_spec(project: Project, text_image: TextImage | None = None,
@@ -205,9 +216,11 @@ def timeline_spec(project: Project, text_image: TextImage | None = None,
             if t.track_id == track.id and t.left_id in ids and t.right_id in ids
             and ids.index(t.right_id) == ids.index(t.left_id) + 1
         )
+        role = ("voice" if track.voice else "music") if track.kind == "audio" else \
+            "video" if track.kind == "video" else ""
         tracks.append(TrackSpec("audio" if track.kind == "audio" else "video", track.muted,
                                 track.hidden, tuple(clips), track.volume,
-                                tuple(sorted(transitions, key=lambda t: t.left))))
+                                tuple(sorted(transitions, key=lambda t: t.left)), role))
     if subtitles is None:
         subtitles = project.subtitles_shown
     if subtitles and text_image is not None and project.subtitles:

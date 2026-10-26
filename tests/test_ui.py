@@ -12,9 +12,10 @@ pytest.importorskip("PyQt6.QtSvg")
 from PyQt6.QtCore import QEvent, QEventLoop, QPoint, QPointF, QRectF, Qt, QTimer  # noqa: E402
 from PyQt6.QtGui import QMouseEvent, QShortcut  # noqa: E402
 from PyQt6.QtTest import QTest  # noqa: E402
-from PyQt6.QtWidgets import QApplication, QLabel, QMessageBox  # noqa: E402
+from PyQt6.QtWidgets import QApplication, QDialog, QLabel, QMessageBox  # noqa: E402
 
 from montar.core import keyframes  # noqa: E402
+from montar.core import mastering as cm  # noqa: E402
 from montar.core.project import Project  # noqa: E402
 from montar.core.settings import Settings  # noqa: E402
 from montar.ui.dialogs.new_project import NewProjectDialog, NewProjectParams  # noqa: E402
@@ -2017,3 +2018,124 @@ def test_wheel_scrolls_inspector_instead_of_sliders(window, media_dir):
     z = zoom.value()
     wheel(zoom)
     assert zoom.value() != z
+
+
+# --- finition pro ----------------------------------------------------------------
+
+def _finition_editor(window, media_dir):
+    editor = imported_editor(window, media_dir, ["clip.mp4", "red.mp4", "son.wav"])
+    for media in editor.project.media:
+        editor.add_to_timeline(media)
+    return editor
+
+
+@needs_ffmpeg
+def test_finition_dialog_preview_analysis_and_presets(window, media_dir):
+    from montar.ui.editor.finition import FinitionDialog
+
+    editor = _finition_editor(window, media_dir)
+    dialog = FinitionDialog(editor.project, editor._finition_spec, editor._engine_factory, 10)
+    dialog.show()
+    assert wait_until(lambda: dialog.compare.after is not None)
+    first = dialog.compare.after.copy()
+    dialog.look_buttons["bw"].click()  # noir et blanc
+    assert dialog.mastering.video.look == "bw"
+    dialog.look_amount.moved.emit(1.0)
+    assert wait_until(lambda: dialog.compare.after != first)
+    image = dialog.compare.after
+    pixel = image.pixelColor(image.width() // 2, image.height() // 2)
+    assert abs(pixel.red() - pixel.green()) <= 6 and abs(pixel.green() - pixel.blue()) <= 6
+    assert all(view.pixmap() is not None and not view.pixmap().isNull()
+               for view in dialog.scopes.values())
+    dialog.compare_mode.button("side").click()
+    dialog.zebras.click()
+    pump(50)
+
+    dialog._start_analysis()
+    dialog.wait_analysis()
+    a = dialog.analysis
+    assert a is not None and a.loudness is not None and len(a.shots) == 2
+    assert a.spectrum and dialog.shots.shots and dialog.tile_lufs.value.text() != "—"
+    assert set(dialog.mastering.video.matches) == {s.key for s in a.shots}
+    other = next(s.key for s in a.shots if s.key != a.reference)
+    dialog.shots.picked.emit(other)  # nouvelle référence
+    assert dialog.mastering.video.match_reference == other
+    assert dialog.mastering.video.matches[other] == [1.0, 1.0, 1.0, 0.0, 0.0, 0.0]
+
+    dialog.tabs.button("sound").click()
+    dialog.destinations["tv"].click()
+    assert (dialog.mastering.audio.lufs, dialog.mastering.audio.destination) == (-23.0, "tv")
+    dialog.lufs.setValue(-18)
+    assert dialog.mastering.audio.destination == "custom"
+    dialog.eq.changed.emit([3.0, 0.0, 0.0, 0.0, -2.0])
+    assert dialog.mastering.audio.tone == "custom"
+    dialog.layout_choice.button("surround").click()
+    assert dialog.mastering.audio.layout == "surround"
+    index = dialog.preset.findData("builtin:podcast")
+    dialog.preset.setCurrentIndex(index)
+    dialog.preset.activated.emit(index)
+    m = dialog.mastering
+    assert m.preset == "podcast" and m.audio.lufs == -16.0 and m.video.match_reference == other
+
+    cm.save_user_preset("Ma chaîne", m)  # préréglage de l'utilisateur, relu
+    assert cm.user_presets()["Ma chaîne"].audio.lufs == -16.0
+    dialog.accept()
+    assert dialog.result() == QDialog.DialogCode.Accepted
+
+
+@needs_ffmpeg
+def test_editor_finition_undo_preview_and_export(window, media_dir, monkeypatch):
+    from montar.ui.dialogs.export import ExportDialog
+    from montar.ui.dialogs.master_report import MasterReportDialog
+    from montar.ui.editor.finition import FinitionDialog
+
+    editor = _finition_editor(window, media_dir)
+    project = editor.project
+
+    def accept(self):  # la fenêtre choisit un préréglage et valide
+        self.mastering = cm.preset("social", self.mastering)
+        self.mastering.preview = True
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(FinitionDialog, "exec", accept)
+    editor.finition_button.click()
+    assert project.mastering.enabled and project.mastering.preset == "social"
+    editor.controller.undo()
+    assert not project.mastering.enabled
+    editor.controller.redo()
+    assert project.mastering.enabled
+
+    # dialogue d'export : bloc Finition pro
+    dialog = ExportDialog(project, 50, None, project.path.parent / "exports",
+                          set_mastering=editor.set_mastering)
+    assert dialog.finition_switch.isChecked()
+    assert "Teal" in dialog.finition_video.text() and "LUFS" in dialog.finition_audio.text()
+    dialog.finition_switch.click()
+    assert not project.mastering.enabled and dialog.summary_finition.text() == "Désactivée"
+    dialog.finition_switch.click()
+    index = dialog.finition_preset.findData("builtin:tv")
+    dialog.finition_preset.setCurrentIndex(index)
+    dialog.finition_preset.activated.emit(index)
+    assert project.mastering.audio.destination == "tv" and project.mastering.enabled
+
+    # export avec finition : rapport à côté de la vidéo, corrections des plans gardées
+    project.mastering.audio.layout = "stems"
+    project.mastering.video.match_shots = True
+    monkeypatch.setattr(ExportDialog, "exec", lambda self: ExportDialog.DialogCode.Accepted)
+    shown = []
+    monkeypatch.setattr(MasterReportDialog, "exec", lambda self: shown.append(self) or 0)
+    results = []
+    editor.exportFinished.connect(results.append)
+    editor.open_export()
+    assert wait_until(lambda: "—" in editor.busy.title.text(), 20)
+    assert wait_until(lambda: results, 180)
+    assert results == [""]
+    target = project.path.parent / "exports" / "Montage.mp4"
+    report = target.with_suffix(".rapport.txt")
+    assert target.exists() and report.exists()
+    assert "Télévision" in report.read_text(encoding="utf-8")
+    assert (target.parent / "Montage - Dialogues.wav").exists()
+    assert (target.parent / "Montage - Musique et effets.wav").exists()
+    assert shown and shown[0].rows and all(r.ok for r in shown[0].rows), \
+        report.read_text(encoding="utf-8")
+    assert editor._master_analysis is not None and project.mastering.video.matches
