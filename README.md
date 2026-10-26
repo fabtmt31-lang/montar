@@ -8,6 +8,25 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
 
 ## État d'avancement
 
+**En développement** : **finition pro** à l'export, étalonnage et mastering de tout le
+projet.
+
+- dans le dialogue d'export, bloc **Finition pro** (interrupteur, résumé, préréglages : Vlog
+  YouTube, Podcast vidéo, Diffusion TV EBU R128, Réseaux sociaux, Cinéma / festival) et
+  bouton **Finition** dans l'en-tête de l'éditeur ;
+- **image** : comparaison avant / après (rideau ou côte à côte, zébras hors gamme), 7 looks
+  ou une LUT `.cube` avec intensité, roues, exposition, contraste, saturation, température,
+  teinte, vibrance, courbes, **harmonisation des plans** sur un plan de référence, niveaux
+  légaux, espace couleur Rec.709 ou sRGB, grain et vignette, scopes ;
+- **son** : destination (−14, −16, −23, −24 LUFS ou personnalisée), crête vraie maximale,
+  nettoyage, tonalité et égaliseur 5 bandes sur le spectre du projet, compression, « voix
+  devant », largeur stéréo, limiteur ; sortie **stéréo**, **5.1** (dialogues au centre) ou
+  **stéréo + pistes séparées** (« Dialogues » et « Musique et effets » en WAV) ;
+- l'export se fait en **trois passes** (analyse, rendu, vérification) et se termine par un
+  **rapport de conformité**, aussi enregistré à côté de la vidéo (`.rapport.txt`) ;
+- la finition peut être **vue et écoutée dans l'aperçu** de l'éditeur ; les préréglages
+  personnels sont enregistrés dans `~/.config/montar/finition.json`.
+
 **Version 1.3** (1.3.0) : exigences P3, étalonnage et suivi de mouvement.
 
 - **son** : réduction de bruit, volume régulier, « s'efface sous les voix » (clic droit sur

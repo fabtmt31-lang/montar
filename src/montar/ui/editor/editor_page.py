@@ -35,9 +35,11 @@ from montar.core import keyframes, shortcuts, subtitles
 from montar.core.project import EXPORT_DIR, MediaItem, Project, ProjectError, new_id
 from montar.core.project_files import backup
 from montar.core.timecode import frames_to_timecode
-from montar.engine.base import Engine, timeline_spec
+from montar.engine.base import Engine, lut_path, timeline_spec
 from montar.engine.export import IMAGE_FORMATS, ExportSettings, human_size, retime
 from montar.engine.geometry import offset_for_center, placement
+from montar.engine.master_job import MasteredExport
+from montar.engine.mastering import apply_master
 from montar.i18n import _
 from montar.media.edit import MediaEdit, output_suffix, updated_media
 from montar.media.edit import apply as apply_edit
@@ -59,12 +61,14 @@ from montar.plugins import ModuleManager, default_manager
 from montar.ui.dialogs.apply_effect import ApplyEffectDialog
 from montar.ui.dialogs.export import ExportDialog
 from montar.ui.dialogs.generator import GeneratorDialog
+from montar.ui.dialogs.master_report import MasterReportDialog
 from montar.ui.dialogs.media_editor import MediaEditorDialog
 from montar.ui.dialogs.recorder import COUNTDOWN, RecorderDialog, RecordingBar
 from montar.ui.dialogs.voice_over import VoiceOverDialog
 from montar.ui.editor.apply import ApplyAction, actions_for, apply_change
 from montar.ui.editor.busy import BusyOverlay, remaining_text
 from montar.ui.editor.controller import EditorController
+from montar.ui.editor.finition import FinitionDialog
 from montar.ui.editor.graphics_panel import GraphicsPanel
 from montar.ui.editor.importer import MediaImporter
 from montar.ui.editor.inspector import Inspector
@@ -276,6 +280,7 @@ class EditorPage(QWidget):
         self._load_timer.timeout.connect(self._reload_player)
 
         self._export_job = None
+        self._master_analysis = None  # dernière analyse de la finition pro
         self._export_settings: ExportSettings | None = None
         self._export_started = 0.0
         self._notify_export = True  # message de fin (désactivé par les tests)
@@ -396,6 +401,11 @@ class EditorPage(QWidget):
         layout.addWidget(self.project_button)
         layout.addStretch(1)
 
+        self.finition_button = button(_("Finition"), "secondary", "sparkles",
+                                      tooltip=_("Étalonnage et mastering de tout le projet"))
+        self.finition_button.setMinimumHeight(40)
+        self.finition_button.clicked.connect(self.open_finition)
+        layout.addWidget(self.finition_button)
         self.export_button = button(_("Exporter"), "primary", "download",
                                     tooltip=_("Exporter la vidéo (Ctrl+E)"))
         self.export_button.setMinimumHeight(40)
@@ -805,10 +815,14 @@ class EditorPage(QWidget):
 
     def _reload_player(self) -> None:
         self._load_timer.stop()
-        self.player.load(timeline_spec(self.project, self._text_image, self.modules.hook,
-                                       transition_hook=self.modules.transition_hook,
-                                       text_sequence=self._text_sequence,
-                                       proxy=self._proxy_for))
+        spec = timeline_spec(self.project, self._text_image, self.modules.hook,
+                             transition_hook=self.modules.transition_hook,
+                             text_sequence=self._text_sequence, proxy=self._proxy_for)
+        m = self.project.mastering
+        if m.enabled and m.preview:  # finition vue et écoutée dans l'aperçu
+            gain = self._master_analysis.gain_db if self._master_analysis else 0.0
+            spec = apply_master(spec, m, gain_db=gain, lut=lut_path(self.project, m.video.lut))
+        self.player.load(spec)
 
     # --- modules -------------------------------------------------------------------------
 
@@ -874,7 +888,13 @@ class EditorPage(QWidget):
         busy = None
         if job is not None:
             name = Path(self._export_settings.path).name if self._export_settings else ""
-            busy = (_("Export de {name}").format(name=name), job.progress,
+            title = _("Export de {name}").format(name=name)
+            phase = getattr(job, "phase", "")
+            if phase:  # export avec la finition : étape en cours
+                title += " — " + {"analyse": _("1. Analyse du projet"),
+                                   "render": _("2. Rendu avec finition"),
+                                   "check": _("3. Vérification du fichier")}.get(phase, "")
+            busy = (title, job.progress,
                     remaining_text(time.monotonic() - self._export_started, job.progress))
         elif modules is not None:
             title, ratio = modules
@@ -1389,7 +1409,10 @@ class EditorPage(QWidget):
                               self._hardware, self,
                               [f for _m, f in self.module_manager.export_formats()],
                               (found[1], found[2]) if found else None,
-                              min(self.timeline.view.playhead, length - 1))
+                              min(self.timeline.view.playhead, length - 1),
+                              self._master_analysis,
+                              lambda: self.open_finition(dialog),
+                              self.set_mastering)
         if fmt:
             dialog.choose_format(fmt)
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -1432,7 +1455,13 @@ class EditorPage(QWidget):
                                            range_end=round(settings.range_end * k))
         spec = retime(spec, settings.fps)
         Path(settings.path).parent.mkdir(parents=True, exist_ok=True)
-        self._export_job = self._engine_factory().export(spec, settings)
+        m = self.project.mastering
+        if m.enabled:  # finition pro : analyse, rendu, vérification
+            self._export_job = MasteredExport(self._engine_factory(), spec, settings,
+                                              copy.deepcopy(m), lut_path(self.project, m.video.lut),
+                                              self.project.name)
+        else:
+            self._export_job = self._engine_factory().export(spec, settings)
         self._export_settings = settings
         self._export_started = time.monotonic()
         self._export_job.start()
@@ -1447,6 +1476,9 @@ class EditorPage(QWidget):
         spec = timeline_spec(self.project, self._text_image, self.modules.hook,
                              (settings.width, settings.height), self.modules.transition_hook,
                              self._text_sequence, subtitles=settings.subtitles == "burn")
+        m = self.project.mastering
+        if m.enabled:
+            spec = apply_master(spec, m, lut=lut_path(self.project, m.video.lut), audio=False)
         try:
             source = self._engine_factory().build(spec)
             try:
@@ -1488,6 +1520,11 @@ class EditorPage(QWidget):
         if job.cancelled:
             return
         target = Path(self._export_settings.path)
+        if isinstance(job, MasteredExport) and not job.error:
+            self._master_analysis = job.analysis
+            matches = job.mastering.video.matches
+            if matches and matches != self.project.mastering.video.matches:
+                self.project.mastering.video.matches = copy.deepcopy(matches)
         if job.error:
             self.notify(_("Export impossible"), _("L'export de {name} a échoué : {error}")
                         .format(name=target.name, error=job.error), "error")
@@ -1499,6 +1536,9 @@ class EditorPage(QWidget):
                                     name=target.name, error=job.error))
             return
         if not self._notify_export:
+            return
+        if isinstance(job, MasteredExport):
+            MasterReportDialog(job, self).exec()
             return
         box = QMessageBox(self)
         box.setWindowTitle(_("Export terminé"))
@@ -1535,6 +1575,41 @@ class EditorPage(QWidget):
         self.modules_panel.set_manager(self.module_manager)
         self.graphics_panel.set_graphics(self.module_manager.graphics())
         self._on_clip_selected(self.controller.selected)
+
+    # --- finition pro ---------------------------------------------------------------------
+
+    def set_mastering(self, mastering) -> None:
+        """Réglages de la finition (annulables)."""
+        self.controller.edit(_("Finition pro"),
+                             lambda _t: setattr(self.project, "mastering",
+                                                copy.deepcopy(mastering)))
+
+    def _finition_spec(self):
+        return timeline_spec(self.project, self._text_image, self.modules.hook,
+                             transition_hook=self.modules.transition_hook,
+                             text_sequence=self._text_sequence)
+
+    def open_finition(self, parent=None):
+        """Fenêtre Finition pro ; renvoie la dernière analyse."""
+        if self.controller.timeline.length() == 0:
+            QMessageBox.information(self, _("Finition pro"),
+                                    _("La timeline est vide : ajoutez des médias avant de "
+                                      "régler la finition."))
+            return self._master_analysis
+        dialog = FinitionDialog(self.project, self._finition_spec, self._engine_factory,
+                                self.timeline.view.playhead, self._master_analysis,
+                                lambda lut: lut_path(self.project, lut), parent or self)
+        self.finition_dialog = dialog
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        self.finition_dialog = None
+        if dialog.analysis is not None:
+            self._master_analysis = dialog.analysis
+        if accepted:
+            m = dialog.mastering
+            if not self.project.mastering.enabled and not parent:
+                m.enabled = True  # régler la finition depuis l'éditeur l'active
+            self.set_mastering(m)
+        return self._master_analysis
 
     def open_scopes(self) -> ScopesWindow:
         if self.scopes is None:

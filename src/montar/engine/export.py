@@ -57,6 +57,8 @@ class ExportSettings:
     range_end: int = 0
     # sous-titres (F-TXT-05) : burn = incrustés, file = fichier .srt à côté, none = aucun
     subtitles: str = "burn"
+    # propriétés ajoutées au consommateur (métadonnées de couleur de la finition)
+    extra: tuple[tuple[str, object], ...] = ()
 
     @property
     def audio_only(self) -> bool:
@@ -149,6 +151,7 @@ def consumer_properties(settings: ExportSettings, encoder: str | None = None) ->
             props.update(vcodec=encoder, qp=_CRF[codec][level], vaapi_device=VAAPI_DEVICE,
                          vf="format=nv12,hwupload")
     props["g"] = max(1, settings.fps * 2)
+    props.update(dict(settings.extra))
     return props
 
 
