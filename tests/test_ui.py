@@ -1880,11 +1880,14 @@ def test_module_catalogue_card(window, monkeypatch, tmp_path):
     card.enabled.setChecked(True)
     assert window.settings.catalog_enabled
     assert wait_until(lambda: card.rows())
-    row = card.rows()[0]
-    assert row.entry.id == "exemple.negatif" and row.action.isEnabled()
+    def negatif():
+        return next(r for r in card.rows() if r.entry.id == "exemple.negatif")
+
+    row = negatif()
+    assert row.action.isEnabled()
     row.action.click()
     assert wait_until(lambda: "exemple.negatif" in window.modules.modules)
-    assert wait_until(lambda: not card.rows()[0].action.isEnabled())  # « Installé »
+    assert wait_until(lambda: not negatif().action.isEnabled())  # « Installé »
     card.enabled.setChecked(False)
     assert not card.rows()
 

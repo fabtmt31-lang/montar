@@ -39,9 +39,9 @@ def test_status():
 
 
 def test_download_checks_digest(tmp_path, monkeypatch):
-    archive = next((ROOT / "catalogue" / "modules").glob("*.montar-module"))
-    monkeypatch.setattr(catalog, "_read", lambda url, limit, timeout: archive.read_bytes())
     index = json.loads((ROOT / "catalogue" / "index.json").read_text())
+    archive = ROOT / "catalogue" / index["modules"][0]["url"]
+    monkeypatch.setattr(catalog, "_read", lambda url, limit, timeout: archive.read_bytes())
     good = catalog.parse_index(json.dumps(index).encode(), "https://ex.org/index.json")[0]
     path = catalog.download(good, tmp_path)
     assert path.read_bytes() == archive.read_bytes()
