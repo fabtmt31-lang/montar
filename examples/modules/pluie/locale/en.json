@@ -19,8 +19,12 @@
  "Gouttes de pluie": "Raindrops",
  "Éclairs (toujours avec « Orage »)": "Lightning (always with “Storm”)",
  "Pluie · aperçu": "Rain · preview",
- "Comme filmé sous la pluie : gouttes d'eau sur l'objectif ou une vitre, image plus sombre et plus froide, pluie qui tombe, brume, éclairs. Curseurs à 50 % : réglage normal du temps choisi. Réglez avec « Gouttes : Aperçu rapide », puis choisissez « Animées » pour qu'elles ruissellent.": "As if filmed in the rain: water drops on the lens or a window, darker and colder picture, falling rain, mist, lightning. Sliders at 50%: normal setting for the chosen weather. Adjust with “Drops: Quick preview”, then choose “Animated” to make them run down.",
- "Gouttes": "Drops",
- "Aperçu rapide (gouttes figées)": "Quick preview (still drops)",
- "Animées (calcul, quelques secondes)": "Animated (takes a few seconds)"
+ "Comme filmé sous la pluie : gouttes d'eau sur l'objectif ou une vitre, image plus sombre et plus froide, pluie qui tombe, brume, éclairs. Curseurs à 50 % : réglage normal du temps choisi. Réglez, puis cliquez sur « Appliquer la pluie » pour que les gouttes ruissellent.": "As if filmed in the rain: water drops on the lens or a window, darker and colder picture, falling rain, mist, lightning. Sliders at 50%: normal setting for the chosen weather. Adjust, then click “Apply rain” to make the drops run down.",
+ "Appliquer la pluie": "Apply rain",
+ "Calcul des gouttes… {n} %": "Computing drops… {n}%",
+ "Les gouttes vont ruisseler dès la fin du calcul.": "The drops will run down as soon as the computation is done.",
+ "✓ Pluie appliquée": "✓ Rain applied",
+ "Modifiez un réglage des gouttes, puis appliquez à nouveau.": "Change a drop setting, then apply again.",
+ "Aperçu : les gouttes sont figées. « Appliquer » les fait ruisseler (calcul de quelques secondes).": "Preview: the drops are still. “Apply” makes them run down (takes a few seconds).",
+ "La pluie n'a pas pu être appliquée :\n{e}": "The rain could not be applied:\n{e}"
 }

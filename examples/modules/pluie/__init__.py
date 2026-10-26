@@ -8,10 +8,10 @@ d'images, dossier de cache, tâches de fond) et la durée du clip. La source ren
 du clip, inchangée. Les gouttes sont calculées en tâche de fond ; en attendant, l'ambiance
 seule est appliquée.
 
-Pour que l'utilisation reste légère, le réglage « Gouttes » vaut d'abord « Aperçu rapide » :
-gouttes figées, pluie qui tombe, sans calcul de fond. En le passant à « Animées », on
-lance le calcul où les gouttes ruissellent. La pluie ne couvre que l'image du clip, pas
-les bandes autour."""
+Pour que l'utilisation reste légère, les réglages montrent d'abord un aperçu immédiat
+(gouttes figées, pluie qui tombe), sans calcul de fond. Le bouton « Appliquer la pluie »,
+sous le titre de l'effet dans le panneau Effets (voir `bouton.py`), lance le calcul où les
+gouttes ruissellent. La pluie ne couvre que l'image du clip, pas les bandes autour."""
 from __future__ import annotations
 
 from montar.api import ZOOM, ClipSource, Param, SourceOverride, VideoEffect
@@ -20,7 +20,7 @@ from montar.i18n import _
 from . import core
 
 MODULE_ID = "pluie"  # identifiant du module et de l'effet : `resolve` est alors appelé
-PREVIEW, ANIMATED = "apercu", "animees"  # valeurs du réglage « Gouttes »
+APPLIED = "_gouttes"  # réglages des gouttes appliqués (bouton « Appliquer la pluie »)
 
 
 def _placed(context, clip) -> bool:
@@ -51,15 +51,12 @@ class Rain(VideoEffect, ClipSource):
     name = "Pluie"
     description = ("Comme filmé sous la pluie : gouttes d'eau sur l'objectif ou une vitre, "
                    "image plus sombre et plus froide, pluie qui tombe, brume, éclairs. "
-                   "Curseurs à 50 % : réglage normal du temps choisi. Réglez avec « Gouttes : "
-                   "Aperçu rapide », puis choisissez « Animées » pour qu'elles ruissellent.")
+                   "Curseurs à 50 % : réglage normal du temps choisi. Réglez, puis cliquez "
+                   "sur « Appliquer la pluie » pour que les gouttes ruissellent.")
     icon = "droplets"
     params = [
         Param.choice("temps", "Temps", [("pluie", "Pluie"), ("bruine", "Bruine"),
                                         ("averse", "Averse"), ("orage", "Orage")]),
-        Param.choice("gouttes", "Gouttes", [
-            (PREVIEW, "Aperçu rapide (gouttes figées)"),
-            (ANIMATED, "Animées (calcul, quelques secondes)")]),
         Param.choice("surface", "Gouttes sur", [("objectif", "L'objectif de la caméra"),
                                                 ("vitre", "Une vitre")]),
         Param.float("volume", "Volume de gouttes", 0.0, 1.0, default=0.5),
@@ -73,9 +70,31 @@ class Rain(VideoEffect, ClipSource):
         Param("variante", "Variante des gouttes", "int", 1, 1, 20),
     ]
 
+    APPLIED = APPLIED
+
     def __init__(self) -> None:
+        from .bouton import ApplyButton
+
         self._current = None  # (contexte, clip) transmis par resolve au filters qui suit
         self._wanted: dict = {}  # clip → calques attendus (les autres calculs sont abandonnés)
+        self.button = ApplyButton(self)
+
+    def apply(self, context, clip_id: str) -> None:
+        """Bouton « Appliquer la pluie » : les réglages actuels des gouttes sont retenus,
+        et le calcul des gouttes qui ruissellent est lancé (modification annulable)."""
+        def change(timeline):
+            values = timeline.clip(clip_id).modules[MODULE_ID]
+            values[APPLIED] = core.drop_state(
+                core.Settings.from_values({**self.defaults(), **values}))
+
+        context.edit(_("Appliquer la pluie"), change)
+
+    def job_of(self, context, clip_id: str) -> float | None:
+        """Avancement (0 … 1) du calcul des gouttes du clip, ou None."""
+        folder = self._wanted.get(clip_id)
+        jobs = getattr(getattr(context, "jobs", None), "jobs", {}) or {}
+        job = jobs.get(f"pluie:{folder.name}") if folder is not None else None
+        return float(job.get("progress", 0.0)) if job is not None else None
 
     # --- source de clip : contexte de rendu --------------------------------------------
 
@@ -89,6 +108,11 @@ class Rain(VideoEffect, ClipSource):
                                 getattr(media, "height", 0) or 0,
                                 getattr(clip, "transform", None), _placed(context, clip))
         self._current = (context, clip, frame)
+        self.button.attach(context)
+        manager = getattr(context, "manager", None)
+        if manager is not None and any(mid != MODULE_ID and mid in clip.modules
+                                       for mid, _s in manager.sources()):
+            return None  # une autre source (timelapse…) fournit déjà le fichier du clip
         # la source du clip, telle quelle : le clip n'est jamais « en attente de calcul »
         if media.kind == "image":
             return SourceOverride(core.still_image(context.cache_dir, media.path), 0, 1.0,
@@ -96,7 +120,8 @@ class Rain(VideoEffect, ClipSource):
         return SourceOverride(media.path, clip.source_in, clip.speed, "video")
 
     def badge(self, settings):
-        return _("Pluie") if settings.get("gouttes") == ANIMATED else _("Pluie · aperçu")
+        s = core.Settings.from_values({**self.defaults(), **settings})
+        return _("Pluie") if core.is_applied(s, settings.get(APPLIED)) else _("Pluie · aperçu")
 
     # --- effet ---------------------------------------------------------------------------
 
@@ -121,14 +146,19 @@ class Rain(VideoEffect, ClipSource):
         if not s.has_drops:
             return result + last
         result += core.softening_filters(s, height)
-        if values.get("gouttes") != ANIMATED:
-            # réglages en cours : aperçu immédiat, gouttes figées, sans calcul de fond
-            preview = core.preview_layers(cache, s, width, height, area, scale)
-            return result + core.drop_filters(preview, s, height, preview=True) + last
         folder = core.cache_folder(cache, s, width, height, fps, area, scale)
-        self._wanted[clip.id] = folder
-        if core.ready(folder):
-            return result + core.drop_filters(folder, s, height) + last
+        applied = core.is_applied(s, values.get(APPLIED))
+        if applied:
+            self._wanted[clip.id] = folder
+            if core.ready(folder):
+                return result + core.drop_filters(folder, s, height) + last
+        else:
+            self._wanted.pop(clip.id, None)
+        # réglages en cours, ou calcul pas encore fini : aperçu immédiat, gouttes figées
+        preview = core.preview_layers(cache, s, width, height, area, scale)
+        result += core.drop_filters(preview, s, height, preview=True) + last
+        if not applied:
+            return result
 
         def stale() -> bool:  # réglage déjà changé (curseur glissé) : calcul inutile
             return folder not in self._wanted.values()
@@ -143,7 +173,7 @@ class Rain(VideoEffect, ClipSource):
                 # abandon silencieux : l'aperçu rechargé demande les calques à jour
 
         context.schedule_job(f"pluie:{folder.name}", _("Gouttes de pluie"), work)
-        return result + last  # en attendant les gouttes : l'ambiance seule
+        return result
 
 
 def register(api) -> None:

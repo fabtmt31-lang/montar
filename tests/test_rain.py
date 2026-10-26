@@ -44,15 +44,23 @@ MEDIA = SimpleNamespace(kind="video", path="/v.mp4")
 
 
 def _filters(rain, context, clip, values, animated=True):
-    """Comme le crochet de rendu de montar : resolve, puis filters. `animated` : réglage
-    « Gouttes : Animées »."""
+    """Comme le crochet de rendu de montar : resolve, puis filters. `animated` : comme après
+    le bouton « Appliquer la pluie »."""
+    import sys
+
+    core = sys.modules[type(rain).__module__ + ".core"]
     override = rain.resolve(context, clip, MEDIA)
     assert (override.path, override.source_in, override.speed) == ("/v.mp4", clip.source_in,
                                                                    clip.speed)
     values = {**rain.defaults(), **values}
     if animated:
-        values["gouttes"] = "animees"
+        values["_gouttes"] = core.drop_state(core.Settings.from_values(values))
     return rain.filters(values)
+
+
+def _mask(filters) -> str:
+    """Masque des gouttes utilisé : aperçu (.png) ou gouttes calculées (.mp4)."""
+    return next(p["filter.resource"] for n, p in filters if n == "mask_start")
 
 
 def _names(filters):
@@ -136,7 +144,7 @@ def test_layers_are_computed_then_used(rain, core, tmp_path):
     context = _context(tmp_path)
     values = {"temps": "averse"}
     first = _filters(rain, context, _clip(), values)
-    assert "mask_start" not in _names(first)  # gouttes pas encore calculées
+    assert _mask(first).endswith("masque.png")  # pas encore calculées : l'aperçu
     (key, work), = context.jobs.items()
     assert key.startswith("pluie:")
     _filters(rain, context, _clip(), values)
@@ -150,7 +158,8 @@ def test_layers_are_computed_then_used(rain, core, tmp_path):
     assert names[-1] == "watermark"  # le calque des gouttes, par-dessus tout
     folder = core.cache_folder(context.cache_dir, core.Settings.from_values(values), 160, 90,
                                10)
-    leftovers = [p for p in folder.parent.iterdir() if p.is_dir() and p != folder]
+    leftovers = [p for p in folder.parent.iterdir()
+                 if p.is_dir() and p != folder and not p.name.startswith("apercu-")]
     assert core.ready(folder) and not leftovers  # aucun dossier de travail laissé
     assert _names(_filters(rain, context, _clip(), {**values, "eclairs": True}))[-1] == \
         "brightness"
@@ -163,9 +172,10 @@ def test_outdated_layers_are_abandoned(rain, tmp_path):
     _filters(rain, context, _clip(), {"volume": 0.9})  # curseur glissé
     old, new = context.jobs.values()
     old(lambda r: None, lambda: False)  # abandonné sans erreur
-    assert not [p for p in (context.cache_dir / "pluie").iterdir() if p.is_dir()]
+    assert not [p for p in (context.cache_dir / "pluie").iterdir()
+                if p.is_dir() and not p.name.startswith("apercu-")]
     new(lambda r: None, lambda: False)
-    assert "mask_start" in _names(_filters(rain, context, _clip(), {"volume": 0.9}))
+    assert _mask(_filters(rain, context, _clip(), {"volume": 0.9})).endswith("masque.mp4")
 
 
 @needs_ffmpeg
@@ -209,24 +219,43 @@ def test_rain_renders(rain, core, tmp_path, media_dir):
     assert wet != mood  # les gouttes sont posées sur l'image
 
 
-def test_preview_until_animated_is_chosen(rain, core, tmp_path):
-    """Réglage « Gouttes » : l'aperçu rapide ne lance aucun calcul ; « Animées » le lance."""
+def test_preview_until_applied(rain, core, tmp_path):
+    """Les réglages montrent un aperçu immédiat ; seul « Appliquer la pluie » lance le
+    calcul, et toucher ensuite un réglage des gouttes revient à l'aperçu."""
     context = _context(tmp_path)
     clip = _clip()
-    params = [p.key for p in rain.params]
-    assert params[:2] == ["temps", "gouttes"]  # visible en haut des réglages
-    assert rain.defaults()["gouttes"] == "apercu"
     for volume in (0.2, 0.4, 0.6, 0.8):  # curseur déplacé plusieurs fois
         filters = _filters(rain, context, clip, {"volume": volume}, animated=False)
         shape = next(p for n, p in filters if n == "mask_start")
         assert shape["filter.resource"].endswith(core.PREVIEW_MASK)
-        assert Path(shape["filter.resource"]).exists()
     assert context.jobs == {}  # aucun calcul lourd pendant les réglages
     assert rain.badge(rain.defaults()) == "Pluie · aperçu"
-    animated = {**rain.defaults(), "volume": 0.8, "gouttes": "animees"}
-    assert rain.badge(animated) == "Pluie"
-    _filters(rain, context, clip, {"volume": 0.8})
+
+    project_clip = SimpleNamespace(id="c1", modules={"pluie": {"volume": 0.8}})
+    timeline = SimpleNamespace(clip=lambda clip_id: project_clip)
+    context.edit = lambda label, op: op(timeline)
+    rain.apply(context, "c1")
+    applied = project_clip.modules["pluie"]
+    assert rain.badge(applied) == "Pluie"
+    rain.resolve(context, clip, MEDIA)
+    filters = rain.filters({**rain.defaults(), **applied})
     assert len(context.jobs) == 1  # le calcul complet est demandé
+    assert rain.job_of(context, "c1") is None  # (le contexte de test n'a pas de file)
+    # en attendant la fin du calcul, l'aperçu reste affiché
+    assert any(p.get("filter.resource", "").endswith(core.PREVIEW_MASK) for _n, p in filters)
+    # l'ambiance ne touche pas aux gouttes ; le volume, si
+    assert rain.badge({**applied, "ambiance": 0.1}) == "Pluie"
+    assert rain.badge({**applied, "volume": 0.1}) == "Pluie · aperçu"
+
+
+def test_other_clip_source_is_kept(rain, tmp_path):
+    """Sur un clip en timelapse, la source pré-calculée du timelapse reste utilisée."""
+    context = _context(tmp_path)
+    context.manager = SimpleNamespace(sources=lambda: [("timelapse", None), ("pluie", rain)],
+                                      effects=lambda: [])
+    clip = _clip(modules={"timelapse": {}, "pluie": {}})
+    assert rain.resolve(context, clip, MEDIA) is None
+    assert "mask_start" in _names(rain.filters(rain.defaults()))  # la pluie est appliquée
 
 
 @needs_ffmpeg
@@ -343,7 +372,8 @@ def test_rain_stays_inside_the_image(rain, core, tmp_path):
 
     for transform in (Transform(), Transform(scale=0.6)):
         clip = _clip(duration=50, transform=transform, keyframes={}, modules={})
-        values = {"temps": "averse", "gouttes": "animees"}
+        values = {"temps": "averse", "_gouttes": core.drop_state(
+            core.Settings.from_values({"temps": "averse"}))}
         rain.resolve(context, clip, media)
         rain.filters({**rain.defaults(), **values})
         for work in list(context.jobs.values()):

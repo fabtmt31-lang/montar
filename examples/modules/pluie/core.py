@@ -353,6 +353,15 @@ def ready(folder: Path) -> bool:
     return (folder / MASK).exists() and (folder / OVERLAY).exists()
 
 
+def drop_state(s: Settings) -> dict:
+    """Réglages des gouttes, tels qu'enregistrés quand on applique la pluie."""
+    return {k: getattr(s, k) for k in DROP_KEYS}
+
+
+def is_applied(s: Settings, applied) -> bool:
+    return isinstance(applied, dict) and applied == drop_state(s)
+
+
 def preview_layers(cache_dir: Path, s: Settings, width: int, height: int,
                    area: tuple = FULL, scale: float = 1.0) -> Path:
     """Aperçu immédiat pendant les réglages (une fraction de seconde) : gouttes figées et

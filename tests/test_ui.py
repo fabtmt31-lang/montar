@@ -12,7 +12,7 @@ pytest.importorskip("PyQt6.QtSvg")
 from PyQt6.QtCore import QEvent, QEventLoop, QPoint, QPointF, QRectF, Qt, QTimer  # noqa: E402
 from PyQt6.QtGui import QMouseEvent, QShortcut  # noqa: E402
 from PyQt6.QtTest import QTest  # noqa: E402
-from PyQt6.QtWidgets import QApplication, QLabel, QMessageBox  # noqa: E402
+from PyQt6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton  # noqa: E402
 
 from montar.core import keyframes  # noqa: E402
 from montar.core.project import Project  # noqa: E402
@@ -1966,3 +1966,59 @@ def test_track_tool_attaches_follower(window, tmp_path, monkeypatch):
     keys = next(c for c in editor.project.clips if c.id == logo.id).keyframes
     xs = [v for _f, v in keys["x"]]
     assert xs[-1] - xs[0] > 0.2  # le logo part vers la droite avec le carré
+
+
+# --- module d'exemple « Pluie » : bouton « Appliquer la pluie » -------------------------
+
+RAIN_MODULE = Path(__file__).resolve().parent.parent / "examples" / "modules" / "pluie"
+
+
+def _settle_rain():
+    for _ in range(10):
+        QApplication.processEvents()
+        time.sleep(0.02)
+
+
+@needs_ffmpeg
+def test_rain_module_apply_button(window, media_dir):
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.module_manager.install_folder(RAIN_MODULE, link=True)
+    editor.add_to_timeline(editor.project.media[0])
+    clip = editor.project.clips[0]
+    editor.controller.select(clip.id)
+    entry = next(e for e in editor.modules_panel.visible_entries() if e.item.id == "pluie")
+    editor.use_module_entry(entry)
+    _settle_rain()
+    panel = editor.effects_panel
+
+    def find():
+        found = [b for b in panel.findChildren(QPushButton, "pluie-appliquer")
+                 if panel._modules_box.indexOf(b) >= 0]
+        return found[0] if found else None
+
+    btn = find()
+    assert btn is not None and btn.isEnabled()  # visible dans les réglages de la pluie
+    assert not editor.modules.jobs.jobs  # aucun calcul avant d'appliquer
+    btn.click()
+    editor._reload_player()
+    assert editor.modules.jobs.jobs
+    assert wait_until(lambda: not editor.modules.jobs.jobs, 60)
+    assert not editor.modules.jobs.failed
+    _settle_rain()
+    assert editor.modules.badges(clip) == ["Pluie"]
+    assert not find().isEnabled()  # « ✓ Pluie appliquée »
+
+    # un réglage des gouttes modifié : retour à l'aperçu, bouton de nouveau disponible
+    control = next(c for e, c, _a in panel._module_controls
+                   if e.id == "pluie" and c.param.key == "volume")
+    control.widget.slider.setValue(control.widget.slider.maximum())
+    _settle_rain()
+    assert find().isEnabled() and editor.modules.badges(clip) == ["Pluie · aperçu"]
+
+    # autre clip sélectionné, puis retour : le bouton est remis dans le panneau reconstruit
+    editor.controller.select(None)
+    _settle_rain()
+    assert find() is None
+    editor.controller.select(clip.id)
+    _settle_rain()
+    assert find() is not None
