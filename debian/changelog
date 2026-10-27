@@ -1,3 +1,23 @@
+montar (1.6.0) unstable; urgency=medium
+
+  * Timeline : sélection multiple (Ctrl + clic, rectangle, Ctrl+A) ; les
+    clips sélectionnés se déplacent, se suppriment et se dupliquent ensemble.
+    Bouton « Unifier » (Ctrl+J) : des clips qui se suivent deviennent un seul.
+  * Textes : animations par le bas, le haut, la gauche, la droite, zoom et
+    rebond, durées réglables, vitesse de frappe, interligne, opacité du
+    bandeau, lignes secondaires et barre d'accent ; 20 nouveaux modèles.
+  * Transitions : 15 nouvelles transitions à motif, avec vignettes.
+  * Rail « Éléments » (ex-Graphiques) en accordéon, avec les filtres et
+    12 effets animés (éclairs, explosion, confettis, feu d'artifice…).
+  * Aperçu plein écran : barre de lecture ; le double-clic pour en sortir ne
+    fait plus planter montar.
+  * Inspecteur : valeurs à saisir au clavier, réglages sans saccades,
+    rotation vers la gauche réparée ; modules gérés depuis l'accueil.
+  * Windows : enregistreur d'écran (zone, fenêtre, son de l'ordinateur),
+    installateur allégé. Interface en occitan (traduction en cours).
+
+ -- Fabien <admin@appsdoc.fr>  Tue, 27 Oct 2026 11:00:00 +0100
+
 montar (1.5.0) unstable; urgency=medium
 
   * Finition pro à l'export : étalonnage et mastering de tout le projet

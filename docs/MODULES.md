@@ -105,7 +105,7 @@ relatifs fonctionnent (`from .outils import calcul`).
 |------|---------------------------|
 | Effet vidéo, effet audio | Rail **Modules**, clic droit sur un clip → **Appliquer un effet ou un module…** ; réglages dans le panneau **Effets** |
 | Transition | Panneau **Transitions** (à glisser entre deux clips), rail **Modules**, inspecteur de la transition |
-| Graphisme | Rail **Graphiques**, dans sa rubrique |
+| Graphisme | Rail **Éléments**, dans sa catégorie |
 | Générateur | Bouton **Créer…** du panneau Médias, rail **Modules** |
 | Format d'export | Fenêtre **Exporter**, rail **Modules** |
 | Outil | Clic droit sur un clip, rail **Modules**, onglet **Vitesse** (`section = "speed"`) |
@@ -254,7 +254,7 @@ change si l'utilisateur exporte à une autre fréquence d'images. Le module `ess
 
 ## 7. Graphismes
 
-Un graphisme est un fichier **SVG** ou **PNG** du module, proposé dans le rail Graphiques.
+Un graphisme est un fichier **SVG** ou **PNG** du module, proposé dans le rail Éléments.
 
 ```python
 from montar.api import Graphic

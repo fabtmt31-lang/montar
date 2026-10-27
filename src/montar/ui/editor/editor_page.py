@@ -76,7 +76,7 @@ from montar.ui.editor.apply import ApplyAction, actions_for, apply_change
 from montar.ui.editor.busy import BusyOverlay, remaining_text
 from montar.ui.editor.controller import EditorController
 from montar.ui.editor.finition import FinitionDialog
-from montar.ui.editor.graphics_panel import GraphicsPanel
+from montar.ui.editor.graphics_panel import ElementsPanel
 from montar.ui.editor.importer import MediaImporter
 from montar.ui.editor.inspector import INSPECTOR_MIN_WIDTH, INSPECTOR_WIDTH, Inspector
 from montar.ui.editor.media_panel import MediaPanel
@@ -85,7 +85,6 @@ from montar.ui.editor.panels import (
     SIDE_MIN_WIDTH,
     SIDE_WIDTH,
     EffectsPanel,
-    FiltersPanel,
     TextPanel,
     TransitionsPanel,
 )
@@ -108,10 +107,9 @@ _RAIL = (
     ("media", "Médias", "image"),
     ("audio", "Audio", "music"),
     ("text", "Texte", "type"),
-    ("graphics", "Graphiques", "shapes"),
+    ("elements", "Éléments", "shapes"),
     ("transitions", "Transitions", "columns-2"),
     ("effects", "Effets", "sparkles"),
-    ("filters", "Filtres", "blend"),
     ("subtitles", "Sous-titres", "captions"),
     ("record", "Enregistrer", "circle-dot"),
 )
@@ -173,16 +171,17 @@ class EditorPage(QWidget):
         self.text_panel = TextPanel()
         self.transitions_panel = TransitionsPanel(self.controller)
         self.effects_panel = EffectsPanel(self.controller)
-        self.filters_panel = FiltersPanel(self.controller)
-        self.graphics_panel = GraphicsPanel()
+        # Éléments : kit de marque, effets animés, filtres et graphismes des modules
+        self.elements_panel = ElementsPanel(self.controller)
+        self.graphics_panel = self.filters_panel = self.elements_panel
         self.subtitles_panel = SubtitlesPanel(self.controller)
         self.subtitles_panel.playhead = self._playhead
         self.side = QStackedWidget()
         self._side_index = {}
         for key, panel in (("media", self.media_panel), ("text", self.text_panel),
-                           ("graphics", self.graphics_panel),
+                           ("elements", self.elements_panel),
                            ("transitions", self.transitions_panel),
-                           ("effects", self.effects_panel), ("filters", self.filters_panel),
+                           ("effects", self.effects_panel),
                            ("subtitles", self.subtitles_panel)):
             self._side_index[key] = self.side.addWidget(panel)
         body.addWidget(self._build_rail())
@@ -220,6 +219,7 @@ class EditorPage(QWidget):
         self.graphics_panel.set_graphics(self.module_manager.graphics())
         self.graphics_panel.graphicRequested.connect(self.insert_graphic)
         self.graphics_panel.logoRequested.connect(self.insert_logo)
+        self.elements_panel.animatedRequested.connect(self.insert_animated)
         self.brand = None
         self.transitions_panel.set_module_transitions(self.module_manager.transitions())
 
@@ -325,6 +325,7 @@ class EditorPage(QWidget):
         self._freeze_pending: dict[str, tuple[str, int]] = {}  # fichier → (clip, image)
         self._merge_pending: dict[str, list[str]] = {}  # rendu → clips qu'il remplace
         self._merge_job: list[str] | None = None  # clips en cours d'unification
+        self._animated_job: tuple[str, int] | None = None  # effet animé : (fichier, début)
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
         self._save_timer.setInterval(800)
@@ -821,7 +822,12 @@ class EditorPage(QWidget):
         return ok
 
     def show_side(self, key: str) -> None:
-        """Affiche un panneau du rail ; « Audio » montre les sons du projet."""
+        """Affiche un panneau du rail ; « Audio » montre les sons du projet, « filters » et
+        « graphics » (anciens panneaux) le panneau Éléments."""
+        if key in ("filters", "graphics"):
+            if key == "filters":
+                self.elements_panel.expand("filters")
+            key = "elements"
         if key in self.rail_buttons:
             self.rail_buttons[key].setChecked(True)
         if key == "audio":
@@ -912,8 +918,11 @@ class EditorPage(QWidget):
         busy = None
         if job is not None:
             name = Path(self._export_settings.path).name if self._export_settings else ""
-            title = _("Export de {name}").format(name=name) if self._merge_job is None \
-                else _("Unification des clips")
+            title = _("Export de {name}").format(name=name)
+            if self._merge_job is not None:
+                title = _("Unification des clips")
+            elif self._animated_job is not None:
+                title = _("Préparation de l'effet animé")
             phase = getattr(job, "phase", "")
             if phase:  # export avec la finition : étape en cours
                 title += " — " + {"analyse": _("1. Analyse du projet"),
@@ -1319,6 +1328,41 @@ class EditorPage(QWidget):
         self.graphics_panel.set_brand_logos(kit.logos())
         self.inspector.set_brand(kit.colors, brand_families(kit))
 
+    def insert_animated(self, effect_id: str) -> Path | None:
+        """Effet animé (panneau Éléments) : vidéo transparente aux dimensions du projet,
+        préparée une fois dans medias/, puis placée à la tête de lecture au-dessus de la
+        vidéo."""
+        from montar.ui.animated import EFFECTS, RenderJob
+
+        effect = EFFECTS.get(effect_id)
+        if effect is None or self.project.media_dir is None:
+            return None
+        w, h = self.project.canvas_size
+        target = self.project.media_dir / \
+            f"{_('Effet animé')} {effect.id} {w}x{h} {self.project.fps}.mov"
+        start = self.timeline.view.playhead
+        existing = next((m for m in self.project.media if Path(m.path) == target), None)
+        if existing is not None:
+            self._place_overlay(existing, None, start, False, add_media=False)
+            return target
+        if target.exists():
+            self._overlay_pending[str(target)] = (start, False, False)
+            self.import_files([str(target)])
+            return target
+        if self._export_job is not None or self.modules.jobs.jobs:
+            QMessageBox.information(self, _("Effets animés"), _(
+                "Un calcul est déjà en cours : réessayez dès qu'il sera terminé."))
+            return None
+        self._animated_job = (str(target), start)
+        self._export_job = RenderJob(effect, (w, h), self.project.fps, target)
+        self._export_settings = None
+        self._export_started = time.monotonic()
+        self._export_job.start()
+        self._export_timer.start()
+        self.export_button.setEnabled(False)
+        self._update_jobs()
+        return target
+
     def insert_logo(self, logo: Path) -> Path | None:
         """Logo du kit placé en haut à droite, à la tête de lecture (copie dans medias/,
         convertie en PNG si besoin)."""
@@ -1579,10 +1623,20 @@ class EditorPage(QWidget):
         self._export_timer.stop()
         self._export_job = None
         merged, self._merge_job = self._merge_job, None
+        animated, self._animated_job = self._animated_job, None
         self.export_button.setEnabled(True)
         self._update_jobs()
         if merged is not None:
             self._merge_rendered(job, merged)
+            return
+        if animated is not None:
+            if job.error and not job.cancelled:
+                QMessageBox.warning(self, _("Effets animés"), _(
+                    "L'effet animé n'a pas pu être préparé : {error}").format(error=job.error))
+            elif not job.cancelled:
+                target, start = animated
+                self._overlay_pending[target] = (start, False, False)
+                self.import_files([target])
             return
         self.exportFinished.emit(job.error)
         if job.cancelled:

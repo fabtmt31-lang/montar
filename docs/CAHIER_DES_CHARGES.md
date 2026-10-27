@@ -503,7 +503,7 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
 **Jalon J6 — modules, effets et graphismes** (version 1.1, demandes d'octobre 2026) :
 - ✅ rail **Modules** : tout ce qu'apportent les modules actifs (outils, effets vidéo et audio, transitions, générateurs, formats d'export), avec recherche ; un clic applique au clip sélectionné ; « Gérer les modules… » sans quitter le montage (F-MOD-07, en partie) ;
 - ✅ module intégré **Effets** : VHS, zoom lent / rapide, dézoom lent / rapide (F-EDT-07, « Ken Burns »), bande dessinée, flou (doux, mouvement, carrés) ; zoom animé ouvert aux modules (API 1.3) ;
-- ✅ rail **Graphiques** : annotations, figures, formes, arrière-plans, superpositions, cadres, stickers ; module intégré **Graphismes** (35 dessins) et type `Graphic` pour en ajouter (F-MOD-08, modules de ressources) ;
+- ✅ rail **Graphiques** (rail **Éléments** depuis la version 1.6) : annotations, figures, formes, arrière-plans, superpositions, cadres, stickers ; module intégré **Graphismes** (35 dessins) et type `Graphic` pour en ajouter (F-MOD-08, modules de ressources) ;
 - ✅ **guide du développeur** de modules (docs/MODULES.md), `montar --new-module` et `--pack-module`, installation depuis un fichier, un dossier ou un dossier lié (développement), « Recharger ».
 
 **Jalon J6 — exigences P2** (version 1.2) :
@@ -532,6 +532,13 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
 - ✅ installeur `.exe` (Inno Setup, pour soi seul ou tous les utilisateurs, association `.montar`) et version portable `.zip`, lanceur `montar.exe` ;
 - ✅ voix off et enregistrement d'écran (écran entier, micro, webcam) par DirectShow / gdigrab ;
 - ◐ installeur non signé (avertissement SmartScreen) ; zone, fenêtre et son de l'ordinateur à l'enregistrement d'écran propres à Linux ; accélération matérielle à l'export (NVENC, QSV, AMF) non vérifiée sous Windows.
+
+**Jalon J9 — montage, textes et éléments** (version 1.6, retours d'octobre 2026) :
+- ✅ timeline : sélection multiple (Ctrl + clic, rectangle, Ctrl+A) et « Unifier » des clips qui se suivent (recollage sans perte ou rendu, transparence gardée sur une piste superposée) ;
+- ✅ textes (F-TXT-03) : animations d'entrée et de sortie dans quatre directions, zoom, rebond, durées réglables ; 28 modèles de titres et de bandeaux ;
+- ✅ transitions : 23 au total, dont 15 à motif (balayages, stores, ouvertures, cercle, losange…) ;
+- ✅ rail Éléments : graphismes, filtres et effets animés (vidéos transparentes calculées sur l'ordinateur) rangés en accordéon ;
+- ✅ aperçu plein écran avec commandes de lecture ; plantage au double-clic corrigé.
 
 **Suite prévue** : Flatpak, `.rpm`, arm64 ; dépôt APT signé ; signature de l'installeur Windows.
 

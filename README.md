@@ -27,13 +27,35 @@ projet.
 - la finition peut être **vue et écoutée dans l'aperçu** de l'éditeur ; les préréglages
   personnels sont enregistrés dans `~/.config/montar/finition.json`.
 
+**Version 1.6** (1.6.0) : montage plus rapide, textes, transitions et éléments.
+
+- timeline : **sélection multiple** (Ctrl + clic, rectangle tracé dans un espace vide,
+  Ctrl+A) pour déplacer, supprimer ou dupliquer plusieurs clips ; bouton **Unifier**
+  (Ctrl+J) : des clips qui se suivent deviennent un seul clip (morceaux d'un même média
+  recollés, sinon rendu avec leurs effets et transitions) ;
+- **textes** : animations par le bas, le haut, la gauche, la droite, zoom et rebond, durées
+  d'entrée et de sortie réglables, vitesse de la machine à écrire, interligne, opacité du
+  bandeau, lignes secondaires (nom puis fonction) et barre d'accent ; **20 nouveaux
+  modèles** de titres, tiers inférieurs, citations, génériques ;
+- **transitions** : 15 nouvelles (balayages directionnels et doux, stores, ouvertures,
+  fermeture, balayage circulaire, cercle, losange, tiers), avec vignettes ;
+- rail **Éléments** (ex-Graphiques) en accordéon : deux exemples par catégorie, « Tout
+  voir » ; les **filtres** y sont rangés ; nouveaux **effets animés** (éclairs, explosion,
+  onde d'énergie, confettis, étincelles, feu d'artifice, cœurs, neige, coup de pinceau,
+  fumée, bulles, fuite de lumière), en vidéo transparente au-dessus de l'image ;
+- aperçu **plein écran** avec barre de lecture ; le double-clic pour en sortir ne fait plus
+  planter montar ;
+- Windows : enregistreur d'écran complet (zone, fenêtre, son de l'ordinateur) ;
+  inspecteur : valeurs à saisir au clavier, réglages fluides ; interface en **occitan**
+  (en cours).
+
 **Version 1.3** (1.3.0) : exigences P3, étalonnage et suivi de mouvement.
 
 - **son** : réduction de bruit, volume régulier, « s'efface sous les voix » (clic droit sur
   une piste → Piste de voix), et dans l'onglet Audio des **options avancées** : égaliseur,
   coupe-bas / coupe-haut, compresseur, hauteur, panoramique, écho, réverbération ;
 - **fond vert** (effet du module Studio) et **stabilisation** (outil « Stabiliser… ») ;
-- **kit de marque** (Accueil) : logos dans le panneau Graphiques, couleurs et polices dans
+- **kit de marque** (Accueil) : logos dans le panneau Éléments, couleurs et polices dans
   les textes ;
 - **sous-titres automatiques**, transcrits sur l'ordinateur par Whisper (installez par
   exemple `pip install --user faster-whisper`) ;
@@ -70,8 +92,9 @@ l'aperçu, effets **VHS** et **bande dessinée** refaits (option « Trait vivant
 - nouveau module intégré **Effets** : VHS, zoom lent / rapide, dézoom lent / rapide,
   bande dessinée, flou (doux, mouvement, carrés) ; le panneau **Effets** montre les effets
   appliqués au clip, avec leurs réglages ;
-- rail **Graphiques** : annotations, figures, formes, arrière-plans, superpositions, cadres
-  et stickers, placés à la tête de lecture (les arrière-plans sous la vidéo) ;
+- rail **Graphiques** (devenu **Éléments** en 1.6) : annotations, figures, formes,
+  arrière-plans, superpositions, cadres et stickers, placés à la tête de lecture (les
+  arrière-plans sous la vidéo) ;
 - **écrire ses modules** : guide complet [docs/MODULES.md](docs/MODULES.md),
   `montar --new-module DOSSIER --type effet-video` (squelette) et
   `montar --pack-module DOSSIER` (archive) ; **accueil → Modules → Installer un

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Panneaux du rail de gauche : Texte (maquette 03), Transitions, Filtres, Effets."""
+"""Panneaux du rail de gauche : Texte (maquette 03), Transitions, Effets."""
 from __future__ import annotations
 
 import copy
@@ -9,7 +9,6 @@ from PyQt6.QtCore import QMimeData, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QDrag, QImage, QLinearGradient, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
-    QButtonGroup,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -22,12 +21,11 @@ from PyQt6.QtWidgets import (
 
 from montar.core.project import Clip, Effects
 from montar.core.timeline import VIDEO_TRANSITIONS
-from montar.engine.looks import PRESETS
 from montar.i18n import _
 from montar.ui.editor.controller import EditorController
 from montar.ui.editor.controls import SliderRow, section
 from montar.ui.editor.params import ParamControl
-from montar.ui.labels import PRESET_SWATCHES, TRANSITIONS
+from montar.ui.labels import TRANSITIONS
 from montar.ui.text_render import PRESETS as TEXT_PRESETS
 from montar.ui.text_render import render, text_bounds
 from montar.ui.theme import theme
@@ -292,75 +290,6 @@ class TransitionsPanel(_Panel):
                                 "ensuite sur sa pastille dans la timeline pour la régler."))
 
 
-class FiltersPanel(_Panel):
-    def __init__(self, controller: EditorController) -> None:
-        super().__init__(_("Filtres"), scroll=True)
-        self.controller = controller
-        self.info = self.hint(_("Sélectionnez une vidéo ou une image dans la timeline."))
-        self.body.addWidget(self.info)
-        grid = QGridLayout()
-        grid.setSpacing(8)
-        self._group = QButtonGroup(self)
-        self._tiles: dict[str, QPushButton] = {}
-        for i, (key, name) in enumerate([("", "Aucun"), *PRESETS.items()]):
-            tile = _tile(self._swatch(key), _(name))
-            tile.clicked.connect(lambda _=False, k=key: self._apply(k))
-            self._group.addButton(tile)
-            self._tiles[key] = tile
-            grid.addWidget(tile, i // 2, i % 2)
-        self.body.addLayout(grid)
-        self.amount = SliderRow(_("Intensité"), 0, 100, lambda v: f"{v:.0f} %")
-        self.amount.moved.connect(self._set_amount)
-        self.body.addWidget(self.amount)
-        self.body.addStretch()
-        controller.selectionChanged.connect(lambda _id: self.refresh())
-        controller.changed.connect(self.refresh)
-        self.refresh()
-
-    @staticmethod
-    def _swatch(key: str) -> QPixmap:
-        a, b = PRESET_SWATCHES.get(key, PRESET_SWATCHES[""])
-        pm = QPixmap(TILE.width() * 2, TILE.height() * 2)
-        painter = QPainter(pm)
-        grad = QLinearGradient(0, 0, pm.width(), pm.height())
-        grad.setColorAt(0, QColor(a))
-        grad.setColorAt(1, QColor(b))
-        painter.fillRect(pm.rect(), grad)
-        painter.end()
-        return pm
-
-    def _visual_clip(self) -> Clip | None:
-        clip = self.controller.selected_clip()
-        if clip is None or clip.is_text:
-            return None
-        media = self.controller.project.find_media(clip.media_id)
-        track = self.controller.timeline.track(clip.track_id)
-        return clip if media and media.kind != "audio" and track.kind == "video" else None
-
-    def refresh(self) -> None:
-        clip = self._visual_clip()
-        for tile in self._tiles.values():
-            tile.setEnabled(clip is not None)
-        self.amount.setEnabled(clip is not None and bool(clip.preset))
-        self.info.setVisible(clip is None)
-        if clip is not None:
-            self._tiles.get(clip.preset, self._tiles[""]).setChecked(True)
-            self.amount.set_value(clip.preset_amount * 100)
-
-    def _apply(self, key: str) -> None:
-        clip = self._visual_clip()
-        if clip is not None:
-            self.controller.edit_clip(_("Filtre"), clip.id, lambda c: (
-                setattr(c, "preset", key), setattr(c, "preset_amount", 1.0)))
-
-    def _set_amount(self, value: float) -> None:
-        clip = self._visual_clip()
-        if clip is not None:
-            self.controller.edit_clip(_("Intensité du filtre"), clip.id,
-                                      lambda c: setattr(c, "preset_amount", value / 100),
-                                      merge=(clip.id, "preset_amount"))
-
-
 class EffectsPanel(_Panel):
     """Effets intégrés du clip, puis effets des modules appliqués au clip (avec leurs
     réglages) ; « Ajouter un effet… » ouvre la fenêtre de choix."""
@@ -398,7 +327,13 @@ class EffectsPanel(_Panel):
         controller.changed.connect(self.refresh)
         self.refresh()
 
-    _visual_clip = FiltersPanel._visual_clip
+    def _visual_clip(self) -> Clip | None:
+        clip = self.controller.selected_clip()
+        if clip is None or clip.is_text:
+            return None
+        media = self.controller.project.find_media(clip.media_id)
+        track = self.controller.timeline.track(clip.track_id)
+        return clip if media and media.kind != "audio" and track.kind == "video" else None
 
     def set_modules(self, modules) -> None:
         self.modules = modules

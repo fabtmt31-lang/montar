@@ -1363,7 +1363,7 @@ def test_graphics_panel(window):
 
     editor = window.create_project(NewProjectParams("Graphiques", "16:9", "720p", 25))
     panel = editor.graphics_panel
-    graphics = {g.id: g for _t, g in panel.tiles()}
+    graphics = {g.id: g for g in panel.graphics()}
     assert len(graphics) >= 35 and "graphismes.wow" in graphics
     panel.search.setText("cœur")
     assert {g.id for _t, g in panel.tiles()} == {"graphismes.coeur", "graphismes.coeur_arc"}
@@ -2400,3 +2400,40 @@ def test_text_presets_render_inside_canvas(app):
     first, second = lines
     assert second.top >= first.top + first.metrics.height() * 0.95
     assert second.metrics.height() < first.metrics.height()
+
+
+
+@needs_ffmpeg
+def test_elements_panel_accordion_and_animated_effect(window, media_dir):
+    editor = imported_editor(window, media_dir, ["red.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    panel = editor.elements_panel
+    editor.show_side("elements")
+    assert editor.side.currentWidget() is panel
+    # replié : deux exemples par catégorie ; « Tout voir » déplie (une seule à la fois)
+    animated = panel._sections["animated"]
+    assert sum(not t.isHidden() for t, _w in animated.tiles) == 2
+    animated.more.click()
+    assert all(not t.isHidden() for t, _w in animated.tiles)
+    panel._sections["filters"].more.click()
+    assert sum(not t.isHidden() for t, _w in animated.tiles) == 2
+    assert not panel.amount.isHidden()  # réglage d'intensité des filtres déplié
+    # l'ancien accès aux filtres ouvre Éléments, catégorie Filtres dépliée
+    editor.show_side("filters")
+    assert panel.expanded == "filters" and editor.side.currentWidget() is panel
+
+    # effet animé : vidéo transparente placée au-dessus du clip rouge
+    path = editor.insert_animated("pinceau")
+    assert wait_until(lambda: len(editor.project.clips) == 2, 60)
+    assert path.exists() and path.suffix == ".mov"
+    effect = editor.project.clips[-1]
+    assert effect.start == 0 and effect.duration == round(2.5 * 25)
+    editor.timeline.set_playhead(30)
+    image = editor._render_still(editor.project, (320, 180))
+    corner = image.pixelColor(image.width() // 20, image.height() // 20)
+    middle = image.pixelColor(image.width() // 2, image.height() // 2)
+    assert corner.red() > 200 and corner.green() < 60  # le rouge se voit autour
+    assert middle.green() > 150  # coup de pinceau jaune au milieu
+    # même effet une seconde fois : le fichier déjà préparé est réutilisé
+    editor.insert_animated("pinceau")
+    assert len([m for m in editor.project.media if m.path == str(path)]) == 1
