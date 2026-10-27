@@ -139,7 +139,9 @@ def reads_vp9_alpha() -> bool:
     found = False
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is not None and mlt is not None:
-        with tempfile.TemporaryDirectory() as folder:
+        # Windows : MLT peut garder le fichier ouvert un moment, le dossier temporaire ne
+        # doit pas faire échouer l'essai en refusant de s'effacer
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
             path = os.path.join(folder, "essai.webm")
             try:
                 done = subprocess.run(
@@ -155,6 +157,8 @@ def reads_vp9_alpha() -> bool:
                         frame.set("consumer.rescale", "none")
                         image = frame.get_image(mlt.mlt_image_rgba, 32, 32)
                         found = bool(image) and image[(16 * 32 + 16) * 4 + 3] < 128
+                        del frame
+                    del producer  # fichier refermé avant d'effacer le dossier
             except (OSError, subprocess.SubprocessError, EngineUnavailable):
                 found = False
     _VP9_ALPHA = found
