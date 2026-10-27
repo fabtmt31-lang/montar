@@ -29,7 +29,7 @@ from montar.ui.editor.controls import SliderRow, section
 from montar.ui.editor.params import ParamControl
 from montar.ui.labels import PRESET_SWATCHES, TRANSITIONS
 from montar.ui.text_render import PRESETS as TEXT_PRESETS
-from montar.ui.text_render import render
+from montar.ui.text_render import render, text_bounds
 from montar.ui.theme import theme
 from montar.ui.theme.icons import pixmap as icon_pixmap
 from montar.ui.widgets import button, label, rounded_pixmap
@@ -138,7 +138,8 @@ class TextPanel(_Panel):
         add.setMinimumHeight(44)
         add.clicked.connect(lambda: self.addRequested.emit("title"))
         self.body.addWidget(add)
-        for category, title in (("title", _("TITRES")), ("band", _("BANDEAUX & SOUS-TITRES"))):
+        for category, title in (("title", _("TITRES")), ("band", _("BANDEAUX & SOUS-TITRES")),
+                                ("other", _("CITATIONS, MÈMES & GÉNÉRIQUES"))):
             self.body.addWidget(section(title))
             grid = QGridLayout()
             grid.setSpacing(8)
@@ -164,10 +165,14 @@ class TextPanel(_Panel):
         grad.setColorAt(1, QColor("#2F7A56"))
         painter.fillRect(0, 0, w, h, grad)
         preview = copy.deepcopy(style)
-        preview.content = _(TEXT_PRESETS[style.preset][0])
+        # nom du modèle ; texte d'exemple s'il a plusieurs lignes (nom et fonction…)
+        preview.content = _(style.content) if "\n" in style.content \
+            else _(TEXT_PRESETS[style.preset][0])
         preview.x, preview.y = (0.5, 0.5)
-        preview.align = "center"
+        preview.align = "center" if not style.accent else "left"
         preview.size = style.size * (3.0 if category == "band" else 2.2)
+        fit = w * 0.86 / max(1.0, text_bounds(preview, w, int(w * 9 / 16)).width())
+        preview.size *= min(1.0, fit)  # le texte tient dans la vignette
         painter.drawImage(0, 0, render(preview, w, int(w * 9 / 16)))
         painter.end()
         return pm

@@ -8,7 +8,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from PyQt6.QtCore import QPointF, QRectF, Qt
@@ -46,6 +46,78 @@ PRESETS: dict[str, tuple[str, str, TextStyle]] = {
     "subscribe": ("S'abonner", "band", TextStyle(
         "S'abonner", "subscribe", "Manrope", 44, 700, color="#17261E",
         background="#FFFFFF", pill=True, x=0.84, y=0.86)),
+    # --- titres ---
+    "title_sub": ("Titre et sous-titre", "title", TextStyle(
+        "Grand titre\nSous-titre", "title_sub", "Fraunces", 120, 700, color="#FFFFFF",
+        shadow=True, sub_scale=0.42, sub_color="#D9EBB9", animation_in="slide",
+        animation_out="fade")),
+    "creator": ("Créateur", "title", TextStyle(
+        "Créateur", "creator", "Manrope", 112, 800, uppercase=True, color="#FFFFFF",
+        outline_color="#17261E", outline_width=6, shadow=True, animation_in="pop")),
+    "retro": ("Rétro", "title", TextStyle(
+        "Rétro", "retro", "Fraunces", 140, 800, uppercase=True, color="#F7C948",
+        outline_color="#E4572E", outline_width=5, shadow=True, shadow_color="#CC2B1B5A",
+        animation_in="zoom")),
+    "groovy": ("Groovy", "title", TextStyle(
+        "Groovy", "groovy", "Caveat", 170, 700, color="#FF7AB6", outline_color="#2B1B5A",
+        outline_width=5, shadow=True, animation_in="pop")),
+    "bubble": ("Bulle", "title", TextStyle(
+        "Bulle", "bubble", "Manrope", 124, 800, color="#C8F560", outline_color="#17261E",
+        outline_width=8, animation_in="pop", animation_out="pop")),
+    "outline": ("Contour", "title", TextStyle(
+        "Contour", "outline", "Manrope", 130, 800, uppercase=True, color="#00FFFFFF",
+        outline_color="#FFFFFF", outline_width=3, letter_spacing=6, animation_in="fade")),
+    "cinema": ("Cinéma", "title", TextStyle(
+        "Cinéma", "cinema", "Fraunces", 88, 400, uppercase=True, letter_spacing=26,
+        color="#FFFFFF", animation_in="fade", animation_out="fade",
+        animation_in_duration=1.2, animation_out_duration=1.2)),
+    "typing": ("Machine à écrire", "title", TextStyle(
+        "Il était une fois…", "typing", "JetBrains Mono", 72, 500, color="#FFFFFF",
+        shadow=True, animation_in="typewriter")),
+    "rise": ("Titre montant", "title", TextStyle(
+        "Titre montant", "rise", "Manrope", 104, 800, color="#FFFFFF", shadow=True,
+        animation_in="slide", animation_out="slide_top", animation_in_duration=0.8)),
+    # --- bandeaux et tiers inférieurs ---
+    "lower_third_2": ("Tiers inférieur 2 niveaux", "band", TextStyle(
+        "Prénom Nom\nFonction", "lower_third_2", "Manrope", 52, 800, align="left",
+        color="#17261E", background="#FFFFFF", x=0.24, y=0.82, sub_scale=0.62,
+        sub_color="#2F7A56", animation_in="slide_left", animation_out="slide_left")),
+    "lower_third_min": ("Tiers inférieur minimaliste", "band", TextStyle(
+        "Prénom Nom\nFonction", "lower_third_min", "Manrope", 50, 700, align="left",
+        color="#FFFFFF", shadow=True, x=0.2, y=0.82, sub_scale=0.6, sub_color="#D9EBB9",
+        accent="#9CCBB0", animation_in="slide_left", animation_out="fade")),
+    "lower_third_color": ("Tiers inférieur coloré", "band", TextStyle(
+        "Prénom Nom · Rôle", "lower_third_color", "Manrope", 44, 700, align="left",
+        color="#FFFFFF", background="#2F7A56", x=0.25, y=0.84, animation_in="slide_left",
+        animation_out="slide_left")),
+    "breaking": ("Info spéciale", "band", TextStyle(
+        "Info spéciale", "breaking", "Manrope", 46, 800, uppercase=True, align="left",
+        color="#FFFFFF", background="#C0392B", x=0.2, y=0.86, letter_spacing=3,
+        animation_in="slide_left")),
+    "text_box": ("Zone de texte", "band", TextStyle(
+        "Votre texte ici", "text_box", "Manrope", 56, 700, color="#FFFFFF",
+        background="#17261E", animation_in="fade", animation_out="fade")),
+    "button": ("Bouton", "band", TextStyle(
+        "En savoir plus", "button", "Manrope", 48, 700, color="#FFFFFF",
+        background="#2F7A56", pill=True, y=0.8, animation_in="pop", animation_out="fade")),
+    "hashtag": ("#hashtag", "band", TextStyle(
+        "#montar", "hashtag", "Manrope", 56, 800, color="#17261E", background="#D9EBB9",
+        pill=True, x=0.5, y=0.14, animation_in="slide_top")),
+    # --- divers ---
+    "quote": ("Citation", "other", TextStyle(
+        "« Une belle citation »\n— Auteur", "quote", "Fraunces", 68, 400, italic=True,
+        color="#FFFFFF", shadow=True, sub_scale=0.55, sub_color="#D9EBB9", line_height=1.25,
+        animation_in="fade", animation_out="fade", animation_in_duration=1.0)),
+    "meme": ("Texte mème", "other", TextStyle(
+        "Texte en haut", "meme", "Manrope", 100, 800, uppercase=True, color="#FFFFFF",
+        outline_color="#000000", outline_width=8, y=0.12)),
+    "credits": ("Générique", "other", TextStyle(
+        "Réalisation\nPrénom Nom", "credits", "Manrope", 44, 500, color="#D9EBB9",
+        sub_scale=1.5, sub_color="#FFFFFF", line_height=1.3, animation_in="slide",
+        animation_out="slide_top", animation_in_duration=1.0, animation_out_duration=1.0)),
+    "intro": ("Intro", "other", TextStyle(
+        "Intro", "intro", "Fraunces", 180, 800, color="#FFFFFF", shadow=True,
+        animation_in="zoom", animation_out="fade", animation_in_duration=1.0)),
 }
 
 FAMILIES = ("Manrope", "Fraunces", "Caveat", "JetBrains Mono")
@@ -74,21 +146,47 @@ def _lines(style: TextStyle) -> list[str]:
     return text.split("\n") or [""]
 
 
+@dataclass
+class _Line:
+    text: str
+    font: QFont
+    metrics: QFontMetricsF
+    width: float
+    top: float = 0.0
+    sub: bool = False  # ligne secondaire (taille et couleur propres)
+
+
 def _layout(style: TextStyle, width: int, height: int):
-    """Police, lignes, rectangle du bloc de texte et du bandeau (pixels de la toile)."""
+    """Lignes placées, rectangle du bloc de texte et du bandeau (pixels de la toile). Les
+    lignes après la première peuvent être plus petites (`sub_scale`) : nom puis fonction,
+    titre puis sous-titre, citation puis auteur."""
     scale = height / REFERENCE_HEIGHT
-    font = _font(style, scale)
-    fm = QFontMetricsF(font)
-    lines = _lines(style)
-    line_h = fm.height()
-    widths = [fm.horizontalAdvance(line) for line in lines]
-    step = _line_step(style, fm)
-    block_w, block_h = max(widths, default=0.0), line_h + step * (len(lines) - 1)
+    main = _font(style, scale)
+    sub_font = _font(style, scale * max(0.2, min(2.0, style.sub_scale)))
+    lines = []
+    for i, text in enumerate(_lines(style)):
+        font = main if i == 0 else sub_font
+        fm = QFontMetricsF(font)
+        lines.append(_Line(text, font, fm, fm.horizontalAdvance(text), sub=i > 0))
+    y = 0.0
+    for i, line in enumerate(lines):
+        line.top = y
+        if i + 1 < len(lines):  # hauteur de la ligne × interligne
+            y += _line_step(style, line.metrics)
+    block_w = max((line.width for line in lines), default=0.0)
+    block_h = y + lines[-1].metrics.height()
+    line_h = lines[0].metrics.height()
+    accent = 0.0
+    if style.accent:  # barre verticale à gauche du texte
+        accent = 0.12 * line_h + 0.3 * line_h
     cx, cy = style.x * width, style.y * height
-    block = QRectF(cx - block_w / 2, cy - block_h / 2, block_w, block_h)
+    block = QRectF(cx - (block_w + accent) / 2 + accent, cy - block_h / 2, block_w, block_h)
+    for line in lines:
+        line.top += block.top()
     pad_x, pad_y = (0.55 if style.pill else 0.4) * line_h, 0.18 * line_h
-    box = block.adjusted(-pad_x, -pad_y, pad_x, pad_y) if style.background else block
-    return font, fm, lines, widths, block, box
+    outer = block.adjusted(-accent, 0, 0, 0)
+    box = outer.adjusted(-pad_x, -pad_y, pad_x, pad_y) if style.background else outer
+    return lines, block, box, line_h
 
 
 def _line_step(style: TextStyle, fm: QFontMetricsF) -> float:
@@ -98,7 +196,7 @@ def _line_step(style: TextStyle, fm: QFontMetricsF) -> float:
 
 def text_bounds(style: TextStyle, width: int, height: int) -> QRectF:
     """Rectangle occupé par le texte (et son bandeau) dans la toile."""
-    return _layout(style, width, height)[5]
+    return _layout(style, width, height)[2]
 
 
 def render(style: TextStyle, width: int, height: int, visible: int | None = None) -> QImage:
@@ -106,7 +204,7 @@ def render(style: TextStyle, width: int, height: int, visible: int | None = None
     autres restent à leur place mais invisibles."""
     image = QImage(width, height, QImage.Format.Format_ARGB32_Premultiplied)
     image.fill(Qt.GlobalColor.transparent)
-    font, fm, lines, widths, block, box = _layout(style, width, height)
+    lines, block, box, line_h = _layout(style, width, height)
     scale = height / REFERENCE_HEIGHT
     painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -118,18 +216,26 @@ def render(style: TextStyle, width: int, height: int, visible: int | None = None
         fill.setAlphaF(fill.alphaF() * max(0.0, min(1.0, style.background_opacity)))
         painter.setBrush(fill)
         painter.drawRoundedRect(box, radius, radius)
-    path = QPainterPath()
-    left = len("".join(lines)) if visible is None else visible
-    for i, (line, w) in enumerate(zip(lines, widths, strict=True)):
+    if style.accent:
+        bar = 0.12 * line_h
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(style.accent))
+        painter.drawRoundedRect(QRectF(block.left() - 0.3 * line_h - bar, block.top(), bar,
+                                       block.height()), bar / 2, bar / 2)
+    main, sub = QPainterPath(), QPainterPath()
+    left = len("".join(line.text for line in lines)) if visible is None else visible
+    for line in lines:
         if style.align == "left":
             x = block.left()
         elif style.align == "right":
-            x = block.right() - w
+            x = block.right() - line.width
         else:
-            x = block.left() + (block.width() - w) / 2
-        shown, left = line[:max(0, left)], max(0, left - len(line))
-        path.addText(QPointF(x, block.top() + i * _line_step(style, fm) + fm.ascent()), font,
-                     shown)
+            x = block.left() + (block.width() - line.width) / 2
+        shown, left = line.text[:max(0, left)], max(0, left - len(line.text))
+        target = sub if line.sub and style.sub_color else main
+        target.addText(QPointF(x, line.top + line.metrics.ascent()), line.font, shown)
+    path = QPainterPath(main)
+    path.addPath(sub)
     if style.shadow:
         offset = max(1.0, style.size * scale * 0.035)
         shadow = QColor(style.shadow_color)
@@ -148,7 +254,10 @@ def render(style: TextStyle, width: int, height: int, visible: int | None = None
         painter.drawPath(path)
     painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(QColor(style.color))
-    painter.drawPath(path)
+    painter.drawPath(main)
+    if not sub.isEmpty():
+        painter.setBrush(QColor(style.sub_color))
+        painter.drawPath(sub)
     painter.end()
     return image
 

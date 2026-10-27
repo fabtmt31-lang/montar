@@ -218,6 +218,10 @@ class TextStyle:
     typing_speed: float = 18.0  # machine à écrire : caractères par seconde
     line_height: float = 1.0  # interligne (× hauteur de ligne de la police)
     background_opacity: float = 1.0  # opacité du bandeau
+    # lignes après la première (fonction sous un nom, auteur sous une citation…)
+    sub_scale: float = 1.0  # taille relative
+    sub_color: str = ""  # couleur ; vide : celle du texte
+    accent: str = ""  # couleur d'une barre verticale à gauche du texte ; vide : aucune
 
 
 @dataclass

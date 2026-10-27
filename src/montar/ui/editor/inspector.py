@@ -628,11 +628,30 @@ class Inspector(QFrame):
         self.background_opacity.moved.connect(lambda v: self._edit_text(
             _("Opacité du bandeau"), "background-opacity", background_opacity=v / 100))
         sl.addWidget(self.background_opacity)
+        # lignes suivantes (fonction sous un nom, auteur sous une citation…)
+        self.lines_box = QWidget()
+        ll = QVBoxLayout(self.lines_box)
+        ll.setContentsMargins(0, 0, 0, 0)
         self.line_height = SliderRow(_("Interligne"), 0.6, 2.5,
                                      lambda v: f"{v:.2f}".rstrip("0").rstrip(".") + " ×")
         self.line_height.moved.connect(lambda v: self._edit_text(
             _("Interligne"), "line-height", line_height=round(v, 2)))
-        sl.addWidget(self.line_height)
+        ll.addWidget(self.line_height)
+        self.sub_scale = SliderRow(_("Taille des lignes suivantes"), 30, 200, _pct)
+        self.sub_scale.moved.connect(lambda v: self._edit_text(
+            _("Taille des lignes suivantes"), "sub-scale", sub_scale=round(v / 100, 2)))
+        ll.addWidget(self.sub_scale)
+        ll.addWidget(label(_("Couleur des lignes suivantes")))
+        self.sub_color = ColorSwatches(TEXT_COLORS, allow_none=True)
+        self.sub_color.picked.connect(lambda c: self._edit_text(
+            _("Couleur des lignes suivantes"), "sub-color", sub_color=c))
+        ll.addWidget(self.sub_color)
+        sl.addWidget(self.lines_box)
+        sl.addWidget(label(_("Barre d'accent")))
+        self.accent = ColorSwatches(TEXT_COLORS, allow_none=True)
+        self.accent.picked.connect(lambda c: self._edit_text(_("Barre d'accent"), "accent",
+                                                             accent=c))
+        sl.addWidget(self.accent)
 
         anim, al = page()
         self._anims = {}
@@ -974,7 +993,10 @@ class Inspector(QFrame):
         self.background_opacity.set_value(t.background_opacity * 100)
         self.background_opacity.setVisible(bool(t.background))
         self.line_height.set_value(t.line_height)
-        self.line_height.setVisible("\n" in t.content)
+        self.sub_scale.set_value(t.sub_scale * 100)
+        self.sub_color.set_current(t.sub_color)
+        self.lines_box.setVisible("\n" in t.content)
+        self.accent.set_current(t.accent)
         self.text_x.set_value(t.x * 100)
         self.text_y.set_value(t.y * 100)
         self._refreshing = False

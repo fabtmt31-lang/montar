@@ -2383,3 +2383,20 @@ def test_occitan_interface(app, isolated_home, monkeypatch):
         QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
     finally:
         i18n.set_language("fr")
+
+
+def test_text_presets_render_inside_canvas(app):
+    from montar.ui.text_render import PRESETS, _layout, preset_style, render, text_bounds
+
+    assert len(PRESETS) >= 28
+    for key in PRESETS:
+        style = preset_style(key)
+        bounds = text_bounds(style, 1920, 1080)
+        assert 0 <= bounds.left() and bounds.right() <= 1920, key
+        assert 0 <= bounds.top() and bounds.bottom() <= 1080, key
+        assert not render(style, 320, 180).isNull()
+    # nom puis fonction : la seconde ligne, plus petite, est sous la première
+    lines, _block, _box, _h = _layout(preset_style("lower_third_2"), 1920, 1080)
+    first, second = lines
+    assert second.top >= first.top + first.metrics.height() * 0.95
+    assert second.metrics.height() < first.metrics.height()
