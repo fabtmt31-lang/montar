@@ -1532,6 +1532,31 @@ def test_hover_preview_notifications_typewriter(window, media_dir, tmp_path):
     assert editor.inspector._anims["animation_in"].button("typewriter") is not None
 
 
+def test_text_animation_settings(window):
+    editor = window.create_project(NewProjectParams("Textes", "16:9", "720p", 25))
+    editor.add_text("lower_third")
+    clip = editor.project.clips[0]
+    inspector = editor.inspector
+    inspector.text_tabs.show_tab("animation")
+    durations = inspector._anim_durations
+    assert durations["animation_in"].isHidden()  # aucune animation : pas de durée
+    inspector._anims["animation_in"].button("slide_left").click()
+    assert clip.text.animation_in == "slide_left" and not durations["animation_in"].isHidden()
+    durations["animation_in"].moved.emit(1.2)
+    assert clip.text.animation_in_duration == 1.2
+    inspector._anims["animation_in"].button("typewriter").click()
+    assert not inspector.typing_speed.isHidden() and durations["animation_in"].isHidden()
+    inspector.typing_speed.moved.emit(30)
+    assert clip.text.typing_speed == 30
+    inspector._anims["animation_out"].button("pop").click()
+    assert clip.text.animation_out == "pop"
+    # bandeau : opacité réglable
+    inspector.text_tabs.show_tab("style")
+    assert not inspector.background_opacity.isHidden()
+    inspector.background_opacity.moved.emit(40)
+    assert clip.text.background_opacity == pytest.approx(0.4)
+
+
 # --- P2-4 : modèles ---------------------------------------------------------------------------
 
 

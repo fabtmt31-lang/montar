@@ -50,6 +50,10 @@ from montar.ui.widgets import Segmented, button, label, set_icon, shrink
 _KIND = {"video": "Clip vidéo", "image": "Image", "audio": "Son"}
 TEXT_COLORS = ("#17261E", "#FFFFFF", "#2F7A56", "#BFE3CF", "#D9EBB9")
 BACKGROUNDS = ("#FFFFFF", "#17261E", "#2F7A56", "#D917261E")
+# animations de texte (entrée et sortie) ; la machine à écrire s'ajoute à l'entrée
+TEXT_ANIMATIONS = (("none", "Aucune"), ("fade", "Fondu"), ("slide", "Par le bas"),
+                   ("slide_top", "Par le haut"), ("slide_left", "Par la gauche"),
+                   ("slide_right", "Par la droite"), ("zoom", "Zoom"), ("pop", "Rebond"))
 WEIGHT_NAMES = {400: "Normal", 500: "Moyen", 600: "Semi-gras", 700: "Gras", 800: "Extra-gras"}
 SPEEDS = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0)
 
@@ -153,6 +157,8 @@ class Inspector(QFrame):
     GESTURE_END_MS = 400
 
     def _gesture(self, hold: bool = False) -> None:
+        if self._refreshing or self.clip_id is None:
+            return  # mise à jour des champs par l'inspecteur lui-même : pas un geste
         if not self.controller.live:
             self.controller.begin_live(preview=True)
             self._gesture_owned = True
@@ -618,20 +624,47 @@ class Inspector(QFrame):
         self.pill = QCheckBox(_("Bords arrondis"))
         self.pill.toggled.connect(lambda on: self._edit_text(_("Bandeau"), "pill", pill=on))
         sl.addWidget(self.pill)
+        self.background_opacity = SliderRow(_("Opacité du bandeau"), 0, 100, _pct)
+        self.background_opacity.moved.connect(lambda v: self._edit_text(
+            _("Opacité du bandeau"), "background-opacity", background_opacity=v / 100))
+        sl.addWidget(self.background_opacity)
+        self.line_height = SliderRow(_("Interligne"), 0.6, 2.5,
+                                     lambda v: f"{v:.2f}".rstrip("0").rstrip(".") + " ×")
+        self.line_height.moved.connect(lambda v: self._edit_text(
+            _("Interligne"), "line-height", line_height=round(v, 2)))
+        sl.addWidget(self.line_height)
 
         anim, al = page()
         self._anims = {}
-        for key, title in (("animation_in", _("Animation d'entrée")),
-                           ("animation_out", _("Animation de sortie"))):
+        self._anim_durations = {}
+        for key, title, duration_title in (
+                ("animation_in", _("Animation d'entrée"), _("Durée de l'entrée")),
+                ("animation_out", _("Animation de sortie"), _("Durée de la sortie"))):
             al.addWidget(label(title))
-            options = [("none", _("Aucune")), ("fade", _("Fondu")), ("slide", _("Glisser"))]
+            options = [(k, _(name)) for k, name in TEXT_ANIMATIONS]
             if key == "animation_in":
                 options.append(("typewriter", _("Machine à écrire")))
-            seg = Segmented(options, compact=True)
+            seg = Segmented(options, compact=True, columns=2)
             seg.changed.connect(lambda v, k=key, t=title: self._edit_text(t, k, **{k: v}))
             self._anims[key] = seg
             al.addWidget(seg)
+            field = f"{key}_duration"
+            duration = SliderRow(duration_title, 0.1, 3.0, lambda v: f"{v:.1f} s")
+            duration.moved.connect(lambda v, f=field, t=duration_title: self._edit_text(
+                t, f, **{f: round(v, 2)}))
+            self._anim_durations[key] = duration
+            al.addWidget(duration)
+            if key == "animation_in":
+                self.typing_speed = SliderRow(_("Vitesse de frappe"), 4, 60,
+                                              lambda v: _("{n} car./s").format(n=round(v)))
+                self.typing_speed.moved.connect(lambda v: self._edit_text(
+                    _("Vitesse de frappe"), "typing", typing_speed=round(v)))
+                al.addWidget(self.typing_speed)
             al.addSpacing(10)
+        hint = label(_("Les animations se règlent ici ; la durée du texte se règle dans la "
+                       "timeline en tirant ses bords."), "small")
+        hint.setWordWrap(True)
+        al.addWidget(hint)
 
         position, pl = page()
         self.text_x = SliderRow(_("Position horizontale"), 0, 100, _pct)
@@ -934,6 +967,14 @@ class Inspector(QFrame):
         self.pill.setChecked(t.pill)
         for key, seg in self._anims.items():
             seg.set_current(getattr(t, key))
+            self._anim_durations[key].set_value(getattr(t, f"{key}_duration"))
+            self._anim_durations[key].setVisible(getattr(t, key) not in ("none", "typewriter"))
+        self.typing_speed.set_value(t.typing_speed)
+        self.typing_speed.setVisible(t.animation_in == "typewriter")
+        self.background_opacity.set_value(t.background_opacity * 100)
+        self.background_opacity.setVisible(bool(t.background))
+        self.line_height.set_value(t.line_height)
+        self.line_height.setVisible("\n" in t.content)
         self.text_x.set_value(t.x * 100)
         self.text_y.set_value(t.y * 100)
         self._refreshing = False

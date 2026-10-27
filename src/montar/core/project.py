@@ -209,8 +209,15 @@ class TextStyle:
     pill: bool = False  # bandeau aux bords entièrement arrondis
     x: float = 0.5  # centre du bloc de texte, en fraction de la toile
     y: float = 0.5
-    animation_in: str = "none"  # none | fade | slide
+    # entrée : none | fade | slide (par le bas) | slide_top | slide_left | slide_right | zoom
+    # | pop | typewriter ; sortie : les mêmes, sans la machine à écrire
+    animation_in: str = "none"
     animation_out: str = "none"
+    animation_in_duration: float = 0.5  # secondes
+    animation_out_duration: float = 0.5
+    typing_speed: float = 18.0  # machine à écrire : caractères par seconde
+    line_height: float = 1.0  # interligne (× hauteur de ligne de la police)
+    background_opacity: float = 1.0  # opacité du bandeau
 
 
 @dataclass

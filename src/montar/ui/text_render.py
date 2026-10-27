@@ -82,12 +82,18 @@ def _layout(style: TextStyle, width: int, height: int):
     lines = _lines(style)
     line_h = fm.height()
     widths = [fm.horizontalAdvance(line) for line in lines]
-    block_w, block_h = max(widths, default=0.0), line_h * len(lines)
+    step = _line_step(style, fm)
+    block_w, block_h = max(widths, default=0.0), line_h + step * (len(lines) - 1)
     cx, cy = style.x * width, style.y * height
     block = QRectF(cx - block_w / 2, cy - block_h / 2, block_w, block_h)
     pad_x, pad_y = (0.55 if style.pill else 0.4) * line_h, 0.18 * line_h
     box = block.adjusted(-pad_x, -pad_y, pad_x, pad_y) if style.background else block
     return font, fm, lines, widths, block, box
+
+
+def _line_step(style: TextStyle, fm: QFontMetricsF) -> float:
+    """Distance entre deux lignes (interligne)."""
+    return fm.height() * max(0.5, min(3.0, style.line_height))
 
 
 def text_bounds(style: TextStyle, width: int, height: int) -> QRectF:
@@ -108,7 +114,9 @@ def render(style: TextStyle, width: int, height: int, visible: int | None = None
     if style.background:
         radius = box.height() / 2 if style.pill else 12 * scale
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(style.background))
+        fill = QColor(style.background)
+        fill.setAlphaF(fill.alphaF() * max(0.0, min(1.0, style.background_opacity)))
+        painter.setBrush(fill)
         painter.drawRoundedRect(box, radius, radius)
     path = QPainterPath()
     left = len("".join(lines)) if visible is None else visible
@@ -120,7 +128,8 @@ def render(style: TextStyle, width: int, height: int, visible: int | None = None
         else:
             x = block.left() + (block.width() - w) / 2
         shown, left = line[:max(0, left)], max(0, left - len(line))
-        path.addText(QPointF(x, block.top() + i * fm.height() + fm.ascent()), font, shown)
+        path.addText(QPointF(x, block.top() + i * _line_step(style, fm) + fm.ascent()), font,
+                     shown)
     if style.shadow:
         offset = max(1.0, style.size * scale * 0.035)
         shadow = QColor(style.shadow_color)
@@ -162,11 +171,13 @@ TYPING_CPS = 18  # caractères par seconde de la machine à écrire
 TYPING_SHARE = 0.7  # au plus 70 % de la durée du clip pour taper le texte
 
 
-def typing_steps(chars: int, duration: int, fps: int) -> list[tuple[int, int]]:
-    """(caractères visibles, images) de chaque étape ; la dernière tient jusqu'à la fin."""
+def typing_steps(chars: int, duration: int, fps: int,
+                 cps: float = TYPING_CPS) -> list[tuple[int, int]]:
+    """(caractères visibles, images) de chaque étape ; la dernière tient jusqu'à la fin.
+    `cps` : vitesse de frappe en caractères par seconde."""
     if chars <= 0 or duration <= 1:
         return [(chars, max(1, duration))]
-    per_char = max(1, round(fps / TYPING_CPS))
+    per_char = max(1, round(fps / max(1.0, cps)))
     budget = max(1, int(duration * TYPING_SHARE))
     step = max(1, -(-chars * per_char // budget))  # caractères ajoutés par étape
     steps, shown, used = [], 0, 0
@@ -187,7 +198,7 @@ def typing_sequence(cache: Path, clip: Clip, width: int, height: int,
                                   sort_keys=True).encode()).hexdigest()
     folder = cache / "texts" / key
     result = []
-    for shown, frames in typing_steps(chars, clip.duration, fps):
+    for shown, frames in typing_steps(chars, clip.duration, fps, clip.text.typing_speed):
         out = folder / f"{shown:05d}.png"
         if not out.exists():
             folder.mkdir(parents=True, exist_ok=True)

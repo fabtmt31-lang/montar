@@ -365,3 +365,43 @@ def test_typewriter_text(engine, tmp_path):
         source.close()
     lit = [sum(1 for i in range(0, len(d), 4) if d[i] > 200) for d in (early, late)]
     assert 0 < lit[0] < lit[1] / 3  # au début, une seule lettre est tapée
+
+
+@needs_ffmpeg
+def test_text_motion_animations(engine, tmp_path):
+    """Entrée « par la gauche » puis sortie « zoom » : le texte se déplace puis rapetisse ;
+    la durée réglée des animations est respectée."""
+    pytest.importorskip("PyQt6.QtGui")
+    from PyQt6.QtWidgets import QApplication
+
+    from montar.core.project import Clip, TextStyle
+    from montar.ui.text_render import render
+
+    app = QApplication.instance() or QApplication(["t"])
+    assert app is not None
+    style = TextStyle("HHHH", color="#FFFFFF", size=200, animation_in="slide_left",
+                      animation_out="zoom", animation_in_duration=1.0,
+                      animation_out_duration=0.4)
+    png = str(tmp_path / "t.png")
+    render(style, 320, 180).save(png)
+    clip = Clip("", "t", 0, 75, text=style)
+    from montar.engine.base import _clip_spec
+
+    spec_ = _clip_spec(clip, png, "text", (320, 180), fps=25)
+    assert (spec_.animation_in_frames, spec_.animation_out_frames) == (25, 10)
+    source = engine.build(TimelineSpec(Canvas(320, 180, 25),
+                                       (TrackSpec("video", False, False, (spec_,)),)))
+
+    def lit_columns(frame):
+        data = source.render(frame, 320, 180)
+        cols = [x for x in range(320) if any(data[(y * 320 + x) * 4] > 8
+                                             for y in range(0, 180, 3))]
+        return (min(cols), max(cols)) if cols else None
+
+    try:
+        entering, settled, leaving = lit_columns(6), lit_columns(40), lit_columns(71)
+    finally:
+        source.close()
+    assert entering[0] < settled[0] - 10  # encore décalé vers la gauche
+    width = lambda span: span[1] - span[0]  # noqa: E731
+    assert leaving is None or width(leaving) < width(settled) * 0.9  # rapetisse en sortant

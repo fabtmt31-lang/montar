@@ -55,7 +55,7 @@ class ClipSpec:
     preset: str = ""
     preset_amount: float = 1.0
     effects: Effects = field(default_factory=Effects)
-    animation_in: str = "none"  # textes : none | fade | slide
+    animation_in: str = "none"  # textes : voir TextStyle.animation_in
     animation_out: str = "none"
     extra_filters: tuple[tuple[str, dict], ...] = ()  # filtres ajoutés par des modules
     audio_filters: tuple[tuple[str, dict], ...] = ()  # filtres audio des modules
@@ -71,6 +71,10 @@ class ClipSpec:
     grade: Grade = field(default_factory=Grade)  # étalonnage avancé
     lut: str = ""  # chemin absolu de la LUT de l'étalonnage
     key: str = ""  # identifiant du clip dans le projet (corrections de la finition)
+    # textes : durée des animations (0 : une demi-seconde), centre du texte dans la toile
+    animation_in_frames: int = 0
+    animation_out_frames: int = 0
+    anchor: tuple[float, float] = (0.5, 0.5)
 
 
 @dataclass(frozen=True)
@@ -141,10 +145,11 @@ TransitionHook = Callable[[str, int], tuple[str, dict] | None]
 
 
 def _clip_spec(clip: Clip, path: str, kind: str, size: tuple[int, int],
-               override: ClipOverride | None = None, media_length: int = 0) -> ClipSpec:
+               override: ClipOverride | None = None, media_length: int = 0,
+               fps: int = 25) -> ClipSpec:
     text = clip.text
     o = override or ClipOverride()
-    return ClipSpec(
+    spec = ClipSpec(
         o.path or path, kind, clip.start, clip.duration,
         clip.source_in if o.source_in is None else o.source_in,
         clip.speed if o.speed is None else o.speed, clip.volume,
@@ -155,6 +160,12 @@ def _clip_spec(clip: Clip, path: str, kind: str, size: tuple[int, int],
         clip.reverse and o.path is None, media_length, (),
         tuple(sorted((k, tuple((float(f), float(v)) for f, v in points))
                      for k, points in clip.keyframes.items() if points)), key=clip.id)
+    if text is None:
+        return spec
+    return dataclasses.replace(
+        spec, animation_in_frames=max(1, round(text.animation_in_duration * fps)),
+        animation_out_frames=max(1, round(text.animation_out_duration * fps)),
+        anchor=(text.x, text.y))
 
 
 def timeline_spec(project: Project, text_image: TextImage | None = None,
@@ -184,7 +195,7 @@ def timeline_spec(project: Project, text_image: TextImage | None = None,
             if c.is_text:
                 if text_image is None:
                     continue
-                spec = _clip_spec(c, text_image(c, w, h), "text", (w, h))
+                spec = _clip_spec(c, text_image(c, w, h), "text", (w, h), fps=project.fps)
                 if c.text.animation_in == "typewriter" and text_sequence is not None:
                     spec = dataclasses.replace(spec, sequence=tuple(text_sequence(c, w, h)))
             else:
@@ -231,7 +242,8 @@ def timeline_spec(project: Project, text_image: TextImage | None = None,
         for sub in ordered(project):
             if sub.text.strip() and sub.end > sub.start:
                 c = text_clip(sub, project.subtitle_style)
-                clips.append(_clip_spec(c, text_image(c, w, h), "text", (w, h)))
+                clips.append(_clip_spec(c, text_image(c, w, h), "text", (w, h),
+                                        fps=project.fps))
         # un sous-titre qui chevauche le précédent attend sa fin ; aucun ne rallonge la vidéo
         last = max((c.start + c.duration for t in tracks for c in t.clips), default=0)
         cleaned, end = [], 0

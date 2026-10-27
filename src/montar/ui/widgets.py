@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QButtonGroup,
     QComboBox,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -99,12 +100,14 @@ class Segmented(QFrame):
     changed = pyqtSignal(str)
 
     def __init__(self, options: Sequence[tuple[str, str]], current: str | None = None,
-                 parent: QWidget | None = None, compact: bool = False) -> None:
+                 parent: QWidget | None = None, compact: bool = False,
+                 columns: int = 0) -> None:
         super().__init__(parent)
         self.setObjectName("Segmented")
         if compact:  # se partage la largeur disponible au lieu d'imposer la sienne
             self.setProperty("compact", True)
-        layout = QHBoxLayout(self)
+        # `columns` : choix sur plusieurs lignes (beaucoup d'options dans un volet étroit)
+        layout = QGridLayout(self) if columns else QHBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(2)
         self._group = QButtonGroup(self)
@@ -118,7 +121,11 @@ class Segmented(QFrame):
             if compact:
                 shrink(btn)
             self._group.addButton(btn)
-            layout.addWidget(btn)
+            if columns:
+                index = len(self._buttons)
+                layout.addWidget(btn, index // columns, index % columns)
+            else:
+                layout.addWidget(btn)
             self._buttons[key] = btn
         self.set_current(current or options[0][0])
 

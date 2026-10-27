@@ -135,6 +135,8 @@ def _profile(canvas: Canvas):
     return profile
 
 
+# animations de texte qui déplacent ou agrandissent le texte (filtre « affine »)
+TEXT_MOTIONS = {"slide", "slide_top", "slide_left", "slide_right", "zoom", "pop"}
 MOTION = "montar.zoom"  # montar.api.ZOOM : zoom animé du cadre du clip
 
 
@@ -456,7 +458,8 @@ class _TimelineGraph:
         motions = [props for name, props in clip.extra_filters if name == MOTION] \
             if clip.kind in ("video", "image") else []
         keys = dict(clip.keyframes) if clip.kind in ("video", "image") else {}
-        animated = clip.kind == "text" and "slide" in (clip.animation_in, clip.animation_out)
+        animated = clip.kind == "text" and bool(
+            {clip.animation_in, clip.animation_out} & TEXT_MOTIONS)
         if keys:  # images clés : cadre, opacité et rotation animés
             self._attach_keyframed(producer, clip, keys, motions, span)
         elif not t.is_identity() or animated or motions:
@@ -464,7 +467,7 @@ class _TimelineGraph:
             opacity = 1  # l'opacité du cadre affine est ignorée par MLT : filtre à part
             rect = f"{x:g} {y:g} {w:g} {h:g} {opacity:g}"
             if animated:
-                rect = self._slide_rect(clip, x, y, w, h, 1.0)
+                rect = self._text_motion_rect(clip, x, y, w, h)
             elif motions:  # zoom autour du centre du cadre
                 cx, cy = x + w / 2, y + h / 2
                 rect = ";".join(
@@ -485,9 +488,11 @@ class _TimelineGraph:
                          {"level": 1, "alpha": max(0.0, min(1.0, t.opacity))}, span)
         fade_in, fade_out = clip.fade_in, clip.fade_out
         if clip.kind == "text":
-            step = max(1, self.canvas.fps // 2)
-            fade_in = max(fade_in, step if clip.animation_in in ("fade", "slide") else 0)
-            fade_out = max(fade_out, step if clip.animation_out in ("fade", "slide") else 0)
+            fades = TEXT_MOTIONS | {"fade"}
+            if clip.animation_in in fades:
+                fade_in = max(fade_in, self._text_frames(clip, "in"))
+            if clip.animation_out in fades:
+                fade_out = max(fade_out, self._text_frames(clip, "out"))
         points = _fade_points(clip.duration, fade_in, fade_out, 0.0, 1.0)
         if points is not None:
             self._attach(producer, "brightness", {"level": _anim(points), "alpha": -1}, span)
@@ -521,20 +526,54 @@ class _TimelineGraph:
                  else clip.transform.rotation}
         self._attach(producer, "affine", props, span)
 
-    def _slide_rect(self, clip: ClipSpec, x: float, y: float, w: float, h: float,
-                    opacity: float) -> str:
-        step = max(1, self.canvas.fps // 2)
-        offset = self.canvas.height * 0.06
-        final = f"{x:g} {y:g} {w:g} {h:g} {opacity:g}"
-        moved = f"{x:g} {y + offset:g} {w:g} {h:g} {opacity:g}"
-        points = []
-        if clip.animation_in == "slide":
-            points += [f"0={moved}", f"{min(step, clip.duration - 1)}={final}"]
-        else:
-            points.append(f"0={final}")
-        if clip.animation_out == "slide" and clip.duration > 2 * step:
-            points += [f"{clip.duration - step - 1}={final}", f"{clip.duration - 1}={moved}"]
-        return ";".join(points)
+    def _text_frames(self, clip: ClipSpec, side: str) -> int:
+        """Durée de l'animation d'entrée ou de sortie (au plus la moitié du clip)."""
+        frames = clip.animation_in_frames if side == "in" else clip.animation_out_frames
+        frames = frames or max(1, self.canvas.fps // 2)
+        return max(1, min(frames, clip.duration // 2 if clip.duration > 2 else 1))
+
+    def _text_motion_rect(self, clip: ClipSpec, x: float, y: float, w: float,
+                          h: float) -> str:
+        """Cadre animé d'un texte : il arrive (ou part) en glissant, en zoomant ou en
+        rebondissant, avec un ralenti en fin de mouvement."""
+        cw, ch = self.canvas.width, self.canvas.height
+        ax, ay = clip.anchor[0] * cw, clip.anchor[1] * ch  # centre du texte
+
+        def frame_at(kind: str, amount: float) -> tuple[float, float, float, float]:
+            """Cadre quand l'animation `kind` est à `amount` (0 : départ, 1 : en place)."""
+            if kind in ("zoom", "pop"):
+                if kind == "zoom":
+                    k = 0.6 + 0.4 * amount
+                else:  # grossit un peu trop puis revient
+                    k = 0.4 + 0.8 * amount if amount < 0.7 else 1.12 - 0.12 * (amount - 0.7) / 0.3
+                return ax - (ax - x) * k, ay - (ay - y) * k, w * k, h * k
+            dx, dy = {"slide": (0, 0.06 * ch), "slide_top": (0, -0.06 * ch),
+                      "slide_left": (-0.12 * cw, 0), "slide_right": (0.12 * cw, 0)}[kind]
+            rest = 1 - amount
+            return x + dx * rest, y + dy * rest, w, h
+
+        def ease(t: float) -> float:
+            return 1 - (1 - t) ** 3
+
+        last = max(0, clip.duration - 1)
+        points: dict[int, tuple[float, float, float, float]] = {0: (x, y, w, h)}
+        if clip.animation_in in TEXT_MOTIONS:
+            n = self._text_frames(clip, "in")
+            amounts = [(0, 0.0)] + [(f, f / n) for f in range(2, n, 2)] + [(n, 1.0)]
+            for f, a in amounts:
+                curve = a if clip.animation_in == "pop" else ease(a)
+                points[min(f, last)] = frame_at(clip.animation_in, curve)
+        if clip.animation_out in TEXT_MOTIONS and clip.duration > 2:
+            n = self._text_frames(clip, "out")
+            first = last - n
+            if first not in points:
+                points[first] = (x, y, w, h)
+            for f in [*range(first + 2, last, 2), last]:
+                p = (f - first) / n  # 0 → 1 : il s'en va, de plus en plus vite
+                points[f] = frame_at(clip.animation_out,
+                                     1 - p if clip.animation_out == "pop" else 1 - p ** 3)
+        return ";".join(f"{f}={r[0]:.2f} {r[1]:.2f} {r[2]:.2f} {r[3]:.2f} 1"
+                        for f, r in sorted(points.items()))
 
     def _audio_filters(self, producer, clip: ClipSpec, span: tuple[int, int]) -> None:
         if clip.kind in ("image", "text"):
