@@ -1,3 +1,17 @@
+montar (1.7.0) unstable; urgency=medium
+
+  * Enregistreur d'écran : webcam dans un coin (taille, rectangle ou rond) ou
+    en écran partagé, aperçu de la disposition ; fond de la webcam flouté ou
+    effacé (personne détourée sur l'ordinateur après l'enregistrement, modèle
+    MediaPipe « selfie segmenter », licence Apache 2.0).
+  * Choix du micro et test du niveau sonore avant d'enregistrer.
+  * Windows : la capture d'une fenêtre n'est plus noire (la zone qu'elle
+    occupe à l'écran est filmée).
+  * La webcam incrustée avait une taille faussée (calculée sur elle-même et
+    non sur l'écran) : corrigé.
+
+ -- Fabien <admin@appsdoc.fr>  Tue, 27 Oct 2026 15:00:00 +0100
+
 montar (1.6.0) unstable; urgency=medium
 
   * Timeline : sélection multiple (Ctrl + clic, rectangle, Ctrl+A) ; les

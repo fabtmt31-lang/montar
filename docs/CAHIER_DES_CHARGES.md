@@ -538,7 +538,8 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
 - ✅ textes (F-TXT-03) : animations d'entrée et de sortie dans quatre directions, zoom, rebond, durées réglables ; 28 modèles de titres et de bandeaux ;
 - ✅ transitions : 23 au total, dont 15 à motif (balayages, stores, ouvertures, cercle, losange…) ;
 - ✅ rail Éléments : graphismes, filtres et effets animés (vidéos transparentes calculées sur l'ordinateur) rangés en accordéon ;
-- ✅ aperçu plein écran avec commandes de lecture ; plantage au double-clic corrigé.
+- ✅ aperçu plein écran avec commandes de lecture ; plantage au double-clic corrigé ;
+- ✅ enregistreur d'écran (version 1.7, F-MED-06) : webcam dans un coin ou en écran partagé, taille et forme réglables, fond flouté ou effacé (détourage local, modèle MediaPipe exécuté par NumPy), choix et test du micro ; capture de fenêtre sous Windows par sa zone à l'écran (plus d'image noire).
 
 **Suite prévue** : Flatpak, `.rpm`, arm64 ; dépôt APT signé ; signature de l'installeur Windows.
 

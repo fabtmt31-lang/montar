@@ -27,6 +27,16 @@ projet.
 - la finition peut être **vue et écoutée dans l'aperçu** de l'éditeur ; les préréglages
   personnels sont enregistrés dans `~/.config/montar/finition.json`.
 
+**Version 1.7** (1.7.0) : enregistreur d'écran.
+
+- **webcam** : dans un coin (taille réglable, rectangle ou rond) ou en **écran partagé**
+  (à gauche ou à droite), avec un aperçu de la disposition ; **fond flouté ou effacé** : la
+  personne est détourée sur l'ordinateur après l'enregistrement (modèle « selfie
+  segmenter » de MediaPipe, exécuté par montar lui-même, sans rien à installer) ;
+- **micro au choix** et bouton **Tester** (niveau sonore en direct) ;
+- Windows : la capture d'une **fenêtre** n'est plus noire (navigateurs, applications
+  modernes) ; réglages gardés d'un enregistrement à l'autre.
+
 **Version 1.6** (1.6.0) : montage plus rapide, textes, transitions et éléments.
 
 - timeline : **sélection multiple** (Ctrl + clic, rectangle tracé dans un espace vide,

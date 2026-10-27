@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Enregistreur d'écran (F-MED-06)."""
+import dataclasses
 import shutil
 import subprocess
 import time
+from pathlib import Path
 
 import pytest
 
@@ -153,10 +155,19 @@ def test_command_on_windows(monkeypatch):
                                           microphone=False), "z.mp4"))
     assert ":offset_x=10:offset_y=20:video_size=300x200" in zone
 
-    # fenêtre : par son titre
+    # fenêtre : la zone qu'elle occupe sur le bureau (filmée seule, elle sortait noire)
+    monkeypatch.setattr(recorder, "window_rect", lambda title: (100, 80, 801, 600))
     window = " ".join(command(RecordOptions(source="window", window_title="Bloc-notes",
                                             microphone=False), "w.mp4"))
-    assert "-f gdigrab" in window and "-i title=Bloc-notes" in window
+    assert "-f gdigrab" in window and "-i desktop" in window
+    assert "-offset_x 100 -offset_y 80 -video_size 800x600" in window
+    monkeypatch.setattr(recorder, "window_rect", lambda title: None)  # fenêtre introuvable
+    window = " ".join(command(RecordOptions(source="window", window_title="Bloc-notes",
+                                            microphone=False), "w.mp4"))
+    assert "-i title=Bloc-notes" in window
+    # micro choisi
+    chosen = " ".join(command(RecordOptions(microphone_device="Casque USB"), "m.mp4"))
+    assert "-i audio=Casque USB" in chosen
 
     # son de l'ordinateur : entrée « Mixage stéréo » si Windows la propose
     assert not recorder.can_record_system_audio()
@@ -179,3 +190,99 @@ def test_physical_region():
             return 1.5
 
     assert physical_region(Screen(), QRect(10, 20, 200, 100)) == (15, 30, 300, 150)
+
+
+def test_webcam_layouts_and_processed_parts(monkeypatch):
+    monkeypatch.setattr(recorder, "ON_WINDOWS", False)
+    base = dict(geometry=(0, 0, 1280, 720), microphone=False, webcam="/dev/video0")
+    # coin choisi, taille réglable (part de la largeur de l'écran)
+    line = " ".join(command(RecordOptions(**base, webcam_position="top_left",
+                                          webcam_size=0.3), "a.mp4"))
+    assert "scale2ref=w=trunc(iw*0.3/2)*2" in line and "overlay=24:24" in line
+    rond = " ".join(command(RecordOptions(**base, webcam_shape="round"), "r.mp4"))
+    assert "geq=" in rond and "hypot" in rond
+    # écran partagé : écran réduit d'un côté, webcam recadrée de l'autre
+    split = " ".join(command(RecordOptions(**base, webcam_position="split_left",
+                                           webcam_size=0.4), "s.mp4"))
+    assert "pad=" in split and "overlay=0:0" in split and "crop=" in split
+    # micro choisi (PulseAudio)
+    mic = " ".join(command(RecordOptions(geometry=(0, 0, 640, 360),
+                                         microphone_device="alsa_input.usb"), "m.mp4"))
+    assert "-f pulse -i alsa_input.usb" in mic
+    # fond flouté ou effacé : deux fichiers, assemblés après l'enregistrement
+    options = RecordOptions(**base, webcam_background="blur")
+    cmd = command(options, "/tmp/rec.mp4")
+    screen_part, cam_part = recorder.parts("/tmp/rec.mp4")
+    assert screen_part in cmd and cam_part in cmd and "/tmp/rec.mp4" not in cmd
+    compose = " ".join(recorder.compose_command(options, screen_part, cam_part, "m.mkv",
+                                                "/tmp/rec.mp4", (1280, 720)))
+    assert "alphamerge" in compose and "gblur=sigma=18" in compose and "0:a?" in compose
+    removed = " ".join(recorder.compose_command(
+        dataclasses.replace(options, webcam_background="remove"), screen_part, cam_part,
+        "m.mkv", "/tmp/rec.mp4", (1280, 720)))
+    assert "alphamerge" in removed and "gblur=sigma=18" not in removed
+
+
+def test_pactl_sources():
+    listing = """Source #0
+	Name: alsa_output.pci.analog-stereo.monitor
+	Description: Monitor of Built-in Audio
+Source #1
+	Name: alsa_input.usb-Blue.analog-stereo
+	Description: Blue Yeti
+"""
+    assert recorder.parse_pactl_sources(listing) == [("alsa_input.usb-Blue.analog-stereo",
+                                                      "Blue Yeti")]
+
+
+def _person(np):
+    """Silhouette simple (cheveux, visage, cou, épaules) sur un fond dégradé, 256 × 144."""
+    h, w = 144, 256
+    y, x = np.mgrid[0:h, 0:w]
+    image = np.zeros((h, w, 3), np.uint8)
+    image[...] = np.stack([127 + x * 0.3, 156 + y * 0.1, 176 - x * 0.1], -1).astype(np.uint8)
+    image[30:90, 20:60] = (90, 62, 43)  # meuble
+    shoulders = ((x - 128) / 50) ** 2 + ((y - 140) / 45) ** 2 <= 1
+    face = ((x - 128) / 25) ** 2 + ((y - 59) / 31) ** 2 <= 1
+    neck = (abs(x - 128) <= 12) & (y >= 80) & (y <= 104)
+    hair = ((x - 128) / 28) ** 2 + ((y - 35) / 15) ** 2 <= 1
+    image[shoulders] = (43, 76, 126)
+    image[neck | face] = (224, 177, 140)
+    image[hair] = (59, 42, 26)
+    return image
+
+
+def test_segmenter_finds_the_person():
+    np = pytest.importorskip("numpy")
+    from montar.media.segment import Segmenter
+
+    seg = Segmenter()
+    assert (seg.width, seg.height) == (256, 144)
+    mask = seg.mask(_person(np))
+    assert mask.shape == (144, 256) and 0 <= mask.min() and mask.max() <= 1
+    assert mask[60, 128] > 0.8 and mask[125, 128] > 0.8  # visage, épaules
+    assert mask[10, 240] < 0.2 and mask[60, 40] < 0.2  # fond, meuble
+
+
+def test_finisher_blurs_webcam_background(tmp_path):
+    np = pytest.importorskip("numpy")
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg absent")
+    target = tmp_path / "rec.mp4"
+    screen_part, cam_part = recorder.parts(str(target))
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                    "testsrc=s=320x180:r=25:d=1", "-f", "lavfi", "-i", "sine=d=1",
+                    "-c:v", "libx264", "-c:a", "aac", screen_part], check=True)
+    frame = tmp_path / "person.raw"
+    frame.write_bytes(_person(np).tobytes())
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
+                    "-s", "256x144", "-i", str(frame), "-vf", "loop=24:1,setpts=N/25/TB",
+                    "-r", "25", "-c:v", "libx264", "-pix_fmt", "yuv420p", cam_part],
+                   check=True)
+    options = RecordOptions(webcam="cam", webcam_background="remove", fps=25,
+                            webcam_position="split_right", webcam_size=0.4)
+    job = recorder.Finisher(options, target, 1.0)
+    job.start()
+    assert job.wait(120) and not job.error, job.error
+    assert target.exists() and not Path(cam_part).exists() and not Path(screen_part).exists()
+    assert _duration(target) == pytest.approx(1.0, abs=0.3)

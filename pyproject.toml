@@ -23,7 +23,7 @@ version = { attr = "montar.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-montar = ["assets/fonts/*", "assets/icons/*", "locale/*.json", "modules/*/module.json",
+montar = ["assets/fonts/*", "assets/icons/*", "assets/models/*", "locale/*.json", "modules/*/module.json",
           "modules/*/locale/*.json", "modules/*/svg/*.svg"]
 
 [tool.pytest.ini_options]

@@ -54,7 +54,7 @@ from montar.media.probe import (
     probe,
 )
 from montar.media.proxies import existing_proxy, needs_proxy, proxy_size
-from montar.media.recorder import Recorder, pick_window, session_problem
+from montar.media.recorder import Finisher, Recorder, pick_window, session_problem
 from montar.media.store import is_inside
 from montar.media.thumbnails import thumbnail_path
 from montar.media.waveform import waveform_path
@@ -326,6 +326,7 @@ class EditorPage(QWidget):
         self._merge_pending: dict[str, list[str]] = {}  # rendu → clips qu'il remplace
         self._merge_job: list[str] | None = None  # clips en cours d'unification
         self._animated_job: tuple[str, int] | None = None  # effet animé : (fichier, début)
+        self._recording_job = False  # fond de la webcam en cours de traitement
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
         self._save_timer.setInterval(800)
@@ -919,11 +920,15 @@ class EditorPage(QWidget):
         if job is not None:
             name = Path(self._export_settings.path).name if self._export_settings else ""
             title = _("Export de {name}").format(name=name)
+            phase = getattr(job, "phase", "")
             if self._merge_job is not None:
                 title = _("Unification des clips")
             elif self._animated_job is not None:
                 title = _("Préparation de l'effet animé")
-            phase = getattr(job, "phase", "")
+            elif self._recording_job:
+                title = _("Détourage de la webcam") if phase == "masks" else \
+                    _("Assemblage de l'enregistrement")
+                phase = ""
             if phase:  # export avec la finition : étape en cours
                 title += " — " + {"analyse": _("1. Analyse du projet"),
                                    "render": _("2. Rendu avec finition"),
@@ -1118,7 +1123,18 @@ class EditorPage(QWidget):
         window.activateWindow()
         if recorder is None or not recorder.started:
             return
-        if recorder.stop():
+        seconds = recorder.elapsed
+        if recorder.stop() and recorder.options.processed:
+            # fond de la webcam flouté ou effacé : détourage puis assemblage, en tâche de fond
+            self._recording_job = True
+            self._export_job = Finisher(recorder.options, recorder.target, seconds)
+            self._export_settings = None
+            self._export_started = time.monotonic()
+            self._export_job.start()
+            self._export_timer.start()
+            self.export_button.setEnabled(False)
+            self._update_jobs()
+        elif recorder.error == "":
             self.import_files([str(recorder.target)])
             self.recordingFinished.emit(str(recorder.target))
         else:
@@ -1126,6 +1142,20 @@ class EditorPage(QWidget):
             QMessageBox.warning(self, _("Enregistrer l'écran"),
                                 _("L'enregistrement a échoué : {error}").format(
                                     error=recorder.error))
+
+    def _recording_finished(self, job) -> None:
+        if not job.error:
+            self.import_files([str(job.target)])
+            self.recordingFinished.emit(str(job.target))
+            return
+        kept = job.fallback
+        if kept is not None:  # l'écran et le son restent, sans la webcam
+            self.import_files([str(kept)])
+        self.recordingFinished.emit(str(kept or ""))
+        if not job.cancelled:
+            QMessageBox.warning(self, _("Enregistrer l'écran"), _(
+                "Le fond de la webcam n'a pas pu être traité : {error}. L'écran et le son "
+                "ont été gardés.").format(error=job.error))
 
     # --- notifications ----------------------------------------------------------------------
 
@@ -1624,10 +1654,14 @@ class EditorPage(QWidget):
         self._export_job = None
         merged, self._merge_job = self._merge_job, None
         animated, self._animated_job = self._animated_job, None
+        recording, self._recording_job = self._recording_job, False
         self.export_button.setEnabled(True)
         self._update_jobs()
         if merged is not None:
             self._merge_rendered(job, merged)
+            return
+        if recording:
+            self._recording_finished(job)
             return
         if animated is not None:
             if job.error and not job.cancelled:

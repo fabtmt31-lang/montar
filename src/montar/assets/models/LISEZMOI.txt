@@ -1,0 +1,9 @@
+selfie_segmenter_landscape.tflite
+---------------------------------
+Modèle « Selfie segmenter (landscape) » de MediaPipe (Google), licence Apache 2.0 :
+https://ai.google.dev/edge/mediapipe/solutions/vision/image_segmenter
+https://www.apache.org/licenses/LICENSE-2.0
+
+montar l'exécute lui-même (montar/media/segment.py, avec NumPy) pour séparer la personne
+filmée par la webcam de son fond (flou ou effacement du fond à l'enregistrement d'écran).
+Fichier non modifié.

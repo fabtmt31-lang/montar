@@ -2437,3 +2437,60 @@ def test_elements_panel_accordion_and_animated_effect(window, media_dir):
     # même effet une seconde fois : le fichier déjà préparé est réutilisé
     editor.insert_animated("pinceau")
     assert len([m for m in editor.project.media if m.path == str(path)]) == 1
+
+
+@needs_ffmpeg
+def test_recorder_dialog_and_processed_webcam(window, media_dir, monkeypatch, tmp_path):
+    pytest.importorskip("numpy")
+    import shutil as _shutil
+
+    import montar.ui.dialogs.recorder as dialog_module
+    from montar.media import recorder as recorder_module
+
+    monkeypatch.setattr(dialog_module, "webcams", lambda: ["/dev/video0"])
+    monkeypatch.setattr(dialog_module, "microphones", lambda: [("usb", "Micro USB")])
+    dialog = dialog_module.RecorderDialog()
+    assert dialog.webcam_box.isHidden()  # pas de webcam : pas de réglages
+    dialog.webcam.setCurrentIndex(1)
+    dialog.mic_device.setCurrentIndex(1)
+    dialog.place.setCurrentIndex(dialog.place.findData("split_left"))
+    dialog.cam_size.setValue(40)
+    dialog.background.set_current("remove")
+    dialog._webcam_changed()
+    assert not dialog.webcam_box.isHidden() and dialog.shape.isHidden()  # partagé : pas rond
+    options = dialog.options()
+    assert (options.microphone_device, options.webcam_position, options.webcam_size,
+            options.webcam_background) == ("usb", "split_left", 0.4, "remove")
+    assert options.processed and dialog.preview.options.webcam_position == "split_left"
+    dialog.test_button.setChecked(True)  # test du micro (sans micro ici : pas de plantage)
+    pump(300)
+    dialog.done(QDialog.DialogCode.Accepted)
+    assert dialog._meter is None and dialog_module.RecorderDialog.last == options
+    again = dialog_module.RecorderDialog()  # réglages repris au prochain enregistrement
+    assert again.place.currentData() == "split_left" and again.cam_size.value() == 40
+    dialog_module.RecorderDialog.last = None
+
+    # enregistrement « fond effacé » : écran et webcam à part, puis assemblage
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    target = editor.project.media_dir / "Enregistrement webcam.mp4"
+
+    def fake_command(self):
+        screen_part, cam_part = recorder_module.parts(str(self.target))
+        ff = _shutil.which("ffmpeg")
+        return [ff, "-v", "error", "-y", "-re", "-f", "lavfi", "-i",
+                "testsrc=s=320x180:r=25", "-re", "-f", "lavfi", "-i",
+                "testsrc2=s=320x240:r=25", "-map", "0:v", "-c:v", "libx264",
+                "-preset", "ultrafast", screen_part, "-map", "1:v", "-c:v", "libx264",
+                "-preset", "ultrafast", cam_part]
+
+    monkeypatch.setattr(recorder_module.Recorder, "_command", fake_command)
+    results = []
+    editor.recordingFinished.connect(results.append)
+    editor.start_recording(dataclasses.replace(options, fps=25), target, countdown=0)
+    pump(1500)
+    editor.stop_recording()
+    assert editor._recording_job and editor.busy.isVisible()
+    assert wait_until(lambda: results, 120)
+    assert results == [str(target)] and target.exists()
+    assert wait_until(lambda: any(m.path == str(target) for m in editor.project.media))
+    assert not list(target.parent.glob("*.webcam.mkv"))
