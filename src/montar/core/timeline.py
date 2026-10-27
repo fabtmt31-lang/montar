@@ -254,6 +254,27 @@ class Timeline:
         clip.start = self.free_start(track.id, start, clip.duration, ignore=clip.id)
         return clip
 
+    def move_clips(self, clip_ids: list[str], delta: int) -> list[Clip]:
+        """Décale ensemble plusieurs clips (sélection multiple), chacun sur sa piste ; refusé
+        si l'un d'eux arrive avant le début ou sur un autre clip."""
+        group = set(clip_ids)
+        clips = [self.clip(cid) for cid in clip_ids]
+        if not clips or delta == 0:
+            return clips
+        if min(c.start for c in clips) + delta < 0:
+            raise TimelineError("les clips ne peuvent pas commencer avant le début")
+        for c in clips:
+            start, end = c.start + delta, c.end + delta
+            for other in self.clips_on(c.track_id):
+                if other.id not in group and other.start < end and start < other.end:
+                    raise TimelineError("la place est déjà occupée")
+        for c in clips:  # les transitions vers un clip resté en place disparaissent
+            for t in self.transitions_of(c.id):
+                if not {t.left_id, t.right_id} <= group:
+                    self.project.transitions.remove(t)
+            c.start += delta
+        return clips
+
     def trim_bounds(self, clip_id: str, edge: str) -> tuple[int, int]:
         """Positions possibles du bord `edge` ("start" ou "end") du clip."""
         clip = self.clip(clip_id)
@@ -641,34 +662,85 @@ class Timeline:
         """Décale de `delta` les clips de la piste commençant à `frame` ou après."""
         self._shift_from(track_id, frame, delta, ignore)
 
+    def _pieces(self, a: Clip, b: Clip) -> bool:
+        """`b` est-il la suite exacte de `a` (même média, mêmes réglages, vitesse normale) ?"""
+        keep = ("id", "start", "duration", "source_in", "fade_in", "fade_out")
+        fields_a = {k: v for k, v in a.__dict__.items() if k not in keep}
+        fields_b = {k: v for k, v in b.__dict__.items() if k not in keep}
+        return (fields_a == fields_b and a.speed == 1.0 and not a.reverse and not a.is_text
+                and not a.modules and not a.keyframes and a.end == b.start
+                and a.source_in + a.duration == b.source_in
+                and self.transition_after(a.id) is None)
+
+    def _absorb(self, left: Clip, right: Clip) -> Clip:
+        after = self.transition_after(right.id)
+        left.duration += right.duration
+        left.fade_out = right.fade_out
+        if after is not None:
+            after.left_id = left.id
+        self.project.clips.remove(right)
+        return left
+
     def merge_contiguous(self, clip_id: str) -> Clip:
         """Réunit le clip avec ses voisins s'ils sont la suite exacte du même média
         (mêmes réglages, vitesse normale) : l'inverse d'une coupe."""
         clip = self.clip(clip_id)
-
-        def same(a: Clip, b: Clip) -> bool:
-            keep = ("id", "start", "duration", "source_in", "fade_in", "fade_out")
-            fields_a = {k: v for k, v in a.__dict__.items() if k not in keep}
-            fields_b = {k: v for k, v in b.__dict__.items() if k not in keep}
-            return (fields_a == fields_b and a.speed == 1.0 and not a.is_text
-                    and not a.modules and a.end == b.start
-                    and a.source_in + a.duration == b.source_in
-                    and self.transition_after(a.id) is None)
-
         for side in ("left", "right"):
             other = self.neighbour(clip.id, side)
             if other is None:
                 continue
             left, right = (other, clip) if side == "left" else (clip, other)
-            if not same(left, right):
-                continue
-            after = self.transition_after(right.id)
-            left.duration += right.duration
-            left.fade_out = right.fade_out
-            if after is not None:
-                after.left_id = left.id
-            self.project.clips.remove(right)
-            clip = left
+            if self._pieces(left, right):
+                clip = self._absorb(left, right)
+        return clip
+
+    def merge_group(self, clip_ids: list[str]) -> list[Clip]:
+        """Clips à unifier, dans l'ordre : sur une même piste, chacun suivi du suivant sans
+        espace (bord à bord ou par une transition) ; TimelineError sinon."""
+        clips = sorted((self.clip(cid) for cid in dict.fromkeys(clip_ids)),
+                       key=lambda c: c.start)
+        if len(clips) < 2:
+            raise TimelineError("sélectionnez au moins deux clips qui se suivent")
+        if len({c.track_id for c in clips}) > 1:
+            raise TimelineError("les clips à unifier doivent être sur la même piste")
+        if any(c.is_text for c in clips):
+            raise TimelineError("les textes ne peuvent pas être unifiés")
+        on_track = self.clips_on(clips[0].track_id)
+        for a, b in zip(clips, clips[1:], strict=False):
+            t = self.transition_after(a.id)
+            touching = a.end == b.start or (t is not None and t.right_id == b.id)
+            if not touching or on_track.index(b) != on_track.index(a) + 1:
+                raise TimelineError("les clips doivent se suivre, sans espace entre eux")
+        return clips
+
+    def join_pieces(self, clip_ids: list[str]) -> Clip | None:
+        """Recolle, sans nouveau calcul, des morceaux consécutifs d'un même média (l'inverse
+        de coupes) ; None (rien n'est modifié) si les clips ne le sont pas."""
+        clips = self.merge_group(clip_ids)
+        if not all(self._pieces(a, b) for a, b in zip(clips, clips[1:], strict=False)):
+            return None
+        first = clips[0]
+        for other in clips[1:]:
+            self._absorb(first, other)
+        return first
+
+    def replace_with_media(self, clip_ids: list[str], media: MediaItem) -> Clip:
+        """Remplace des clips qui se suivent par un seul clip du média `media` (rendu de ces
+        clips), à la même place ; les transitions avec les clips voisins sont gardées."""
+        clips = self.merge_group(clip_ids)
+        track_id, start, end = clips[0].track_id, clips[0].start, clips[-1].end
+        if self.project.find_media(media.id) is None:
+            self.project.media.append(media)
+        clip = Clip(media.id, track_id, start, end - start)
+        before, after = self.transition_before(clips[0].id), self.transition_after(clips[-1].id)
+        if before is not None:
+            before.right_id = clip.id
+        if after is not None:
+            after.left_id = clip.id
+        for c in clips:
+            self._drop_transitions(c.id)
+            self.project.clips.remove(c)
+        self.project.clips.append(clip)
         return clip
 
     def _drop_transitions(self, clip_id: str) -> None:

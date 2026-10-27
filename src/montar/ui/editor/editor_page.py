@@ -34,6 +34,7 @@ from montar.core import keyframes, shortcuts, subtitles
 from montar.core.project import EXPORT_DIR, MediaItem, Project, ProjectError, new_id
 from montar.core.project_files import backup
 from montar.core.timecode import frames_to_timecode
+from montar.core.timeline import TimelineError
 from montar.engine.base import Engine, lut_path, timeline_spec
 from montar.engine.export import IMAGE_FORMATS, ExportSettings, human_size, retime
 from montar.engine.geometry import offset_for_center, placement
@@ -226,6 +227,7 @@ class EditorPage(QWidget):
         self.timeline.view.badge_provider = self.modules.badges
         self.timeline.view.applyRequested.connect(self.open_apply)
         self.timeline.voiceOverRequested.connect(self._voice_over_clicked)
+        self.timeline.mergeRequested.connect(self.merge_selected)
         self.timeline.maximizeToggled.connect(self.set_timeline_maximized)
         self.timeline.detachToggled.connect(self.set_timeline_detached)
         self._top = top
@@ -321,6 +323,8 @@ class EditorPage(QWidget):
         # fichier → (début, sous la vidéo, logo du kit de marque)
         self._overlay_pending: dict[str, tuple[int, bool, bool]] = {}
         self._freeze_pending: dict[str, tuple[str, int]] = {}  # fichier → (clip, image)
+        self._merge_pending: dict[str, list[str]] = {}  # rendu → clips qu'il remplace
+        self._merge_job: list[str] | None = None  # clips en cours d'unification
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
         self._save_timer.setInterval(800)
@@ -472,6 +476,8 @@ class EditorPage(QWidget):
             "delete": lambda: tl.delete(ripple=False),
             "ripple_delete": lambda: tl.delete(ripple=True),
             "duplicate": tl.duplicate,
+            "select_all": tl.view.select_all,
+            "merge": tl.merge,
             "export": self.open_export,
             "save": self.save,
             "undo": self.controller.undo,
@@ -906,7 +912,8 @@ class EditorPage(QWidget):
         busy = None
         if job is not None:
             name = Path(self._export_settings.path).name if self._export_settings else ""
-            title = _("Export de {name}").format(name=name)
+            title = _("Export de {name}").format(name=name) if self._merge_job is None \
+                else _("Unification des clips")
             phase = getattr(job, "phase", "")
             if phase:  # export avec la finition : étape en cours
                 title += " — " + {"analyse": _("1. Analyse du projet"),
@@ -1163,6 +1170,104 @@ class EditorPage(QWidget):
         still = self.controller.edit(_("Image fixe"), add)
         if still is not None:
             self.controller.select(still.id)
+
+    # --- unifier des clips --------------------------------------------------------------
+
+    def merge_selected(self) -> bool:
+        """Unifie les clips sélectionnés (même piste, sans espace entre eux) : des morceaux
+        d'un même média sont recollés tout de suite ; sinon les clips (avec leurs réglages,
+        effets et transitions) sont rendus dans un fichier de medias/ qui les remplace."""
+        title = _("Unifier les clips")
+        ids = [c.id for c in self.controller.selected_clips()]
+        timeline = self.controller.timeline
+        try:
+            clips = timeline.merge_group(ids)
+        except TimelineError as exc:
+            QMessageBox.information(self, title, _(str(exc)))
+            return False
+        if any(timeline.track(c.track_id).locked for c in clips):
+            QMessageBox.information(self, title, _("cette piste est verrouillée : "
+                                                   "déverrouillez-la d'abord"))
+            return False
+        before = len(self.project.clips)
+        joined = self.controller.edit(title, lambda t: t.join_pieces(ids))
+        if joined is not None or len(self.project.clips) != before:
+            self.controller.select(joined.id if joined is not None else None)
+            return True
+        if self._export_job is not None or self.modules.jobs.jobs \
+                or self.project.media_dir is None:
+            QMessageBox.information(self, title, _("Un calcul est déjà en cours : réessayez "
+                                                   "dès qu'il sera terminé."))
+            return False
+        track = timeline.track(clips[0].track_id)
+        lowest = timeline.first_track("video")
+        stamp = time.strftime("%Y-%m-%d %H-%M-%S")
+        cw, ch = self.project.canvas_size
+        if track.kind == "audio":
+            settings = ExportSettings(str(self.project.media_dir / f"{_('Clips unifiés')} "
+                                                                   f"{stamp}.wav"), "wav")
+        elif lowest is not None and track.id == lowest.id:
+            settings = ExportSettings(
+                str(self.project.media_dir / f"{_('Clips unifiés')} {stamp}.mp4"), "mp4",
+                width=cw, height=ch, fps=self.project.fps, quality="max")
+        else:  # piste superposée : la transparence autour des clips est gardée
+            settings = ExportSettings(
+                str(self.project.media_dir / f"{_('Clips unifiés')} {stamp}.mov"), "mov",
+                width=cw, height=ch, fps=self.project.fps,
+                custom=(("f", "mov"), ("vcodec", "qtrle"), ("pix_fmt", "argb"),
+                        ("acodec", "pcm_s16le"), ("ar", 48000), ("channels", 2),
+                        ("mlt_image_format", "rgba")))
+        spec = self._merge_spec(clips, transparent=bool(settings.custom))
+        self._merge_job = [c.id for c in clips]
+        self._export_job = self._engine_factory().export(spec, settings)
+        self._export_settings = settings
+        self._export_started = time.monotonic()
+        self._export_job.start()
+        self._export_timer.start()
+        self.export_button.setEnabled(False)
+        self._update_jobs()
+        return True
+
+    def _merge_spec(self, clips: list, transparent: bool):
+        """Timeline réduite aux clips à unifier, sur leur seule piste, à partir de 0."""
+        sub = copy.deepcopy(self.project)
+        ids = {c.id for c in clips}
+        offset = clips[0].start
+        sub.clips = [c for c in sub.clips if c.id in ids]
+        for c in sub.clips:
+            c.start -= offset
+        sub.transitions = [t for t in sub.transitions if t.left_id in ids and t.right_id in ids]
+        sub.tracks = [t for t in sub.tracks if t.id == clips[0].track_id]
+        for t in sub.tracks:  # coupure, masquage et volume de la piste restent appliqués
+            t.muted, t.hidden, t.volume = False, False, 1.0
+        spec = timeline_spec(sub, self._text_image, self.modules.hook, None,
+                             self.modules.transition_hook, self._text_sequence,
+                             subtitles=False)
+        if transparent:
+            spec = dataclasses.replace(spec, canvas=dataclasses.replace(spec.canvas,
+                                                                        transparent=True))
+        return spec
+
+    def _merge_rendered(self, job, ids: list[str]) -> None:
+        target = Path(self._export_settings.path)
+        if job.cancelled:
+            return
+        if job.error:
+            QMessageBox.warning(self, _("Unifier les clips"),
+                                _("Le rendu des clips a échoué : {error}").format(
+                                    error=job.error))
+            return
+        self._merge_pending[str(target)] = ids
+        self.import_files([str(target)])
+
+    def _place_merged(self, item: MediaItem, thumb: str | None, ids: list[str]) -> None:
+        if thumb:
+            self.thumbnails[item.path] = thumb
+        self._ensure_derived(item)
+        clip = self.controller.edit(_("Unifier les clips"),
+                                    lambda t: t.replace_with_media(ids, item))
+        if clip is not None:
+            self.controller.select(clip.id)
 
     # --- graphismes ------------------------------------------------------------------------
 
@@ -1473,8 +1578,12 @@ class EditorPage(QWidget):
             return
         self._export_timer.stop()
         self._export_job = None
+        merged, self._merge_job = self._merge_job, None
         self.export_button.setEnabled(True)
         self._update_jobs()
+        if merged is not None:
+            self._merge_rendered(job, merged)
+            return
         self.exportFinished.emit(job.error)
         if job.cancelled:
             return
@@ -1833,6 +1942,8 @@ class EditorPage(QWidget):
                 errors.append(f"{Path(queued).name} : {error}")
             elif queued in self._freeze_pending:
                 self._place_freeze(item, *self._freeze_pending.pop(queued))
+            elif queued in self._merge_pending:
+                self._place_merged(item, thumb, self._merge_pending.pop(queued))
             elif queued in self._overlay_pending:
                 self._place_overlay(item, thumb, *self._overlay_pending.pop(queued))
             elif queued in self._voice_pending:

@@ -29,7 +29,9 @@ class EditorController(QObject):
         self.project = project
         self.timeline = Timeline(project)
         self.history = History()
-        self.selected: str | None = None
+        self.selected: str | None = None  # clip principal (inspecteur, aperçu)
+        # tous les clips sélectionnés (Ctrl + clic, rectangle), le principal compris
+        self.selection: list[str] = []
         self.selected_transition: str | None = None
         self.live = False
         self.live_preview = False
@@ -81,8 +83,11 @@ class EditorController(QObject):
             self._after_change()
 
     def _after_change(self) -> None:
-        if self.selected and not any(c.id == self.selected for c in self.project.clips):
-            self.select(None)
+        ids = {c.id for c in self.project.clips}
+        if any(cid not in ids for cid in self.selection):
+            kept = [cid for cid in self.selection if cid in ids]
+            primary = self.selected if self.selected in ids else (kept[-1] if kept else None)
+            self.select_many(kept, primary)
         if self.selected_transition and not any(
                 t.id == self.selected_transition for t in self.project.transitions):
             self.select_transition(None)
@@ -108,11 +113,38 @@ class EditorController(QObject):
             self.changed.emit()
 
     def select(self, clip_id: str | None) -> None:
-        if clip_id is not None:
+        self.select_many([clip_id] if clip_id is not None else [], clip_id)
+
+    def select_many(self, clip_ids: list[str], primary: str | None = None) -> None:
+        """Sélection de plusieurs clips ; `primary` (par défaut le dernier) est celui que
+        montrent l'inspecteur et l'aperçu."""
+        ids = list(dict.fromkeys(clip_ids))
+        if primary is None or primary not in ids:
+            primary = ids[-1] if ids else None
+        if ids:
             self.select_transition(None)
-        if clip_id != self.selected:
-            self.selected = clip_id
-            self.selectionChanged.emit(clip_id)
+        changed = ids != self.selection
+        self.selection = ids
+        if primary != self.selected or changed:
+            self.selected = primary
+            self.selectionChanged.emit(primary)
+
+    def toggle_selected(self, clip_id: str) -> None:
+        """Ctrl + clic : ajoute le clip à la sélection ou l'en retire."""
+        if clip_id in self.selection:
+            ids = [c for c in self.selection if c != clip_id]
+            self.select_many(ids, self.selected if self.selected != clip_id else None)
+        else:
+            self.select_many([*self.selection, clip_id], clip_id)
+
+    def is_selected(self, clip_id: str) -> bool:
+        return clip_id in self.selection
+
+    def selected_clips(self) -> list[Clip]:
+        """Clips sélectionnés, dans l'ordre de la timeline."""
+        chosen = set(self.selection)
+        return sorted((c for c in self.project.clips if c.id in chosen),
+                      key=lambda c: (c.start, c.track_id))
 
     def select_transition(self, transition_id: str | None) -> None:
         if transition_id is not None:

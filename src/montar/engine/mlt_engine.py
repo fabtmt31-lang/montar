@@ -235,7 +235,8 @@ class _TimelineGraph:
         self.nodes: dict[tuple[int, int], tuple[object, list, tuple[int, int], str]] = {}
         self._collect: list | None = None
 
-        background = mlt.Producer(self.profile, "color:black")
+        background = mlt.Producer(self.profile, "color:#00000000" if spec.canvas.transparent
+                                  else "color:black")
         background.set("length", max(1, self.length))
         background_track = mlt.Playlist(self.profile)
         background_track.append(background, 0, max(0, self.length - 1))

@@ -189,6 +189,64 @@ def test_timeline_editing_and_preview(window, media_dir):
 
 
 @needs_ffmpeg
+def test_timeline_multi_selection_and_merge(window, media_dir):
+    editor = imported_editor(window, media_dir, ["red.mp4", "blue.mp4"])
+    red, blue = editor.project.media
+    editor.add_to_timeline(red)  # 0–50
+    editor.add_to_timeline(blue)  # 50–100
+    view, controller = editor.timeline.view, editor.controller
+    view.snap = False
+    a, b = editor.project.clips
+    ctrl = Qt.KeyboardModifier.ControlModifier
+
+    def center(clip):
+        r = view.clip_rect(clip)
+        return QPoint(int(r.center().x()), int(r.center().y()))
+
+    # Ctrl + clic : ajoute puis retire de la sélection
+    QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=center(a))
+    QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, ctrl, center(b))
+    assert controller.selection == [a.id, b.id] and controller.selected == b.id
+    assert editor.timeline.merge_button.isEnabled()
+    QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, ctrl, center(b))
+    assert controller.selection == [a.id]
+
+    # rectangle tracé dans un espace vide : sélectionne les clips touchés
+    row = view.clip_rect(a)
+    below = QPoint(int(view.frame_to_x(110)), int(row.bottom()) + 4)
+    drag(view.viewport(), below, QPoint(int(view.frame_to_x(25)), int(row.center().y())))
+    assert set(controller.selection) == {a.id, b.id}
+
+    # les deux clips glissent ensemble
+    drag(view.viewport(), center(a), center(a) + QPoint(int(20 * view.ppf), 0))
+    assert (a.start, b.start) == (20, 70)
+    controller.undo()
+    a, b = editor.project.clips
+
+    # unifier deux morceaux d'un même média : recollés sans calcul
+    controller.select(a.id)
+    view.set_playhead(25)
+    editor.timeline.split()
+    first, second = sorted((c for c in editor.project.clips if c.media_id == red.id),
+                           key=lambda c: c.start)
+    controller.select_many([first.id, second.id])
+    QTest.keyClick(window, Qt.Key.Key_J, ctrl)
+    assert [c.duration for c in editor.project.clips if c.media_id == red.id] == [50]
+
+    # médias différents : rendu dans medias/ puis un seul clip à la place
+    controller.select_many([c.id for c in editor.project.clips])
+    editor.timeline.merge_button.click()
+    assert wait_until(lambda: len(editor.project.clips) == 1, 60)
+    merged = editor.project.clips[0]
+    media = editor.project.find_media(merged.media_id)
+    assert (merged.start, merged.duration) == (0, 100)
+    assert media.path.endswith(".mp4") and "medias" in media.path
+    assert controller.selected == merged.id
+    controller.undo()
+    assert len(editor.project.clips) == 2
+
+
+@needs_ffmpeg
 def test_remove_media_removes_its_clips(window, media_dir, monkeypatch):
     editor = imported_editor(window, media_dir, ["clip.mp4"])
     editor.add_to_timeline(editor.project.media[0])

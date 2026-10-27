@@ -480,3 +480,63 @@ def test_locked_track_refuses_changes(project):
     controller.edit("déverrou", lambda t: setattr(t.track(track_id), "locked", False))
     controller.edit("couper", lambda t: t.split(project.clips[0].id, 10))
     assert len(project.clips) == 3
+
+
+def test_move_several_clips_together(tl):
+    v, a = tl.first_track("video").id, tl.first_track("audio").id
+    x = tl.add_clip(media(tl, "image"), v, 0, duration=50)
+    y = tl.add_clip(media(tl, "audio"), a, 10, duration=50)
+    z = tl.add_clip(media(tl, "image"), v, 200, duration=50)
+    tl.move_clips([x.id, y.id], 40)  # chacun garde sa piste
+    assert (x.start, y.start, x.track_id, y.track_id) == (40, 50, v, a)
+    with pytest.raises(TimelineError):
+        tl.move_clips([x.id, y.id], 130)  # x arriverait sur z
+    with pytest.raises(TimelineError):
+        tl.move_clips([x.id, y.id], -50)  # avant le début
+    tl.move_clips([x.id, z.id], 10)  # z bouge aussi : pas de conflit avec lui-même
+    assert (x.start, z.start) == (50, 210)
+
+
+def test_merge_group_rules(tl):
+    v = tl.first_track("video").id
+    a = tl.add_clip(media(tl, "image"), v, 0, duration=50)
+    b = tl.add_clip(media(tl, "image"), v, 50, duration=50)
+    c = tl.add_clip(media(tl, "image"), v, 120, duration=50)  # espace avant c
+    s = tl.add_clip(media(tl, "audio"), tl.first_track("audio").id, 0, duration=50)
+    assert tl.merge_group([b.id, a.id]) == [a, b]
+    for ids in ([a.id], [a.id, c.id], [b.id, c.id], [a.id, s.id]):
+        with pytest.raises(TimelineError):
+            tl.merge_group(ids)
+
+
+def test_join_pieces_after_split(tl):
+    clip = tl.add_clip(media(tl, "video"))
+    second = tl.split(clip.id, 40)
+    third = tl.split(second.id, 70)
+    second.fade_in = 0
+    third.fade_out = 5
+    assert tl.join_pieces([clip.id, second.id, third.id]) is clip
+    assert (clip.start, clip.duration, clip.source_in, clip.fade_out) == (0, 100, 0, 5)
+    assert len(tl.project.clips) == 1
+    # médias différents : rien n'est recollé (il faudra un rendu)
+    other = tl.add_clip(media(tl, "image"), clip.track_id, 100, duration=25)
+    assert tl.join_pieces([clip.id, other.id]) is None and len(tl.project.clips) == 2
+
+
+def test_replace_with_media(tl):
+    v = tl.first_track("video").id
+    a = tl.add_clip(media(tl, "video"), v)  # 0–100
+    b = tl.add_clip(media(tl, "image"), v)  # 100–225
+    c = tl.add_clip(media(tl, "image"), v)  # 225–350
+    tl.add_transition(a.id, b.id, "dissolve", 20)  # b : 80–205, c : 205–330
+    out = tl.add_transition(b.id, c.id, "dissolve", 10)  # vers le voisin : gardée
+    from montar.core.project import MediaItem
+    rendered = MediaItem("/u.mp4", "video", duration=8.2, width=640, height=360, fps=25,
+                         id="unified")
+    merged = tl.replace_with_media([a.id, b.id], rendered)
+    assert (merged.start, merged.duration, merged.media_id) == (0, 205, "unified")
+    assert tl.project.find_media("unified") is rendered
+    assert [x.id for x in tl.clips_on(v)] == [merged.id, c.id]
+    assert tl.project.transitions == [out] and out.left_id == merged.id
+    tl.sanitize()  # toujours valide : le clip unifié couvre la même durée
+    assert tl.project.transitions == [out]

@@ -18,6 +18,7 @@ _SLIDER_STEPS = 1000
 
 class TimelinePanel(QFrame):
     voiceOverRequested = pyqtSignal()
+    mergeRequested = pyqtSignal()  # unifier les clips sélectionnés (rendu par la page)
     maximizeToggled = pyqtSignal(bool)  # timeline sur toute la hauteur de l'écran de montage
     detachToggled = pyqtSignal(bool)  # timeline dans une fenêtre à part (autre écran)
 
@@ -39,10 +40,15 @@ class TimelinePanel(QFrame):
         self.split_button = button("", "ghost", "scissors", tooltip=_("Couper (S)"))
         self.delete_button = button("", "ghost", "trash-2", tooltip=_("Supprimer (Suppr)"))
         self.duplicate_button = button("", "ghost", "copy", tooltip=_("Dupliquer (Ctrl+D)"))
+        self.merge_button = button("", "ghost", "link", tooltip=_(
+            "Unifier les clips sélectionnés en un seul (Ctrl+J) — sélection : Ctrl + clic ou "
+            "rectangle tracé à la souris"))
         self.split_button.clicked.connect(self.split)
         self.delete_button.clicked.connect(lambda: self.delete(ripple=False))
         self.duplicate_button.clicked.connect(self.duplicate)
-        for b in (self.split_button, self.delete_button, self.duplicate_button):
+        self.merge_button.clicked.connect(self.merge)
+        for b in (self.split_button, self.delete_button, self.duplicate_button,
+                  self.merge_button):
             bl.addWidget(b)
         bl.addSpacing(8)
         self.range_button = button("", "ghost", "brackets", tooltip=_(
@@ -153,6 +159,7 @@ class TimelinePanel(QFrame):
         has_selection = self.controller.selected_clip() is not None
         self.delete_button.setEnabled(has_selection)
         self.duplicate_button.setEnabled(has_selection)
+        self.merge_button.setEnabled(len(self.controller.selection) > 1)
         self.split_button.setEnabled(bool(self.controller.timeline.clips_at(self.view.playhead))
                                      or has_selection)
         self.isolate_button.setEnabled(self.view.valid_range() is not None)
@@ -170,19 +177,28 @@ class TimelinePanel(QFrame):
         self.controller.edit(_("Couper"), lambda t: t.split_at(playhead, target))
 
     def delete(self, ripple: bool = False) -> None:
-        clip_id = self.controller.selected
-        if clip_id is None:
+        ids = [c.id for c in self.controller.selected_clips()]
+        if not ids:
             return
         label = _("Supprimer et refermer l'espace") if ripple else _("Supprimer")
-        self.controller.edit(label, lambda t: t.delete(clip_id, ripple=ripple))
+
+        def operation(t):
+            for clip_id in reversed(ids):  # de la fin vers le début (refermer l'espace)
+                t.delete(clip_id, ripple=ripple)
+        self.controller.edit(label, operation)
 
     def duplicate(self) -> None:
-        clip_id = self.controller.selected
-        if clip_id is None:
+        ids = [c.id for c in self.controller.selected_clips()]
+        if not ids:
             return
-        copy_ = self.controller.edit(_("Dupliquer"), lambda t: t.duplicate(clip_id))
-        if copy_ is not None:
-            self.controller.select(copy_.id)
+        copies = self.controller.edit(_("Dupliquer"),
+                                      lambda t: [t.duplicate(clip_id) for clip_id in ids])
+        if copies:
+            self.controller.select_many([c.id for c in copies])
+
+    def merge(self) -> None:
+        if len(self.controller.selection) > 1:
+            self.mergeRequested.emit()
 
     def toggle_marker(self) -> None:
         frame = self.view.playhead

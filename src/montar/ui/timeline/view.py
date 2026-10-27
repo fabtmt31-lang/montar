@@ -59,7 +59,7 @@ class _Row:
 
 @dataclass
 class _Drag:
-    mode: str  # playhead | move | start | end | range | track | marker
+    mode: str  # playhead | move | start | end | range | track | marker | box
     clip_id: str | None = None
     press: QPoint | None = None
     offset: int = 0  # écart entre le début du clip et l'image saisie
@@ -68,6 +68,9 @@ class _Drag:
     duration: int = 0
     moved: bool = False
     insert_at: int | None = None  # nouvelle piste à cette position (déplacement)
+    group: tuple[str, ...] = ()  # autres clips sélectionnés, déplacés avec celui-ci
+    base: tuple[str, ...] = ()  # sélection de départ (rectangle avec Ctrl : on y ajoute)
+    current: QPoint | None = None  # coin courant du rectangle de sélection
 
 
 def set_icon_action(action, name: str) -> None:
@@ -260,12 +263,13 @@ class TimelineView(QAbstractScrollArea):
             painter.fillRect(QRect(HEADER_W, r.bottom(), w, 1), QColor(p.border))
         dragged = self._drag.clip_id if self._drag and self._drag.mode in (
             "move", "start", "end") and self._drag.moved else None
+        hidden = {dragged, *self._drag.group} if dragged else set()
         for clip in sorted(self.controller.project.clips, key=lambda c: c.start):
-            if clip.id == dragged:
+            if clip.id in hidden:
                 continue
             rect = self.clip_rect(clip)
             if rect is not None and rect.right() >= HEADER_W and rect.left() <= w:
-                self._paint_clip(painter, clip, rect, clip.id == self.controller.selected)
+                self._paint_clip(painter, clip, rect, self.controller.is_selected(clip.id))
         for transition in self.controller.project.transitions:
             self._paint_transition(painter, transition)
         hatch = QColor(p.ink)
@@ -288,6 +292,17 @@ class TimelineView(QAbstractScrollArea):
                 rect = self.clip_rect(clip, d.start, d.duration, d.track_id)
                 if rect is not None:
                     self._paint_clip(painter, clip, rect, True, ghost=True)
+                for other in filter(None, map(self._find_clip, d.group)):
+                    rect = self.clip_rect(other, other.start + d.start - clip.start)
+                    if rect is not None:
+                        self._paint_clip(painter, other, rect, True, ghost=True)
+        if self._drag is not None and self._drag.mode == "box" and self._drag.moved:
+            band = QRect(self._drag.press, self._drag.current).normalized()
+            fill = QColor(p.forest)
+            fill.setAlpha(36)
+            painter.setPen(QPen(QColor(p.forest), 1, Qt.PenStyle.DashLine))
+            painter.setBrush(fill)
+            painter.drawRect(band)
         if not self.controller.project.clips and self._drop is None:
             f = ui_font()
             f.setPixelSize(13)
@@ -870,12 +885,31 @@ class TimelineView(QAbstractScrollArea):
             self.viewport().update()
             return
         hit = self.hit_test(pos)
+        ctrl = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
         if hit is None:
-            self.controller.select(None)
-            self._drag = _Drag("playhead")
-            self._seek_to(pos.x())
+            # clic : tête de lecture ; glisser : rectangle de sélection (Ctrl : ajoute)
+            base = tuple(self.controller.selection) if ctrl else ()
+            if not ctrl:
+                self.controller.select(None)
+                self._seek_to(pos.x())
+            self._drag = _Drag("box", press=pos, base=base, current=pos)
             return
         clip, zone = hit
+        if ctrl:  # Ctrl + clic : ajoute le clip à la sélection ou l'en retire
+            self.controller.toggle_selected(clip.id)
+            return
+        if self.controller.is_selected(clip.id) and len(self.controller.selection) > 1 \
+                and zone == "body":
+            # clip d'une sélection multiple : on les déplace ensemble
+            self.controller.select_many(self.controller.selection, clip.id)
+            group = tuple(c for c in self.controller.selection if c != clip.id)
+            if any(self.controller.timeline.track(c.track_id).locked
+                   for c in self.controller.selected_clips()):
+                return
+            self._drag = _Drag("move", clip.id, pos, self.x_to_frame(pos.x()) - clip.start,
+                               clip.track_id, clip.start, clip.duration, group=group)
+            self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+            return
         self.controller.select(clip.id)
         if self.controller.timeline.track(clip.track_id).locked:
             return  # piste verrouillée : sélection seulement, ni déplacement ni rognage
@@ -911,6 +945,11 @@ class TimelineView(QAbstractScrollArea):
         if not d.moved and (pos - d.press).manhattanLength() < 3:
             return
         d.moved = True
+        if d.mode == "box":
+            d.current = pos
+            self._select_in_box(d)
+            self.viewport().update()
+            return
         timeline = self.controller.timeline
         if d.mode == "marker":
             d.start = max(0, self._snap(self.x_to_frame(pos.x()), d.clip_id))
@@ -932,7 +971,13 @@ class TimelineView(QAbstractScrollArea):
                 self.rangeChanged.emit()
             self.viewport().update()
             return
-        if d.mode == "move":
+        if d.mode == "move" and d.group:
+            # plusieurs clips : décalage dans le temps, chacun garde sa piste
+            first = min([clip.start] + [c.start for c in map(self._find_clip, d.group) if c])
+            start = self._snap(frame - d.offset, clip.id, (clip.duration,))
+            d.start = max(clip.start - first, start)
+            d.track_id, d.insert_at, d.duration = clip.track_id, None, clip.duration
+        elif d.mode == "move":
             start = max(0, self._snap(frame - d.offset, clip.id, (clip.duration,)))
             d.track_id, d.insert_at = self._move_target(pos.y(), clip, start)
             d.start = start if d.insert_at is not None else \
@@ -963,6 +1008,12 @@ class TimelineView(QAbstractScrollArea):
                 self.seekRequested.emit(frame)
             self.viewport().update()
             return
+        if d is not None and d.mode == "box":
+            self.viewport().update()
+            return
+        if d is not None and d.mode == "move" and d.group and not d.moved:
+            self.controller.select(d.clip_id)  # simple clic : ce clip seul
+            return
         if d is not None and d.mode == "track" and d.moved and d.insert_at is not None:
             track_id, index = d.track_id, d.insert_at
             self.controller.edit(_("Déplacer la piste"), lambda t: t.move_track(track_id, index))
@@ -971,7 +1022,12 @@ class TimelineView(QAbstractScrollArea):
             self.viewport().update()
             return
         clip_id = d.clip_id
-        if d.mode == "move" and d.insert_at is not None:
+        if d.mode == "move" and d.group:
+            clip = self._find_clip(clip_id)
+            delta = d.start - clip.start if clip is not None else 0
+            ids = [clip_id, *d.group]
+            self.controller.edit(_("Déplacer les clips"), lambda t: t.move_clips(ids, delta))
+        elif d.mode == "move" and d.insert_at is not None:
             index = d.insert_at
             self.controller.edit(_("Déplacer vers une nouvelle piste"),
                                  lambda t: t.move_clip_to_new_track(clip_id, index, d.start))
@@ -984,6 +1040,17 @@ class TimelineView(QAbstractScrollArea):
             self.controller.edit(_("Rogner le clip"),
                                  lambda t: t.trim(clip_id, "end", d.start + d.duration))
         self.viewport().update()
+
+    def _select_in_box(self, d: _Drag) -> None:
+        """Sélectionne les clips touchés par le rectangle (en plus de `d.base`)."""
+        band = QRectF(QRect(d.press, d.current).normalized())
+        touched = [c.id for c in sorted(self.controller.project.clips, key=lambda c: c.start)
+                   if (r := self.clip_rect(c)) is not None and r.intersects(band)]
+        self.controller.select_many([*d.base, *touched])
+
+    def select_all(self) -> None:
+        self.controller.select_many([c.id for c in sorted(self.controller.project.clips,
+                                                           key=lambda c: c.start)])
 
     def _move_target(self, y: int, clip: Clip, start: int) -> tuple[str, int | None]:
         """Piste visée par un clip déplacé, ou position d'une nouvelle piste à insérer :

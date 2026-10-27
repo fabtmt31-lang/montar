@@ -35,6 +35,7 @@ class Canvas:
     width: int
     height: int
     fps: int
+    transparent: bool = False  # fond transparent (rendu d'une piste superposée)
 
 
 @dataclass(frozen=True)
