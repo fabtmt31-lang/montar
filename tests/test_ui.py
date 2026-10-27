@@ -2474,29 +2474,13 @@ def test_recorder_dialog_and_processed_webcam(window, media_dir, monkeypatch, tm
     editor = imported_editor(window, media_dir, ["clip.mp4"])
     target = editor.project.media_dir / "Enregistrement webcam.mp4"
 
-    person = tmp_path / "person.png"
-    from PyQt6.QtGui import QColor, QImage, QPainter
-
-    picture = QImage(320, 240, QImage.Format.Format_RGB32)
-    picture.fill(QColor("#8fa9b8"))
-    painter = QPainter(picture)
-    painter.setBrush(QColor("#2b4c7e"))
-    painter.drawEllipse(100, 170, 120, 110)
-    painter.setBrush(QColor("#e0b18c"))
-    painter.drawEllipse(130, 60, 60, 80)
-    painter.end()
-    picture.save(str(person))
-
-    movie = person.as_posix().replace(":", "\\:")  # « C:/… » sous Windows
-
     def fake_command(self, live_masks=False):
         # vraies chaînes de montar (horloge commune, détourage en direct), sources simulées
         wall = recorder_module.WALLCLOCK
         cmd = [_shutil.which("ffmpeg"), "-v", "error", "-y", "-copyts",
                *wall, "-f", "lavfi", "-i", "testsrc=s=320x180:r=25,realtime",
                *wall, "-f", "lavfi", "-i", "sine=r=48000,arealtime",
-               *wall, "-f", "lavfi", "-i",
-               f"movie={movie}:loop=0,setpts=N/25/TB,fps=25,realtime"]
+               *wall, "-f", "lavfi", "-i", "testsrc2=s=320x240:r=25,realtime"]
         return recorder_module._encode(cmd, self.options, [1], 2, str(self.target), "",
                                        (320, 180), time.time(), live_masks)
 
@@ -2504,8 +2488,9 @@ def test_recorder_dialog_and_processed_webcam(window, media_dir, monkeypatch, tm
     results = []
     editor.recordingFinished.connect(results.append)
     editor.start_recording(dataclasses.replace(options, fps=25), target, countdown=0)
-    pump(1500)
     recorder = editor._recorder
+    pump(1500)
+    assert editor._recorder is recorder, recorder.error  # ffmpeg ne s'est pas arrêté seul
     editor.stop_recording()
     assert recorder.masks_ready  # détourage fait pendant l'enregistrement
     assert editor._recording_job and editor.busy.isVisible()
