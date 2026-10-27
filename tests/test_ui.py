@@ -1079,6 +1079,20 @@ def test_preview_shuttle_zoom_volume_fullscreen(window, media_dir):
     QTest.keyClick(full, Qt.Key.Key_Escape)
     assert wait_until(lambda: preview.fullscreen is None)
 
+    # plein écran : barre de lecture, puis double-clic pour quitter (plantait : la fonction
+    # branchée sur le double-clic renvoyait une valeur à Qt)
+    preview.toggle_fullscreen()
+    full = preview.fullscreen
+    assert full.bar.isVisible() and full.position.maximum() == 49
+    full.play_button.click()
+    assert wait_until(lambda: player.playing)
+    full.play_button.click()
+    assert wait_until(lambda: not player.playing)
+    QTest.mouseDClick(full.canvas, Qt.MouseButton.LeftButton, pos=full.canvas.rect().center())
+    assert wait_until(lambda: preview.fullscreen is None)
+    player.seek(10)
+    assert wait_until(lambda: player.position == 10)
+
 
 # --- J5-D : sauvegarde et stockage --------------------------------------------------------------
 

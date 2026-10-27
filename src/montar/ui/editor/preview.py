@@ -6,7 +6,7 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from PyQt6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QImage,
@@ -437,14 +437,19 @@ class PreviewCanvas(QWidget):
 
 
 class FullscreenPreview(QWidget):
-    """Aperçu en plein écran, sur fond noir ; Échap, F ou un double-clic le referment."""
+    """Aperçu en plein écran, sur fond noir, avec sa barre de lecture (cachée pendant la
+    lecture quand la souris ne bouge plus) ; Échap, F ou un double-clic le referment."""
 
     closed = pyqtSignal()
+    IDLE_MS = 2500  # barre cachée après ce délai sans mouvement, pendant la lecture
 
     def __init__(self, panel: PreviewPanel) -> None:
         super().__init__(None, Qt.WindowType.Window)
+        self.panel = panel
+        self.player = panel.player
         self.setWindowTitle(_("Aperçu — montar"))
         self.setStyleSheet("background: #000000;")
+        self.setMouseTracking(True)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -453,19 +458,112 @@ class FullscreenPreview(QWidget):
         self.canvas.set_canvas(*panel.canvas.canvas_size)
         if panel.canvas.image is not None:
             self.canvas.set_image(panel.canvas.image)
-        self.canvas.mouseDoubleClickEvent = lambda _e: self.close()
+        self.canvas.installEventFilter(self)
         layout.addWidget(self.canvas, 1)
-        self.hint = label(_("Échap pour quitter le plein écran"), "muted")
-        self.hint.setStyleSheet("color: #C8D6CE; padding: 10px; background: transparent;")
-        self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.hint)
-        QTimer.singleShot(2500, self.hint.hide)
+        self._closing = False
+
+        self.bar = QFrame(self)
+        self.bar.setObjectName("FullscreenBar")
+        self.bar.setStyleSheet(
+            "QFrame#FullscreenBar { background: rgba(12, 18, 15, 205); border-radius: 12px; }"
+            "QLabel { color: #E8F0EC; background: transparent; }"
+            "QPushButton { background: transparent; border: none; padding: 6px; }"
+            "QPushButton:hover { background: rgba(255, 255, 255, 30); border-radius: 8px; }")
+        bar = QHBoxLayout(self.bar)
+        bar.setContentsMargins(14, 8, 14, 8)
+        bar.setSpacing(10)
+        self.to_start = button("", None, "skip-back", "on_forest", _("Aller au début"))
+        self.play_button = button("", None, "play", "on_forest", _("Lecture / pause (Espace)"))
+        self.to_end = button("", None, "skip-forward", "on_forest", _("Aller à la fin"))
+        self.to_start.clicked.connect(lambda: self.player.seek(0))
+        self.to_end.clicked.connect(lambda: self.player.seek(max(0, self.player.length - 1)))
+        self.play_button.clicked.connect(self.player.toggle)
+        self.timecode = label("", "mono")
+        self.position = QSlider(Qt.Orientation.Horizontal)
+        self.position.setRange(0, max(0, self.player.length - 1))
+        self.position.sliderMoved.connect(self.player.seek)
+        self.position.setMinimumWidth(240)
+        self.exit_button = button("", None, "minimize", "on_forest",
+                                  _("Quitter le plein écran (Échap)"))
+        self.exit_button.clicked.connect(self.close)
+        for w in (self.to_start, self.play_button, self.to_end, self.timecode):
+            bar.addWidget(w)
+        bar.addWidget(self.position, 1)
+        bar.addWidget(self.exit_button)
+
+        self._idle = QTimer(self)
+        self._idle.setSingleShot(True)
+        self._idle.setInterval(self.IDLE_MS)
+        self._idle.timeout.connect(self._hide_controls)
         for keys, slot in panel.transport_keys():
             sc = QShortcut(QKeySequence(keys), self)
             sc.activated.connect(slot)
         self.exit_keys = {QKeySequence(k).toString() for k in
                           shortcuts.keys_for(panel.shortcut_overrides, "fullscreen")}
-        panel.player.frameReady.connect(self._on_frame)
+        self.player.frameReady.connect(self._on_frame)
+        self.player.playingChanged.connect(self._on_playing)
+        self.player.loaded.connect(self._on_loaded)
+        self._on_playing(self.player.playing)
+        self._show_timecode(self.player.position)
+
+    # --- barre de lecture -------------------------------------------------------------
+
+    def _place_bar(self) -> None:
+        width = min(self.width() - 40, 900)
+        height = self.bar.sizeHint().height()
+        self.bar.setGeometry((self.width() - width) // 2, self.height() - height - 24,
+                             width, height)
+        self.bar.raise_()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._place_bar()
+
+    def _show_controls(self) -> None:
+        self.bar.show()
+        self.canvas.unsetCursor()
+        if self.player.playing:
+            self._idle.start()
+
+    def _hide_controls(self) -> None:
+        if self.player.playing and not self.bar.underMouse():
+            self.bar.hide()
+            self.canvas.setCursor(Qt.CursorShape.BlankCursor)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if obj is self.canvas:
+            kind = event.type()
+            if kind == QEvent.Type.MouseMove:
+                self._show_controls()
+            elif kind == QEvent.Type.MouseButtonDblClick:
+                # fermé après l'événement (pas pendant son traitement)
+                if not self._closing:
+                    self._closing = True
+                    QTimer.singleShot(0, self.close)
+                return True
+            elif kind == QEvent.Type.MouseButtonRelease and self._closing:
+                return True
+        return super().eventFilter(obj, event)
+
+    def _on_playing(self, playing: bool) -> None:
+        set_icon(self.play_button, "pause" if playing else "play", "on_forest", 22)
+        if playing:
+            self._idle.start()
+        else:
+            self._idle.stop()
+            self._show_controls()
+
+    def _on_loaded(self, length: int, _fps: float) -> None:
+        self.position.setRange(0, max(0, length - 1))
+
+    def _show_timecode(self, frame: int) -> None:
+        fps = self.player.fps or 25.0
+        self.timecode.setText(frames_to_timecode(frame, fps) + "  /  "
+                              + frames_to_timecode(self.player.length, fps))
+        if not self.position.isSliderDown():
+            self.position.blockSignals(True)
+            self.position.setValue(frame)
+            self.position.blockSignals(False)
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         pressed = QKeySequence(event.keyCombination()).toString()
@@ -474,12 +572,27 @@ class FullscreenPreview(QWidget):
         else:
             super().keyPressEvent(event)
 
-    def _on_frame(self, image: QImage, _frame: int) -> None:
+    def _on_frame(self, image: QImage, frame: int) -> None:
         self.canvas.set_image(image)
+        self._show_timecode(frame)
+
+    def detach(self) -> None:
+        """Ne suit plus le lecteur (avant destruction)."""
+        for signal, slot in ((self.player.frameReady, self._on_frame),
+                             (self.player.playingChanged, self._on_playing),
+                             (self.player.loaded, self._on_loaded)):
+            try:
+                signal.disconnect(slot)
+            except TypeError:
+                pass
+        self._idle.stop()
 
     def closeEvent(self, event) -> None:  # noqa: N802
         super().closeEvent(event)
-        self.closed.emit()
+        if not getattr(self, "_closed", False):
+            self._closed = True
+            self.detach()
+            self.closed.emit()
 
 
 ZOOMS = ((None, "Ajuster"), (0.5, "50 %"), (1.0, "100 %"), (2.0, "200 %"))
@@ -723,7 +836,7 @@ class PreviewPanel(QFrame):
     def _fullscreen_closed(self) -> None:
         full, self.fullscreen = self.fullscreen, None
         if full is not None:
-            self.player.frameReady.disconnect(full._on_frame)
+            full.detach()
             full.deleteLater()
         self._push_render_size()
 
