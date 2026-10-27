@@ -1053,9 +1053,11 @@ class EditorPage(QWidget):
             return
         dialog = MediaEditorDialog(media, self._engine_factory,
                                    self._timelapse_render() is not None, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.result_mode:
-            return
-        self.start_media_edit(media, dialog.edit, dialog.result_mode)
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted and dialog.result_mode
+        edit, mode = dialog.edit, dialog.result_mode
+        dialog.deleteLater()
+        if accepted:
+            self.start_media_edit(media, edit, mode)
 
     def start_media_edit(self, media: MediaItem, edit: MediaEdit, mode: str) -> None:
         """Calcule le média modifié, puis remplace l'original (« replace ») ou ajoute une
@@ -1127,13 +1129,18 @@ class EditorPage(QWidget):
         if self._recorder is not None or self.project.media_dir is None:
             return
         dialog = RecorderDialog(self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
         options = dialog.options()
         screen = dialog.chosen_screen()
+        dialog.deleteLater()  # une fenêtre gardée à chaque enregistrement s'accumulait
+        if not accepted:
+            return
         area = screen.geometry() if screen is not None else None  # signalée avant le début
         if options.source == "region":  # zone dessinée à la souris sur l'écran choisi
-            rect = RegionSelector(screen).select() if screen is not None else None
+            selector = RegionSelector(screen) if screen is not None else None
+            rect = selector.select() if selector is not None else None
+            if selector is not None:
+                selector.deleteLater()
             if rect is None:
                 return
             options.region = physical_region(screen, rect)

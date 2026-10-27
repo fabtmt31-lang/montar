@@ -408,9 +408,10 @@ class RecorderDialog(QDialog):
         camera = self._camera
         if camera is None:
             return
-        if camera.frame is not None:
+        frame = camera.frame  # remplacée à tout moment par le fil de lecture : on la garde
+        if frame is not None:
             w, h = camera.size
-            image = QImage(camera.frame, w, h, w * 3, QImage.Format.Format_RGB888)
+            image = QImage(frame, w, h, w * 3, QImage.Format.Format_RGB888).copy()
             self.cam_view.setPixmap(QPixmap.fromImage(image))
         elif camera.error:
             self.cam_view.setText(camera.error)

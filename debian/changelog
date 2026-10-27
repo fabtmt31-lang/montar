@@ -1,3 +1,14 @@
+montar (1.9.1) unstable; urgency=medium
+
+  * Enregistreur : la webcam a son propre ffmpeg. Dans le même que l'écran,
+    ffmpeg 7 (Windows) la retenait (ouverte pendant le compte à rebours, elle
+    était « en avance ») : image figée et fichier plus court que l'écran.
+  * Fenêtres d'enregistrement, de sélection de zone et « Modifier le média »
+    libérées après usage (elles s'accumulaient) ; image du test de la webcam
+    copiée avant affichage.
+
+ -- Fabien <admin@appsdoc.fr>  Tue, 27 Oct 2026 23:30:00 +0100
+
 montar (1.9.0) unstable; urgency=medium
 
   * Enregistreur : ffmpeg démarre dès le compte à rebours, la webcam a le

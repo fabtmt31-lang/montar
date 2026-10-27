@@ -2489,17 +2489,21 @@ def test_recorder_dialog_and_processed_webcam(window, media_dir, monkeypatch, tm
     editor = imported_editor(window, media_dir, ["clip.mp4"])
     target = editor.project.media_dir / "Enregistrement webcam.mp4"
 
-    def fake_command(self, live_masks=False):
+    def fake_command(self):
         # vraies chaînes de montar (horloge commune, détourage en direct), sources simulées
         wall = recorder_module.WALLCLOCK
         cmd = [_shutil.which("ffmpeg"), "-v", "error", "-y", "-copyts",
                *wall, "-f", "lavfi", "-i", "testsrc=s=320x180:r=25,realtime",
-               *wall, "-f", "lavfi", "-i", "sine=r=48000,arealtime",
-               *wall, "-f", "lavfi", "-i", "testsrc2=s=320x240:r=25,realtime"]
-        return recorder_module._encode(cmd, self.options, [1], 2, str(self.target), "",
-                                       (320, 180), self.t0, live_masks, self.origin)
+               *wall, "-f", "lavfi", "-i", "sine=r=48000,arealtime"]
+        return recorder_module._encode(cmd, self.options, [1], str(self.target), "", self.t0)
+
+    def fake_camera(self, live_masks=False):
+        return recorder_module.camera_command(
+            self.options, str(self.target), self.origin, live_masks,
+            source=["-f", "lavfi", "-i", "testsrc2=s=320x240:r=25,realtime"])
 
     monkeypatch.setattr(recorder_module.Recorder, "_command", fake_command)
+    monkeypatch.setattr(recorder_module.Recorder, "_camera_command", fake_camera)
     results = []
     editor.recordingFinished.connect(results.append)
     editor.start_recording(dataclasses.replace(options, fps=25), target, countdown=1)
@@ -2519,6 +2523,10 @@ def test_recorder_dialog_and_processed_webcam(window, media_dir, monkeypatch, tm
     camera = editor.project.webcam_of(screen)
     assert camera is not None and camera.role == "webcam"
     assert camera not in editor.project.visible_media()
+    # la webcam dure autant que l'écran (elle garde en plus le compte à rebours, que son
+    # début utile saute)
+    assert camera.duration - screen.webcam["webcam_in"] == pytest.approx(
+        screen.duration - screen.webcam["screen_in"], abs=0.5)
     assert not list(target.parent.glob("*.webcam-brut.mkv"))
     assert not list(target.parent.glob("*.masques.mkv"))
     # dans la timeline : écran et webcam côte à côte, liés ; la webcam se retire sur une
@@ -2658,3 +2666,48 @@ def test_fit_canvas_to_media_and_first_media_banner(window, media_dir, monkeypat
     monkeypatch.setattr(FormatDialog, "values", lambda self: ("9:16", "720p", (0, 0), 30))
     editor.change_format()
     assert editor.project.canvas_size == (720, 1280)
+
+
+@needs_ffmpeg
+def test_plain_webcam_recording_moves_and_lasts(window, media_dir, monkeypatch):
+    """La webcam restait figée et plus courte que l'écran sous Windows (ffmpeg 7 retenait
+    la webcam, ouverte avant l'écran, dans le même ffmpeg) : elle a maintenant le sien."""
+    import shutil as _shutil
+
+    from montar.engine import get_engine
+    from montar.engine.base import Canvas, ClipSpec, TimelineSpec, TrackSpec
+    from montar.media import recorder as recorder_module
+
+    def fake_command(self):
+        wall = recorder_module.WALLCLOCK
+        cmd = [_shutil.which("ffmpeg"), "-v", "error", "-y", "-copyts",
+               *wall, "-f", "lavfi", "-i", "testsrc=s=320x180:r=25,realtime",
+               *wall, "-f", "lavfi", "-i", "sine=r=48000,arealtime"]
+        return recorder_module._encode(cmd, self.options, [1], str(self.target), "", self.t0)
+
+    def fake_camera(self, live_masks=False):
+        return recorder_module.camera_command(
+            self.options, str(self.target), self.origin, live_masks,
+            source=["-f", "lavfi", "-i", "testsrc2=s=320x240:r=25,realtime"])
+
+    monkeypatch.setattr(recorder_module.Recorder, "_command", fake_command)
+    monkeypatch.setattr(recorder_module.Recorder, "_camera_command", fake_camera)
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    target = editor.project.media_dir / "Enregistrement simple.mp4"
+    options = recorder_module.RecordOptions(webcam="cam", fps=25, microphone=False)
+    editor.start_recording(options, target, countdown=1)
+    recorder = editor._recorder
+    assert wait_until(lambda: recorder.started, 15)
+    pump(2000)
+    editor.stop_recording()
+    assert wait_until(lambda: any(m.path == str(target) for m in editor.project.media))
+    screen = next(m for m in editor.project.media if m.path == str(target))
+    camera = editor.project.webcam_of(screen)
+    assert camera is not None
+    assert camera.duration - screen.webcam["webcam_in"] == pytest.approx(
+        screen.duration - screen.webcam["screen_in"], abs=0.5)
+    length = round(camera.duration * 25)
+    source = get_engine().build(TimelineSpec(Canvas(64, 48, 25), (TrackSpec(
+        "video", False, False, (ClipSpec(camera.path, "video", 0, length,
+                                         media_size=(camera.width, camera.height)),)),)))
+    assert source.render(2, 64, 48) != source.render(length - 3, 64, 48)  # elle bouge

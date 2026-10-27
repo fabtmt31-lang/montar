@@ -15,6 +15,7 @@ flouté ou effacé (media/segment.py : pendant l'enregistrement, sinon après)."
 from __future__ import annotations
 
 import glob
+import logging
 import os
 import re
 import shutil
@@ -26,6 +27,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from montar.i18n import N_, _
+
+log = logging.getLogger(__name__)
 
 ON_WINDOWS = sys.platform == "win32"
 
@@ -537,23 +540,18 @@ def parse_xwininfo(listing: str) -> tuple[str, tuple[int, int, int, int] | None]
 WALLCLOCK = ["-use_wallclock_as_timestamps", "1"]
 
 
-def command(options: RecordOptions, target: str, t0: float | None = None,
-            live_masks: bool = False, origin: float | None = None) -> list[str]:
-    """Commande ffmpeg de l'enregistrement ; `t0` : début de l'enregistrement (secondes,
-    horloge de l'ordinateur ; l'écran et le son filmés avant sont jetés) ; `origin` :
-    lancement de ffmpeg, pendant le compte à rebours (la webcam s'ouvre pendant ce temps) ;
-    `live_masks` : images réduites de la webcam envoyées sur la sortie standard (détourage
-    pendant l'enregistrement)."""
+def command(options: RecordOptions, target: str, t0: float | None = None) -> list[str]:
+    """Commande ffmpeg de l'écran et du son ; `t0` : début de l'enregistrement (secondes,
+    horloge de l'ordinateur) : ce qui est filmé avant (compte à rebours) est jeté. La
+    webcam a son propre ffmpeg (`camera_command`)."""
     t0 = time.time() if t0 is None else t0
-    origin = t0 if origin is None else min(origin, t0)
     if ON_WINDOWS:
-        return _command_windows(options, target, t0, live_masks, origin)
+        return _command_windows(options, target, t0)
     ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
     display = options.display or os.environ.get("DISPLAY", ":0")
     cmd = [ffmpeg, "-v", "error", "-y", "-copyts", *WALLCLOCK, "-thread_queue_size", "1024",
            "-f", "x11grab", "-framerate", str(options.fps),
            "-draw_mouse", "1" if options.show_cursor else "0"]
-    size = options.capture_size()
     if options.source == "window" and options.window_id:
         cmd += ["-window_id", options.window_id, "-i", display]
     else:
@@ -570,15 +568,10 @@ def command(options: RecordOptions, target: str, t0: float | None = None,
             cmd += [*WALLCLOCK, "-thread_queue_size", "4096", "-f", "pulse", "-i", device]
             audio.append(inputs)
             inputs += 1
-    webcam = None
-    if options.webcam:
-        cmd += [*WALLCLOCK, "-thread_queue_size", "1024", *webcam_input(options.webcam)]
-        webcam = inputs
-    return _encode(cmd, options, audio, webcam, target, "", size, t0, live_masks, origin)
+    return _encode(cmd, options, audio, target, "", t0)
 
 
-def _command_windows(options: RecordOptions, target: str, t0: float,
-                     live_masks: bool, origin: float | None = None) -> list[str]:
+def _command_windows(options: RecordOptions, target: str, t0: float) -> list[str]:
     """Écran, zone ou fenêtre par ddagrab (ou gdigrab) ; sons et webcam par DirectShow."""
     ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
     mouse = "1" if options.show_cursor else "0"
@@ -621,7 +614,7 @@ def _command_windows(options: RecordOptions, target: str, t0: float,
         cmd += [*WALLCLOCK, "-thread_queue_size", "1024", "-f", "gdigrab", "-framerate",
                 str(options.fps), "-draw_mouse", mouse, "-offset_x", str(x), "-offset_y",
                 str(y), "-video_size", f"{size[0]}x{size[1]}", "-i", "desktop"]
-    inputs, audio, webcam = 1, [], None
+    inputs, audio = 1, []
     microphone = (options.microphone_device or next(iter(dshow_devices("audio")), "")) \
         if options.microphone else ""
     loopback = loopback_device() if options.system_audio else ""
@@ -633,11 +626,7 @@ def _command_windows(options: RecordOptions, target: str, t0: float,
                     "64M", "-audio_buffer_size", "50", "-i", f"audio={device}"]
             audio.append(inputs)
             inputs += 1
-    if options.webcam:
-        # grand tampon : une webcam en MJPEG ne perd plus d'images quand l'ordinateur force
-        cmd += [*WALLCLOCK, "-thread_queue_size", "1024", *webcam_input(options.webcam)]
-        webcam = inputs
-    return _encode(cmd, options, audio, webcam, target, prefix, size, t0, live_masks, origin)
+    return _encode(cmd, options, audio, target, prefix, t0)
 
 
 def camera_part(target: str) -> str:
@@ -675,15 +664,10 @@ MASK_SIZE = (256, 144)  # images envoyées au détourage (taille du modèle)
 TAP_SIZE = 8  # sans détourage : vignettes 8 × 8 qui disent que la webcam est prête
 
 
-def _encode(cmd: list[str], options: RecordOptions, audio: list[int], webcam: int | None,
-            target: str, prefix: str = "", size: tuple[int, int] | None = None,
-            t0: float = 0.0, live_masks: bool = False,
-            origin: float | None = None) -> list[str]:
+def _encode(cmd: list[str], options: RecordOptions, audio: list[int], target: str,
+            prefix: str = "", t0: float = 0.0) -> list[str]:
     """Montage des entrées et encodage : l'écran et les sons mélangés, ramenés à l'instant
-    `t0` (ce qui précède est jeté) dans `target` ; la webcam, depuis le lancement
-    (`origin`), dans son propre fichier, plus des images réduites sur la sortie standard
-    (détourage en direct, ou simple signal « webcam prête »)."""
-    origin = t0 if origin is None else origin
+    `t0` (ce qui précède est jeté), dans `target`."""
     shift = f"setpts=PTS-{t0:.6f}/TB"
     graph = [f"[0:v]{prefix}{shift},trim=start=0,scale=trunc(iw/2)*2:trunc(ih/2)*2,"
              "format=yuv420p[screen]"]
@@ -697,20 +681,34 @@ def _encode(cmd: list[str], options: RecordOptions, audio: list[int], webcam: in
     sound = ["-map", "[audio]", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"] if audio \
         else []
     video = [*recording_encoder(), "-r", str(options.fps)]
-    outputs = ["-map", "[screen]", *video, *sound, "-movflags", "+faststart", target]
-    if webcam is not None:
-        graph.append(f"[{webcam}:v]setpts=PTS-{origin:.6f}/TB,"
-                     "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p,split=2[camfile][camtap]")
-        if live_masks:
-            w, h = MASK_SIZE
-            graph.append(f"[camtap]scale={w}:{h},format=rgb24[campix]")
-            tap = ["-map", "[campix]", "-r", str(options.fps)]
-        else:
-            graph.append(f"[camtap]fps=2,scale={TAP_SIZE}:{TAP_SIZE},format=gray[campix]")
-            tap = ["-map", "[campix]"]
-        outputs += ["-map", "[camfile]", *video, camera_part(target),
-                    *tap, "-f", "rawvideo", "pipe:1"]
-    return cmd + ["-filter_complex", ";".join(graph), *outputs]
+    return cmd + ["-filter_complex", ";".join(graph), "-map", "[screen]", *video, *sound,
+                  "-movflags", "+faststart", target]
+
+
+def camera_command(options: RecordOptions, target: str, origin: float,
+                   live_masks: bool = False, source: list[str] | None = None) -> list[str]:
+    """Commande ffmpeg de la webcam, à part de celle de l'écran : dans un même ffmpeg, la
+    webcam (ouverte dès le compte à rebours, donc « en avance ») était retenue par
+    l'ordonnanceur de ffmpeg 7 pour attendre l'écran ; elle perdait ses images (image figée,
+    fichier plus court). Images datées avec l'horloge de l'ordinateur, depuis `origin` ;
+    sur la sortie standard, des images réduites (détourage en direct) ou des vignettes
+    (webcam prête). `source` : entrée ffmpeg à la place de la webcam (essais)."""
+    ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
+    # grand tampon : une webcam en MJPEG ne perd plus d'images quand l'ordinateur force
+    cmd = [ffmpeg, "-v", "error", "-y", "-copyts", *WALLCLOCK, "-thread_queue_size", "1024",
+           *(source or webcam_input(options.webcam))]
+    graph = [f"[0:v]setpts=PTS-{origin:.6f}/TB,scale=trunc(iw/2)*2:trunc(ih/2)*2,"
+             "format=yuv420p,split=2[camfile][camtap]"]
+    if live_masks:
+        w, h = MASK_SIZE
+        graph.append(f"[camtap]scale={w}:{h},format=rgb24[campix]")
+        tap = ["-map", "[campix]", "-r", str(options.fps)]
+    else:
+        graph.append(f"[camtap]fps=2,scale={TAP_SIZE}:{TAP_SIZE},format=gray[campix]")
+        tap = ["-map", "[campix]"]
+    return cmd + ["-filter_complex", ";".join(graph),
+                  "-map", "[camfile]", *recording_encoder(), "-r", str(options.fps),
+                  camera_part(target), *tap, "-f", "rawvideo", "pipe:1"]
 
 
 def layer_command(options: RecordOptions, camera: str, mask: str, target: str,
@@ -835,13 +833,14 @@ class Finisher:
 
 
 class Recorder:
-    """Un enregistrement : ffmpeg est lancé dès le compte à rebours (`start`), pour que la
-    webcam ait le temps de s'ouvrir ; l'enregistrement commence vraiment avec `begin`, et
-    `stop()` termine proprement les fichiers."""
+    """Un enregistrement : deux ffmpeg (l'écran avec le son, la webcam) lancés dès le compte
+    à rebours (`start`), pour que la webcam ait le temps de s'ouvrir ; l'enregistrement
+    commence vraiment avec `begin`, et `stop()` termine proprement les fichiers."""
 
     def __init__(self, options: RecordOptions, target: Path) -> None:
         self.options, self.target = options, target
-        self._proc: subprocess.Popen | None = None
+        self._proc: subprocess.Popen | None = None  # écran et son
+        self._camera: subprocess.Popen | None = None  # webcam
         self._masker = None
         self._tap_frames = 0
         self.masks_ready = False  # détourage fait pendant l'enregistrement
@@ -852,30 +851,35 @@ class Recorder:
         self.layer: Path | None = None  # webcam telle que filmée (fond inchangé)
         self.webcam: dict = {}  # pour le média de l'écran (voir MediaItem.webcam)
 
+    def _log_path(self, name: str) -> Path:
+        return self.target.with_suffix(f".{name}.log")
+
     def start(self, delay: float = 0.0) -> None:
         """Lance ffmpeg ; l'écran et le son sont gardés à partir de `delay` secondes."""
         self.target.parent.mkdir(parents=True, exist_ok=True)
-        self._log = open(self.target.with_suffix(".log"), "w+b")  # noqa: SIM115
-        live = self.options.processed and self._can_segment()
         self.origin = time.time()
         self.t0 = self.origin + max(0.0, delay)
-        tapped = bool(self.options.webcam)
-        self._proc = subprocess.Popen(self._command(live),
-                                      stdin=subprocess.PIPE,
-                                      stdout=subprocess.PIPE if tapped else subprocess.DEVNULL,
-                                      stderr=self._log)
-        if live:
-            from montar.media.segment import LiveMasker
+        if self.options.webcam:  # la webcam d'abord : c'est elle qui est lente à s'ouvrir
+            live = self.options.processed and self._can_segment()
+            self._camera_log = open(self._log_path("webcam"), "w+b")  # noqa: SIM115
+            self._camera = subprocess.Popen(self._camera_command(live),
+                                            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                            stderr=self._camera_log)
+            if live:
+                from montar.media.segment import LiveMasker
 
-            self._masker = LiveMasker(self._proc.stdout, Path(mask_part(str(self.target))),
-                                      self.options.fps)
-        elif tapped:
-            threading.Thread(target=self._drain_tap, name="montar-webcam-pret",
-                             daemon=True).start()
+                self._masker = LiveMasker(self._camera.stdout,
+                                          Path(mask_part(str(self.target))), self.options.fps)
+            else:
+                threading.Thread(target=self._drain_tap, name="montar-webcam-pret",
+                                 daemon=True).start()
+        self._log = open(self._log_path("ecran"), "w+b")  # noqa: SIM115
+        self._proc = subprocess.Popen(self._command(), stdin=subprocess.PIPE,
+                                      stdout=subprocess.DEVNULL, stderr=self._log)
 
     def _drain_tap(self) -> None:
         """Lit (et jette) les vignettes de la webcam : ffmpeg ne doit jamais attendre."""
-        stream = self._proc.stdout
+        stream = self._camera.stdout
         size = TAP_SIZE * TAP_SIZE
         try:
             while len(stream.read(size)) == size:
@@ -885,9 +889,9 @@ class Recorder:
 
     @property
     def camera_ready(self) -> bool:
-        """Sans webcam, ou quand ses premières images arrivent (ffmpeg n'assemble rien
-        avant d'avoir reçu toutes ses sources)."""
-        if not self.options.webcam:
+        """Sans webcam, quand ses premières images arrivent, ou si son ffmpeg s'est arrêté
+        (webcam occupée ou absente : l'enregistrement continue sans elle)."""
+        if not self.options.webcam or self._camera is None or self._camera.poll() is not None:
             return True
         if self._masker is not None:
             return self._masker.frames > 0
@@ -906,9 +910,11 @@ class Recorder:
             return False
         return model_path().exists()
 
-    def _command(self, live_masks: bool = False) -> list[str]:
-        return command(self.options, str(self.target), self.t0 or time.time(), live_masks,
-                       self.origin or None)
+    def _command(self) -> list[str]:
+        return command(self.options, str(self.target), self.t0 or time.time())
+
+    def _camera_command(self, live_masks: bool = False) -> list[str]:
+        return camera_command(self.options, str(self.target), self.origin, live_masks)
 
     @property
     def running(self) -> bool:
@@ -929,30 +935,55 @@ class Recorder:
             self.layer = None
         self.webcam = {}
 
-    def stop(self, timeout: float = 15.0) -> bool:
-        """Arrête l'enregistrement ; renvoie True si un fichier lisible a été écrit."""
-        proc = self._proc
-        if proc is None:
-            return False
-        if proc.poll() is None:
+    @staticmethod
+    def _quit(proc: subprocess.Popen | None) -> None:
+        """Demande à ffmpeg de finir son fichier (touche q)."""
+        if proc is not None and proc.poll() is None:
             try:
-                proc.stdin.write(b"q")  # ffmpeg finalise les fichiers
+                proc.stdin.write(b"q")
                 proc.stdin.close()
             except OSError:
                 pass
+
+    @staticmethod
+    def _wait(proc: subprocess.Popen | None, timeout: float) -> None:
+        if proc is None:
+            return
+        try:
+            proc.wait(timeout)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
             try:
-                proc.wait(timeout)
-            except subprocess.TimeoutExpired:
-                proc.terminate()
                 proc.wait(5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+
+    @staticmethod
+    def _read_log(log, path: Path) -> list[str]:
+        log.seek(0)
+        lines = log.read().decode("utf-8", "replace").strip().splitlines()
+        log.close()
+        path.unlink(missing_ok=True)
+        return lines
+
+    def stop(self, timeout: float = 15.0) -> bool:
+        """Arrête l'enregistrement ; renvoie True si un fichier lisible a été écrit."""
+        if self._proc is None:
+            return False
+        for proc in (self._proc, self._camera):  # les deux à la fois : même fin
+            self._quit(proc)
+        for proc in (self._proc, self._camera):
+            self._wait(proc, timeout)
         if self._masker is not None:
             self.masks_ready = self._masker.close()
             if not self.masks_ready:  # masques incomplets : recalculés après coup
                 Path(mask_part(str(self.target))).unlink(missing_ok=True)
-        self._log.seek(0)
-        lines = self._log.read().decode("utf-8", "replace").strip().splitlines()
-        self._log.close()
-        self.target.with_suffix(".log").unlink(missing_ok=True)
+        lines = self._read_log(self._log, self._log_path("ecran"))
+        if self._camera is not None:
+            camera_lines = self._read_log(self._camera_log, self._log_path("webcam"))
+            if camera_lines:
+                log.warning("webcam : %s", camera_lines[-1])
         ok = self.target.exists() and self.target.stat().st_size > 0
         if not ok:
             self.error = lines[-1] if lines else _("aucune image enregistrée")

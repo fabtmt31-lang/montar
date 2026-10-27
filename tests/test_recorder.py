@@ -21,28 +21,25 @@ def test_command(monkeypatch):
     assert "-video_size 1280x720 -i :1+1920,0" in line
     assert "-f pulse -i default" in line and "-f pulse -i @DEFAULT_MONITOR@" in line
     assert "amix=inputs=2" in line and "overlay" not in line
-    # l'écran (avec le son) et la webcam dans deux fichiers ; vignettes « webcam prête »
-    assert "-f v4l2 -i /dev/video0" in line and "+faststart out.mp4" in line
-    assert "out.webcam-brut.mkv" in line and line.endswith("-f rawvideo pipe:1")
+    # la webcam a son propre ffmpeg (dans le même, ffmpeg 7 la retenait : image figée)
+    assert "v4l2" not in line and line.endswith("+faststart out.mp4")
+    camera = " ".join(recorder.camera_command(RecordOptions(webcam="/dev/video0"), "out.mp4",
+                                              1000.5))
+    assert "-f v4l2 -i /dev/video0" in camera and "-use_wallclock_as_timestamps 1" in camera
+    assert "[0:v]setpts=PTS-1000.500000/TB" in camera
+    assert "out.webcam-brut.mkv" in camera and camera.endswith("-f rawvideo pipe:1")
     region = " ".join(command(RecordOptions(source="region", geometry=(1920, 0, 1280, 720),
                                             region=(10, 20, 301, 200), microphone=False,
                                             display=":1"), "x.mp4"))
     assert "-video_size 300x200 -i :1+1930,20" in region
     assert "pulse" not in region and "-c:a" not in region
     # horloge commune : chaque source datée à la lecture, ramenée au même départ
-    timed = command(RecordOptions(geometry=(0, 0, 640, 360), webcam="/dev/video0"), "t.mp4",
-                    t0=1000.5)
+    # ffmpeg lancé pendant le compte à rebours : l'écran et le son d'avant sont jetés
+    timed = command(RecordOptions(geometry=(0, 0, 640, 360)), "t.mp4", t0=1000.5)
     line = " ".join(timed)
-    assert line.count("-use_wallclock_as_timestamps 1") == 3 and "-copyts" in line
+    assert line.count("-use_wallclock_as_timestamps 1") == 2 and "-copyts" in line
     assert "[0:v]setpts=PTS-1000.500000/TB,trim=start=0" in line
-    assert "[2:v]setpts=PTS-1000.500000/TB" in line
     assert "asetpts=PTS-1000.500000/TB,atrim=start=0,aresample=async=1000" in line
-    # ffmpeg lancé pendant le compte à rebours : l'écran et le son d'avant sont jetés, la
-    # webcam garde tout (elle a eu le temps de s'ouvrir)
-    early = " ".join(command(RecordOptions(geometry=(0, 0, 640, 360), webcam="/dev/video0"),
-                             "t.mp4", t0=1003.5, origin=1000.5))
-    assert "[0:v]setpts=PTS-1003.500000/TB,trim=start=0" in early
-    assert "[2:v]setpts=PTS-1000.500000/TB" in early
     window = " ".join(command(RecordOptions(source="window", window_id="0x3a0000a",
                                             microphone=False), "x.mp4"))
     assert "-window_id 0x3a0000a" in window
@@ -157,7 +154,10 @@ def test_command_on_windows(monkeypatch):
     assert "-f gdigrab" in line and "-i desktop" in line
     assert "-offset_x 1920 -offset_y 0 -video_size 1280x720" in line
     assert "-i audio=Microphone (Realtek(R) Audio)" in line
-    assert "-i video=Integrated Camera" in line and "out.webcam-brut.mkv" in line
+    assert "video=Integrated Camera" not in line
+    camera = " ".join(recorder.camera_command(RecordOptions(webcam="Integrated Camera"),
+                                              "out.mp4", 0.0))
+    assert "-f dshow -rtbufsize 256M -i video=Integrated Camera" in camera
     assert "x11grab" not in line and "pulse" not in line and "+faststart out.mp4" in line
     zone = " ".join(command(RecordOptions(source="region", geometry=(1920, 0, 2560, 1440),
                                           region=(100, 50, 641, 360), microphone=False),
@@ -239,10 +239,12 @@ def test_webcam_parts_and_processed_layer(monkeypatch):
     plain = command(RecordOptions(**base, webcam_position="split_left", webcam_shape="round"),
                     "/tmp/rec.mp4")
     assert "overlay" not in " ".join(plain) and "geq" not in " ".join(plain)
-    assert "/tmp/rec.mp4" in plain and recorder.camera_part("/tmp/rec.mp4") in plain
-    assert "fps=2,scale=8:8,format=gray[campix]" in " ".join(plain)
+    camera = recorder.camera_command(RecordOptions(**base), "/tmp/rec.mp4", 0.0)
+    assert recorder.camera_part("/tmp/rec.mp4") in camera
+    assert "fps=2,scale=8:8,format=gray[campix]" in " ".join(camera)
     options = RecordOptions(**base, webcam_background="blur")
-    live = " ".join(command(options, "/tmp/rec.mp4", live_masks=True))  # détourage en direct
+    # détourage en direct
+    live = " ".join(recorder.camera_command(options, "/tmp/rec.mp4", 0.0, live_masks=True))
     assert "split=2[camfile][camtap]" in live and "scale=256:144,format=rgb24" in live
     assert live.endswith("-f rawvideo pipe:1")
     blur = " ".join(recorder.layer_command(options, "c.mkv", "m.mkv", "w.mp4", []))
