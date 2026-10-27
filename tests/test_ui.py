@@ -2487,6 +2487,8 @@ def test_recorder_dialog_and_processed_webcam(window, media_dir, monkeypatch, tm
     painter.end()
     picture.save(str(person))
 
+    movie = person.as_posix().replace(":", "\\:")  # « C:/… » sous Windows
+
     def fake_command(self, live_masks=False):
         # vraies chaînes de montar (horloge commune, détourage en direct), sources simulées
         wall = recorder_module.WALLCLOCK
@@ -2494,7 +2496,7 @@ def test_recorder_dialog_and_processed_webcam(window, media_dir, monkeypatch, tm
                *wall, "-f", "lavfi", "-i", "testsrc=s=320x180:r=25,realtime",
                *wall, "-f", "lavfi", "-i", "sine=r=48000,arealtime",
                *wall, "-f", "lavfi", "-i",
-               f"movie={person.as_posix()}:loop=0,setpts=N/25/TB,fps=25,realtime"]
+               f"movie={movie}:loop=0,setpts=N/25/TB,fps=25,realtime"]
         return recorder_module._encode(cmd, self.options, [1], 2, str(self.target), "",
                                        (320, 180), time.time(), live_masks)
 
@@ -2548,7 +2550,10 @@ def test_capture_highlight_during_countdown(window, monkeypatch):
     assert highlight is not None and highlight.isVisible()
     assert highlight.geometry() == QRect(4, 14, 312, 212)  # autour de la zone filmée
     assert wait_until(lambda: started, 5)
-    assert started == [None] and not highlight.isVisible()  # disparu avant de filmer
+    from PyQt6 import sip
+
+    # fermé (et détruit) avant de filmer
+    assert started == [None] and (sip.isdeleted(highlight) or not highlight.isVisible())
     editor._recorder = None
     editor.stop_recording()
 
