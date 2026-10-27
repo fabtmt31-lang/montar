@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 
 from montar.core.project import Clip, Effects
 from montar.core.timeline import VIDEO_TRANSITIONS
+from montar.engine.lumas import PATTERNS as LUMA_PATTERNS
 from montar.i18n import _
 from montar.ui.editor.controller import EditorController
 from montar.ui.editor.controls import SliderRow, section
@@ -222,7 +223,7 @@ class TransitionsPanel(_Panel):
         self._tiles = []
         for i, kind in enumerate(VIDEO_TRANSITIONS):
             name, icon = TRANSITIONS[kind]
-            picture = self._icon_tile(icon) if icon else pattern_tile(kind)
+            picture = pattern_tile(kind) if kind in LUMA_PATTERNS else self._icon_tile(icon)
             tile = _tile(picture, _(name), _DragTile(TRANSITION_MIME, kind), ICON_TILE)
             tile.setCheckable(False)
             tile.setToolTip(_("Glissez la transition entre deux clips de la timeline, ou "

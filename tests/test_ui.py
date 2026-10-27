@@ -2494,3 +2494,20 @@ def test_recorder_dialog_and_processed_webcam(window, media_dir, monkeypatch, tm
     assert results == [str(target)] and target.exists()
     assert wait_until(lambda: any(m.path == str(target) for m in editor.project.media))
     assert not list(target.parent.glob("*.webcam.mkv"))
+
+
+@needs_ffmpeg
+def test_pattern_transition_is_drawn_in_timeline(window, media_dir):
+    """Les transitions à motif n'avaient pas d'icône : la timeline plantait en les
+    dessinant (balayages, stores…)."""
+    editor = imported_editor(window, media_dir, ["red.mp4", "blue.mp4"])
+    for media in editor.project.media:
+        editor.add_to_timeline(media)
+    first = editor.project.clips[0]
+    editor.controller.select(first.id)
+    editor.add_transition("wipe_right")
+    assert editor.project.transitions[0].kind == "wipe_right"
+    editor.timeline.view.viewport().repaint()
+    editor.inspector.show_transition(editor.project.transitions[0])
+    editor.player.seek(45)
+    assert wait_until(lambda: editor.player.position == 45)
