@@ -226,6 +226,22 @@ def test_slide_and_wipe(engine, media_dir):
         assert near(rgb(src, 30, 60, 18), right), kind
 
 
+def test_pattern_transitions(engine, media_dir):
+    """Transitions à motif, à mi-parcours : la seconde vidéo apparaît d'abord là où le
+    motif l'annonce (centre pour le cercle et l'ouverture, bords pour la fermeture)."""
+    red, blue = str(media_dir / "red.mp4"), str(media_dir / "blue.mp4")
+    cases = (("circle", (32, 18), (2, 2)), ("barn_vertical", (32, 18), (2, 18)),
+             ("close", (2, 18), (32, 18)), ("wipe_down", (32, 3), (32, 33)),
+             ("diamond", (32, 18), (2, 2)))
+    for kind, new_at, old_at in cases:
+        track = TrackSpec("video", False, False,
+                          (ClipSpec(red, "video", 0, 40), ClipSpec(blue, "video", 20, 40)),
+                          transitions=(TransitionSpec(0, kind, 20),))
+        src = engine.build(spec(track))
+        assert near(rgb(src, 30, *new_at), BLUE), kind
+        assert near(rgb(src, 30, *old_at), RED), kind
+
+
 def test_text_overlay(engine, media_dir):
     lower = video(ClipSpec(str(media_dir / "blue.mp4"), "video", 0, 30))
     text = video(ClipSpec(str(media_dir / "text.png"), "text", 5, 20, media_size=(64, 36)))

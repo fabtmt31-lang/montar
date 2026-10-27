@@ -30,6 +30,8 @@ from montar.engine.base import (
 from montar.engine.geometry import affine_rect, crop_pixels, placement
 from montar.engine.grading import grade_filters
 from montar.engine.looks import color_filters, effect_filters, preset_filters
+from montar.engine.lumas import PATTERNS as LUMA_PATTERNS
+from montar.engine.lumas import softness as luma_softness
 from montar.engine.sound import audio_filters
 from montar.platform import windows
 
@@ -202,20 +204,19 @@ def _fade_points(duration: int, fade_in: int, fade_out: int, low: float,
     return points
 
 
-def _luma_file(kind: str) -> str:
-    """Motif de balayage (dégradé horizontal) pour la transition « luma »."""
+def _luma_file(kind: str, canvas: Canvas) -> str:
+    """Motif de la transition « luma » (voir engine/lumas.py), en image PGM mise en cache."""
+    from montar.engine.lumas import luma_bytes, luma_size
     from montar.platform.paths import cache_dir
 
+    width, height = luma_size(canvas.width, canvas.height)
     folder = cache_dir() / "lumas"
-    path = folder / f"{kind}.pgm"
+    path = folder / f"{kind}-{width}x{height}.pgm"
     if not path.exists():
         folder.mkdir(parents=True, exist_ok=True)
-        width, height = 256, 16
-        ramp = bytes(round(x * 255 / (width - 1)) for x in range(width))
-        if kind == "wipe_left":
-            ramp = ramp[::-1]
         tmp = path.with_suffix(".tmp")
-        tmp.write_bytes(f"P5 {width} {height} 255\n".encode() + ramp * height)
+        tmp.write_bytes(f"P5 {width} {height} 255\n".encode()
+                        + luma_bytes(kind, width, height))
         tmp.replace(path)
     return str(path)
 
@@ -351,9 +352,9 @@ class _TimelineGraph:
             transition.set("distort", 0)
         else:
             transition = mlt.Transition(self.profile, "luma")
-            if t.kind in ("wipe_left", "wipe_right"):
-                transition.set("resource", _luma_file(t.kind))
-                transition.set("softness", 0.15)
+            if t.kind in LUMA_PATTERNS:
+                transition.set("resource", _luma_file(t.kind, self.canvas))
+                transition.set("softness", luma_softness(t.kind))
         playlist.mix(left_index, length, transition)
         self._keep.append(transition)
         mixed = playlist.get_clip(left_index + 1)

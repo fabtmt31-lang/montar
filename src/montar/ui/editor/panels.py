@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import copy
+from functools import cache
 
 from PyQt6.QtCore import QMimeData, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QDrag, QLinearGradient, QPainter, QPixmap
+from PyQt6.QtGui import QColor, QDrag, QImage, QLinearGradient, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -172,6 +173,39 @@ class TextPanel(_Panel):
         return pm
 
 
+@cache
+def _pattern_image(kind: str, width: int, height: int) -> QImage:
+    """Vignette d'une transition à motif, à mi-parcours : la première scène (sombre) et la
+    seconde (claire) séparées par le motif, bord adouci comme dans le rendu."""
+    from montar.engine.lumas import luma_bytes, softness
+
+    levels = luma_bytes(kind, width, height, 16 / 9)  # comme dans une vidéo 16:9
+    soft = max(0.04, softness(kind)) / 2
+    first = (QColor("#17261E"), QColor("#2F7A56"))
+    second = (QColor("#BFE3CF"), QColor("#F4F1E6"))
+    image = QImage(width, height, QImage.Format.Format_RGB32)
+    for y in range(height):
+        k = y / max(1, height - 1)
+        a = [round(c0 + (c1 - c0) * k) for c0, c1 in
+             zip(first[0].getRgb()[:3], first[1].getRgb()[:3], strict=True)]
+        b = [round(c0 + (c1 - c0) * k) for c0, c1 in
+             zip(second[0].getRgb()[:3], second[1].getRgb()[:3], strict=True)]
+        for x in range(width):
+            level = levels[y * width + x] / 255
+            mix = max(0.0, min(1.0, (0.5 - level) / (2 * soft) + 0.5))  # 1 : seconde scène
+            r, g, bl = (round(ca + (cb - ca) * mix) for ca, cb in zip(a, b, strict=True))
+            image.setPixel(x, y, 0xFF000000 | (r << 16) | (g << 8) | bl)
+    return image
+
+
+def pattern_tile(kind: str) -> QPixmap:
+    w, h = ICON_TILE.width(), ICON_TILE.height()
+    pm = QPixmap.fromImage(_pattern_image(kind, w, h).scaled(
+        w * 2, h * 2, Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation))
+    return pm
+
+
 class TransitionsPanel(_Panel):
     applyRequested = pyqtSignal(str)
 
@@ -185,8 +219,8 @@ class TransitionsPanel(_Panel):
         self._tiles = []
         for i, kind in enumerate(VIDEO_TRANSITIONS):
             name, icon = TRANSITIONS[kind]
-            tile = _tile(self._icon_tile(icon), _(name), _DragTile(TRANSITION_MIME, kind),
-                         ICON_TILE)
+            picture = self._icon_tile(icon) if icon else pattern_tile(kind)
+            tile = _tile(picture, _(name), _DragTile(TRANSITION_MIME, kind), ICON_TILE)
             tile.setCheckable(False)
             tile.setToolTip(_("Glissez la transition entre deux clips de la timeline, ou "
                               "cliquez pour la placer après le clip sélectionné"))

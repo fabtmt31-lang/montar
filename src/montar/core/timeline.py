@@ -32,8 +32,11 @@ TRACK_KINDS = ("text", "video", "audio")
 TRACK_NAMES = {"text": "Texte", "video": "Vidéo", "audio": "Audio"}
 TRACK_PREFIX = {"text": "T", "video": "V", "audio": "A"}
 VOICE_OVER_TRACK = "Voix off"
-VIDEO_TRANSITIONS = ("dissolve", "dip_black", "dip_white", "wipe_right", "wipe_left",
-                     "slide_left", "slide_right", "zoom")
+VIDEO_TRANSITIONS = ("dissolve", "dip_black", "dip_white", "slide_left", "slide_right", "zoom",
+                     "wipe_right", "wipe_left", "wipe_down", "wipe_up", "wipe_diagonal",
+                     "soft_wipe_right", "soft_wipe_left", "soft_wipe_down", "soft_wipe_up",
+                     "blinds", "barn_vertical", "barn_horizontal", "close", "clock", "circle",
+                     "diamond", "thirds")
 AUDIO_TRANSITIONS = ("dissolve",)
 
 
