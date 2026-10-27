@@ -22,8 +22,18 @@ def test_command(monkeypatch):
     assert "-f pulse -i default" in line and "-f pulse -i @DEFAULT_MONITOR@" in line
     assert "amix=inputs=2" in line and "overlay=W-w-24:H-h-24" in line
     assert "-f v4l2 -i /dev/video0" in line and cmd[-1] == "out.mp4"
-    region = " ".join(command(RecordOptions(source="region", microphone=False), "x.mp4"))
-    assert "-select_region 1" in region and "pulse" not in region and "-c:a" not in region
+    region = " ".join(command(RecordOptions(source="region", geometry=(1920, 0, 1280, 720),
+                                            region=(10, 20, 301, 200), microphone=False,
+                                            display=":1"), "x.mp4"))
+    assert "-video_size 300x200 -i :1+1930,20" in region
+    assert "pulse" not in region and "-c:a" not in region
+    # horloge commune : chaque source datée à la lecture, ramenée au même départ
+    timed = command(RecordOptions(geometry=(0, 0, 640, 360), webcam="/dev/video0"), "t.mp4",
+                    t0=1000.5)
+    line = " ".join(timed)
+    assert line.count("-use_wallclock_as_timestamps 1") == 3 and "-copyts" in line
+    assert "[0:v]setpts=PTS-1000.500000/TB" in line and "[2:v]setpts=PTS-1000.500000/TB" in line
+    assert "asetpts=PTS-1000.500000/TB,aresample=async=1000" in line
     window = " ".join(command(RecordOptions(source="window", window_id="0x3a0000a",
                                             microphone=False), "x.mp4"))
     assert "-window_id 0x3a0000a" in window
@@ -127,6 +137,7 @@ def test_voice_over_on_windows(monkeypatch):
 
 def test_command_on_windows(monkeypatch):
     monkeypatch.setattr(recorder, "ON_WINDOWS", True)
+    monkeypatch.setattr(recorder, "recording_encoder", lambda: recorder.SOFTWARE_ENCODER)
     monkeypatch.setattr(recorder, "dshow_devices",
                         lambda kind: recorder.parse_dshow(DSHOW_LISTING, kind))
     # repli gdigrab (ffmpeg sans ddagrab)
@@ -150,17 +161,25 @@ def test_command_on_windows(monkeypatch):
     monkeypatch.setattr(recorder, "windows_grabber", lambda: "ddagrab")
     line = " ".join(command(RecordOptions(screen_index=1, microphone=False), "d.mp4"))
     assert "-f lavfi -i ddagrab=output_idx=1:framerate=30:draw_mouse=1" in line
-    assert "[0:v]hwdownload,format=bgra,scale=" in line and "gdigrab" not in line
+    assert "[0:v]hwdownload,format=bgra,setpts=" in line and "gdigrab" not in line
     zone = " ".join(command(RecordOptions(source="region", region=(10, 20, 301, 200),
                                           microphone=False), "z.mp4"))
     assert ":offset_x=10:offset_y=20:video_size=300x200" in zone
 
-    # fenêtre : la zone qu'elle occupe sur le bureau (filmée seule, elle sortait noire)
-    monkeypatch.setattr(recorder, "window_rect", lambda title: (100, 80, 801, 600))
+    # fenêtre : la zone qu'elle occupe sur son écran (filmée seule, elle sortait noire),
+    # par ddagrab (fluide) ; ici sur le second écran, à droite du premier
+    monkeypatch.setattr(recorder, "window_rect", lambda title: (2020, 80, 801, 600))
+    monkeypatch.setattr(recorder, "monitors", lambda: [(0, 0, 1920, 1080),
+                                                       (1920, 0, 2560, 1440)])
+    window = " ".join(command(RecordOptions(source="window", window_title="Bloc-notes",
+                                            microphone=False), "w.mp4"))
+    assert "ddagrab=output_idx=1:" in window
+    assert ":offset_x=100:offset_y=80:video_size=800x600" in window
+    monkeypatch.setattr(recorder, "windows_grabber", lambda: "gdigrab")  # sans ddagrab
     window = " ".join(command(RecordOptions(source="window", window_title="Bloc-notes",
                                             microphone=False), "w.mp4"))
     assert "-f gdigrab" in window and "-i desktop" in window
-    assert "-offset_x 100 -offset_y 80 -video_size 800x600" in window
+    assert "-offset_x 2020 -offset_y 80 -video_size 800x600" in window
     monkeypatch.setattr(recorder, "window_rect", lambda title: None)  # fenêtre introuvable
     window = " ".join(command(RecordOptions(source="window", window_title="Bloc-notes",
                                             microphone=False), "w.mp4"))
@@ -192,6 +211,14 @@ def test_physical_region():
     assert physical_region(Screen(), QRect(10, 20, 200, 100)) == (15, 30, 300, 150)
 
 
+def test_on_monitor():
+    screens = [(0, 0, 1920, 1080), (-1280, 0, 1280, 1024)]
+    assert recorder.on_monitor((100, 100, 401, 300), screens) == (0, (100, 100, 400, 300))
+    # fenêtre qui dépasse de l'écran de gauche : seule la partie visible est filmée
+    assert recorder.on_monitor((-1000, 800, 800, 400), screens) == (1, (280, 800, 800, 224))
+    assert recorder.on_monitor((5000, 0, 100, 100), screens) is None
+
+
 def test_webcam_layouts_and_processed_parts(monkeypatch):
     monkeypatch.setattr(recorder, "ON_WINDOWS", False)
     base = dict(geometry=(0, 0, 1280, 720), microphone=False, webcam="/dev/video0")
@@ -214,8 +241,13 @@ def test_webcam_layouts_and_processed_parts(monkeypatch):
     cmd = command(options, "/tmp/rec.mp4")
     screen_part, cam_part = recorder.parts("/tmp/rec.mp4")
     assert screen_part in cmd and cam_part in cmd and "/tmp/rec.mp4" not in cmd
+    assert "pipe:1" not in cmd
+    live = " ".join(command(options, "/tmp/rec.mp4", live_masks=True))  # détourage en direct
+    assert "split=2[camfile][campipe]" in live and "scale=256:144,format=rgb24" in live
+    assert live.endswith("-f rawvideo pipe:1")
     compose = " ".join(recorder.compose_command(options, screen_part, cam_part, "m.mkv",
-                                                "/tmp/rec.mp4", (1280, 720)))
+                                                "/tmp/rec.mp4", (1280, 720), cam_start=1.25))
+    assert "setpts=PTS-STARTPTS+1.250000/TB" in compose and "-copyts" in compose
     assert "alphamerge" in compose and "gblur=sigma=18" in compose and "0:a?" in compose
     removed = " ".join(recorder.compose_command(
         dataclasses.replace(options, webcam_background="remove"), screen_part, cam_part,
@@ -286,3 +318,25 @@ def test_finisher_blurs_webcam_background(tmp_path):
     assert job.wait(120) and not job.error, job.error
     assert target.exists() and not Path(cam_part).exists() and not Path(screen_part).exists()
     assert _duration(target) == pytest.approx(1.0, abs=0.3)
+
+
+def test_parse_xwininfo():
+    listing = """xwininfo: Window id: 0x3a0000a "Terminal"
+  Absolute upper-left X:  120
+  Absolute upper-left Y:  64
+  Width: 801
+  Height: 600
+"""
+    assert recorder.parse_xwininfo(listing) == ("0x3a0000a", (120, 64, 801, 600))
+    assert recorder.parse_xwininfo("") == ("", None)
+
+
+def test_level_meter_keeps_last_seconds(tmp_path):
+    import wave
+
+    meter = recorder.LevelMeter.__new__(recorder.LevelMeter)
+    meter._samples = bytearray(b"\x00\x10" * recorder.LevelMeter.RATE)  # 1 s
+    assert meter.seconds == 1.0
+    assert meter.save_wav(tmp_path / "t.wav")
+    with wave.open(str(tmp_path / "t.wav")) as w:
+        assert w.getframerate() == recorder.LevelMeter.RATE and w.getnframes() == 16000

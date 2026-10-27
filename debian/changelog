@@ -1,3 +1,21 @@
+montar (1.8.0) unstable; urgency=medium
+
+  * Enregistreur d'écran : son, webcam et écran synchrones (sources datées
+    avec l'horloge de l'ordinateur et ramenées au même départ).
+  * Plus fluide : encodeur matériel s'il marche (NVENC, Quick Sync, AMF),
+    fenêtre filmée par Desktop Duplication, tampons de la webcam agrandis,
+    incrustation ronde calculée en petit.
+  * Démarrage immédiat : périphériques et méthode de capture découverts en
+    tâche de fond (l'attente laissait une fenêtre vide).
+  * La zone filmée clignote pendant le compte à rebours ; sous Linux, la zone
+    et la fenêtre se choisissent aussi avant le compte à rebours.
+  * Détourage de la webcam pendant l'enregistrement : il ne reste que
+    l'assemblage à la fin.
+  * Test de la webcam (image en direct) et réécoute du test du micro.
+  * Une transition à motif (balayage, stores…) faisait planter la timeline.
+
+ -- Fabien <admin@appsdoc.fr>  Tue, 27 Oct 2026 18:00:00 +0100
+
 montar (1.7.0) unstable; urgency=medium
 
   * Enregistreur d'écran : webcam dans un coin (taille, rectangle ou rond) ou

@@ -10,9 +10,10 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from PyQt6.QtCore import QRectF, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QRect, QRectF, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QImage, QKeySequence, QPainter, QShortcut, QTransform
 from PyQt6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QDialog,
     QFileDialog,
@@ -66,9 +67,11 @@ from montar.ui.dialogs.master_report import MasterReportDialog
 from montar.ui.dialogs.media_editor import MediaEditorDialog
 from montar.ui.dialogs.recorder import (
     COUNTDOWN,
+    CaptureHighlight,
     RecorderDialog,
     RecordingBar,
     RegionSelector,
+    logical_rect,
     physical_region,
 )
 from montar.ui.dialogs.voice_over import VoiceOverDialog
@@ -308,6 +311,9 @@ class EditorPage(QWidget):
         self.use_proxies = True  # proxys des vidéos 4K pour l'aperçu (F-MED-05)
         self._recorder: Recorder | None = None
         self._record_bar: RecordingBar | None = None
+        # périphériques et méthode de capture découverts en tâche de fond : l'enregistreur
+        # s'ouvre et démarre ensuite sans attendre
+        recorder_module.warm_up()
         self._record_timer = QTimer(self)
         self._record_timer.setInterval(250)
         self._record_timer.timeout.connect(self._poll_recording)
@@ -1071,32 +1077,51 @@ class EditorPage(QWidget):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         options = dialog.options()
-        if recorder_module.ON_WINDOWS and options.source == "region":
-            screen = dialog.chosen_screen()
+        screen = dialog.chosen_screen()
+        area = screen.geometry() if screen is not None else None  # signalée avant le début
+        if options.source == "region":  # zone dessinée à la souris sur l'écran choisi
             rect = RegionSelector(screen).select() if screen is not None else None
             if rect is None:
                 return
             options.region = physical_region(screen, rect)
-        if recorder_module.ON_WINDOWS and options.source == "window" and not options.window_title:
-            return
+            area = rect.translated(screen.geometry().topLeft())
+        elif options.source == "window" and recorder_module.ON_WINDOWS:
+            if not options.window_title:
+                return
+            found = recorder_module.window_rect(options.window_title)
+            area = logical_rect(found) if found is not None else None
+        elif options.source == "window":  # X11 : un clic sur la fenêtre à filmer
+            options.window_id, found = pick_window()
+            if not options.window_id:
+                return
+            area = QRect(*found) if found is not None else None
         stamp = time.strftime("%Y-%m-%d %H-%M-%S")
         target = self.project.media_dir / f"{_('Enregistrement')} {stamp}.mp4"
-        self.start_recording(options, target)
+        self.start_recording(options, target, area=area)
 
-    def start_recording(self, options, target: Path, countdown: int = COUNTDOWN) -> None:
+    def start_recording(self, options, target: Path, countdown: int = COUNTDOWN,
+                        area: QRect | None = None) -> None:
+        """Compte à rebours (la zone filmée clignote), puis enregistrement."""
         self._recorder = Recorder(options, target)
         self._record_bar = RecordingBar()
         self._record_bar.stopRequested.connect(self.stop_recording)
         self._record_bar.countdownFinished.connect(self._begin_recording)
         self.window().showMinimized()
+        self._highlight = CaptureHighlight(area) if area is not None and countdown > 0 \
+            else None
+        if self._highlight is not None:
+            self._highlight.start()
         self._record_bar.start_countdown(countdown)
 
     def _begin_recording(self) -> None:
         recorder = self._recorder
         if recorder is None:
             return
-        if recorder.options.source == "window" and not recorder_module.ON_WINDOWS:
-            recorder.options.window_id = pick_window()
+        highlight, self._highlight = getattr(self, "_highlight", None), None
+        if highlight is not None:  # surtout pas dans la vidéo
+            highlight.close()
+            highlight.deleteLater()
+            QApplication.processEvents()
         recorder.start()
         self._record_timer.start()
 
@@ -1113,6 +1138,10 @@ class EditorPage(QWidget):
     def stop_recording(self) -> None:
         recorder, self._recorder = self._recorder, None
         self._record_timer.stop()
+        highlight, self._highlight = getattr(self, "_highlight", None), None
+        if highlight is not None:  # arrêt pendant le compte à rebours
+            highlight.close()
+            highlight.deleteLater()
         if self._record_bar is not None:
             self._record_bar.close()
             self._record_bar.deleteLater()
@@ -1127,7 +1156,8 @@ class EditorPage(QWidget):
         if recorder.stop() and recorder.options.processed:
             # fond de la webcam flouté ou effacé : détourage puis assemblage, en tâche de fond
             self._recording_job = True
-            self._export_job = Finisher(recorder.options, recorder.target, seconds)
+            self._export_job = Finisher(recorder.options, recorder.target, seconds,
+                                        masks_ready=recorder.masks_ready)
             self._export_settings = None
             self._export_started = time.monotonic()
             self._export_job.start()

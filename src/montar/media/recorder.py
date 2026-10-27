@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -97,18 +98,54 @@ def webcams() -> list[str]:
     return sorted(glob.glob("/dev/video*"))
 
 
+_DSHOW: tuple[float, str] | None = None  # (instant, liste de ffmpeg)
+_DSHOW_LOCK = threading.Lock()
+DSHOW_TTL = 120.0  # secondes avant de relire la liste des périphériques
+
+
+def dshow_listing(refresh: bool = False) -> str:
+    """Liste DirectShow de ffmpeg, gardée en mémoire : la relire lance ffmpeg (une à
+    plusieurs secondes), ce qui bloquait la fenêtre d'enregistrement."""
+    global _DSHOW
+    with _DSHOW_LOCK:
+        if not refresh and _DSHOW is not None and time.monotonic() - _DSHOW[0] < DSHOW_TTL:
+            return _DSHOW[1]
+        ffmpeg = shutil.which("ffmpeg")
+        out = ""
+        if ffmpeg is not None:
+            try:
+                out = subprocess.run([ffmpeg, "-hide_banner", "-list_devices", "true", "-f",
+                                      "dshow", "-i", "dummy"], capture_output=True, text=True,
+                                     encoding="utf-8", errors="replace", timeout=10).stderr
+            except (OSError, subprocess.SubprocessError):
+                out = ""
+        _DSHOW = (time.monotonic(), out)
+        return out
+
+
 def dshow_devices(kind: str) -> list[str]:
     """Périphériques DirectShow (Windows) d'un type (« audio » ou « video »)."""
-    ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is None:
-        return []
-    try:
-        out = subprocess.run([ffmpeg, "-hide_banner", "-list_devices", "true", "-f", "dshow",
-                              "-i", "dummy"], capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", timeout=10).stderr
-    except (OSError, subprocess.SubprocessError):
-        return []
-    return parse_dshow(out, kind)
+    return parse_dshow(dshow_listing(), kind)
+
+
+_WARMED = False
+
+
+def warm_up() -> None:
+    """Prépare en tâche de fond ce qui est long à découvrir (périphériques, méthode de
+    capture, encodeur) : la fenêtre d'enregistrement s'ouvre et démarre aussitôt."""
+    global _WARMED
+    if _WARMED:
+        return
+    _WARMED = True
+
+    def run() -> None:
+        if ON_WINDOWS:
+            dshow_listing()
+            windows_grabber()
+        recording_encoder()
+
+    threading.Thread(target=run, name="montar-preparation", daemon=True).start()
 
 
 def parse_dshow(listing: str, kind: str = "audio") -> list[str]:
@@ -148,11 +185,18 @@ def loopback_device() -> str:
 
 
 _GRABBER: str | None = None
+_GRABBER_LOCK = threading.Lock()
 
 
 def windows_grabber() -> str:
     """« ddagrab » s'il fonctionne sur cet ordinateur (Windows 8 et plus récents, carte
     graphique), sinon « gdigrab »."""
+    global _GRABBER
+    with _GRABBER_LOCK:
+        return _grabber()
+
+
+def _grabber() -> str:
     global _GRABBER
     if _GRABBER is None:
         _GRABBER = "gdigrab"
@@ -169,6 +213,81 @@ def windows_grabber() -> str:
             except (OSError, subprocess.SubprocessError):
                 pass
     return _GRABBER
+
+
+_ENCODER: list[str] | None = None
+_ENCODER_LOCK = threading.Lock()
+SOFTWARE_ENCODER = ["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+                    "-crf", "23"]
+# encodeurs matériels essayés sous Windows (carte NVIDIA, Intel, AMD) : l'enregistrement ne
+# prend presque plus de processeur, l'image ne saccade plus
+_HARDWARE_ENCODERS = (
+    ["-c:v", "h264_nvenc", "-preset", "p2", "-tune", "ll", "-rc", "vbr", "-cq", "23",
+     "-b:v", "0"],
+    ["-c:v", "h264_qsv", "-preset", "veryfast", "-global_quality", "23"],
+    ["-c:v", "h264_amf", "-usage", "lowlatency", "-quality", "speed", "-rc", "cqp",
+     "-qp_i", "22", "-qp_p", "24"],
+)
+
+
+def recording_encoder() -> list[str]:
+    """Arguments de l'encodeur vidéo de l'enregistrement : matériel s'il marche vraiment
+    (essai d'encodage), sinon x264 au plus rapide."""
+    global _ENCODER
+    with _ENCODER_LOCK:
+        if _ENCODER is None:
+            _ENCODER = SOFTWARE_ENCODER
+            ffmpeg = shutil.which("ffmpeg")
+            for args in _HARDWARE_ENCODERS if ON_WINDOWS and ffmpeg else ():
+                try:
+                    done = subprocess.run(
+                        [ffmpeg, "-v", "error", "-f", "lavfi", "-i",
+                         "color=c=black:s=640x360:r=30:d=0.3", *args, "-f", "null", "-"],
+                        capture_output=True, timeout=15)
+                except (OSError, subprocess.SubprocessError):
+                    continue
+                if done.returncode == 0:
+                    _ENCODER = args
+                    break
+        return list(_ENCODER)
+
+
+def monitors() -> list[tuple[int, int, int, int]]:
+    """Windows : rectangles (x, y, largeur, hauteur) des écrans, en pixels réels, dans
+    l'ordre de Windows (celui de ddagrab)."""
+    if not ON_WINDOWS:
+        return []
+    import ctypes
+    from ctypes import wintypes
+
+    found: list[tuple[int, int, int, int]] = []
+    proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HMONITOR, wintypes.HDC,
+                              ctypes.POINTER(wintypes.RECT), wintypes.LPARAM)
+
+    def visit(_monitor, _dc, rect, _lparam):
+        r = rect.contents
+        found.append((r.left, r.top, r.right - r.left, r.bottom - r.top))
+        return True
+
+    ctypes.windll.user32.EnumDisplayMonitors(None, None, proc(visit), 0)
+    return found
+
+
+def on_monitor(area: tuple[int, int, int, int],
+               screens: list[tuple[int, int, int, int]]
+               ) -> tuple[int, tuple[int, int, int, int]] | None:
+    """Écran qui contient le centre de `area` et la partie de `area` visible sur cet écran,
+    relative à son coin (pour ddagrab)."""
+    x, y, w, h = area
+    cx, cy = x + w / 2, y + h / 2
+    for index, (sx, sy, sw, sh) in enumerate(screens):
+        if sx <= cx < sx + sw and sy <= cy < sy + sh:
+            left, top = max(x, sx), max(y, sy)
+            right, bottom = min(x + w, sx + sw), min(y + h, sy + sh)
+            cw, ch = right - left, bottom - top
+            if cw > 16 and ch > 16:
+                return index, (left - sx, top - sy, cw - cw % 2, ch - ch % 2)
+    return None
 
 
 def window_titles() -> list[str]:
@@ -263,15 +382,16 @@ def microphone_input(device: str) -> list[str]:
 
 
 class LevelMeter:
-    """Test du micro : niveau sonore en direct (0 à 1), lu par ffmpeg dans un fil."""
+    """Test du micro : niveau sonore en direct (0 à 1), lu par ffmpeg dans un fil ; les
+    dernières secondes sont gardées pour être réécoutées (`save_wav`)."""
 
-    RATE = 8000
+    RATE = 16000
+    KEEP_SECONDS = 8
 
     def __init__(self, device: str) -> None:
-        import threading
-
         self.level = 0.0
         self.error = ""
+        self._samples = bytearray()
         self._proc: subprocess.Popen | None = None
         args = microphone_input(device)
         if not args or shutil.which("ffmpeg") is None:
@@ -292,15 +412,37 @@ class LevelMeter:
 
         assert self._proc is not None and self._proc.stdout is not None
         chunk = self.RATE // 10 * 2  # 0,1 s
+        keep = self.RATE * 2 * self.KEEP_SECONDS
         while True:
             data = self._proc.stdout.read(chunk)
             if not data:
                 break
-            samples = array.array("h", data[:len(data) // 2 * 2])
+            data = data[:len(data) // 2 * 2]
+            self._samples += data
+            if len(self._samples) > keep:
+                del self._samples[:len(self._samples) - keep]
+            samples = array.array("h", data)
             peak = max((abs(v) for v in samples), default=0) / 32768
             self.level = max(peak, self.level * 0.6)  # retombe doucement
         if self._proc.poll() not in (None, 0) and not self.error:
             self.error = _("le micro ne répond pas")
+
+    @property
+    def seconds(self) -> float:
+        return len(self._samples) / 2 / self.RATE
+
+    def save_wav(self, path: Path) -> bool:
+        """Écrit les dernières secondes entendues ; False s'il n'y a rien."""
+        import wave
+
+        if not self._samples:
+            return False
+        with wave.open(str(path), "wb") as out:
+            out.setnchannels(1)
+            out.setsampwidth(2)
+            out.setframerate(self.RATE)
+            out.writeframes(bytes(self._samples))
+        return True
 
     def stop(self) -> None:
         if self._proc is not None and self._proc.poll() is None:
@@ -311,78 +453,171 @@ class LevelMeter:
                 self._proc.kill()
 
 
-def pick_window(timeout: float = 60.0) -> str:
-    """Laisse l'utilisateur cliquer sur une fenêtre ; renvoie son identifiant X11."""
-    out = subprocess.run(["xwininfo"], capture_output=True, text=True, timeout=timeout)
-    for line in out.stdout.splitlines():
-        if "Window id:" in line:
-            return line.split("Window id:")[1].split()[0]
-    return ""
-
-
-def command(options: RecordOptions, target: str) -> list[str]:
+def webcam_input(device: str) -> list[str]:
     if ON_WINDOWS:
-        return _command_windows(options, target)
+        return ["-f", "dshow", "-rtbufsize", "256M", "-i", f"video={device}"]
+    return ["-f", "v4l2", "-i", device]
+
+
+class CameraPreview:
+    """Test de la webcam : petites images en direct (RGB, `size`), lues par ffmpeg."""
+
+    def __init__(self, device: str, size: tuple[int, int] = (320, 180), fps: int = 15) -> None:
+        self.size = size
+        self.frame: bytes | None = None  # dernière image reçue
+        self.error = ""
+        self._proc: subprocess.Popen | None = None
+        if not device or shutil.which("ffmpeg") is None:
+            self.error = _("aucune webcam")
+            return
+        w, h = size
+        cmd = [shutil.which("ffmpeg"), "-v", "error", *webcam_input(device), "-vf",
+               f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+               f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,fps={fps},format=rgb24",
+               "-f", "rawvideo", "-"]
+        try:
+            self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                          stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
+        except OSError as exc:
+            self.error = str(exc)
+            return
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def _read(self) -> None:
+        assert self._proc is not None and self._proc.stdout is not None
+        size = self.size[0] * self.size[1] * 3
+        while True:
+            data = self._proc.stdout.read(size)
+            if len(data) < size:
+                break
+            self.frame = data
+        if self.frame is None and not self.error:
+            self.error = _("la webcam ne répond pas (déjà utilisée par une autre application ?)")
+
+    def stop(self) -> None:
+        if self._proc is not None and self._proc.poll() is None:
+            self._proc.terminate()
+            try:
+                self._proc.wait(3)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
+
+
+def pick_window(timeout: float = 60.0) -> tuple[str, tuple[int, int, int, int] | None]:
+    """Laisse l'utilisateur cliquer sur une fenêtre (X11) ; renvoie son identifiant et son
+    rectangle à l'écran."""
+    try:
+        out = subprocess.run(["xwininfo"], capture_output=True, text=True,
+                             timeout=timeout).stdout
+    except (OSError, subprocess.SubprocessError):
+        return "", None
+    return parse_xwininfo(out)
+
+
+def parse_xwininfo(listing: str) -> tuple[str, tuple[int, int, int, int] | None]:
+    window, values = "", {}
+    for line in listing.splitlines():
+        if "Window id:" in line:
+            window = line.split("Window id:")[1].split()[0]
+        key, _sep, value = line.strip().partition(":")
+        if key in ("Absolute upper-left X", "Absolute upper-left Y", "Width", "Height"):
+            try:
+                values[key] = int(value.strip())
+            except ValueError:
+                pass
+    if len(values) == 4:
+        return window, (values["Absolute upper-left X"], values["Absolute upper-left Y"],
+                        values["Width"], values["Height"])
+    return window, None
+
+
+# toutes les sources sont datées avec l'horloge de l'ordinateur au moment où elles sont lues,
+# puis ramenées à un même instant de départ : le son, la webcam et l'écran restent
+# synchrones même si une source démarre plus tard que les autres (webcam lente à s'ouvrir)
+WALLCLOCK = ["-use_wallclock_as_timestamps", "1"]
+
+
+def command(options: RecordOptions, target: str, t0: float | None = None,
+            live_masks: bool = False) -> list[str]:
+    """Commande ffmpeg de l'enregistrement ; `t0` : instant de départ commun (secondes,
+    horloge de l'ordinateur) ; `live_masks` : images réduites de la webcam envoyées sur la
+    sortie standard (détourage pendant l'enregistrement)."""
+    t0 = time.time() if t0 is None else t0
+    if ON_WINDOWS:
+        return _command_windows(options, target, t0, live_masks)
     ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
     display = options.display or os.environ.get("DISPLAY", ":0")
-    cmd = [ffmpeg, "-v", "error", "-y", "-thread_queue_size", "512", "-f", "x11grab",
-           "-framerate", str(options.fps), "-draw_mouse", "1" if options.show_cursor else "0"]
+    cmd = [ffmpeg, "-v", "error", "-y", "-copyts", *WALLCLOCK, "-thread_queue_size", "1024",
+           "-f", "x11grab", "-framerate", str(options.fps),
+           "-draw_mouse", "1" if options.show_cursor else "0"]
+    size = options.capture_size()
     if options.source == "window" and options.window_id:
         cmd += ["-window_id", options.window_id, "-i", display]
-    elif options.source == "region":
-        cmd += ["-select_region", "1", "-i", display]
     else:
         x, y, w, h = options.geometry
+        if options.source == "region" and options.region:
+            rx, ry, w, h = options.region
+            x, y = x + rx, y + ry
         cmd += ["-video_size", f"{w - w % 2}x{h - h % 2}", "-i", f"{display}+{x},{y}"]
     inputs = 1
     audio = []
     for wanted, device in ((options.microphone, options.microphone_device or "default"),
                            (options.system_audio, "@DEFAULT_MONITOR@")):
         if wanted:
-            cmd += ["-thread_queue_size", "1024", "-f", "pulse", "-i", device]
+            cmd += [*WALLCLOCK, "-thread_queue_size", "4096", "-f", "pulse", "-i", device]
             audio.append(inputs)
             inputs += 1
     webcam = None
     if options.webcam:
-        cmd += ["-thread_queue_size", "512", "-f", "v4l2", "-i", options.webcam]
+        cmd += [*WALLCLOCK, "-thread_queue_size", "1024", *webcam_input(options.webcam)]
         webcam = inputs
-    return _encode(cmd, options, audio, webcam, target, size=options.capture_size())
+    return _encode(cmd, options, audio, webcam, target, "", size, t0, live_masks)
 
 
-def _command_windows(options: RecordOptions, target: str) -> list[str]:
-    """Écran ou zone par ddagrab (ou gdigrab), fenêtre par gdigrab ; sons et webcam par
-    DirectShow."""
+def _command_windows(options: RecordOptions, target: str, t0: float,
+                     live_masks: bool) -> list[str]:
+    """Écran, zone ou fenêtre par ddagrab (ou gdigrab) ; sons et webcam par DirectShow."""
     ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
     mouse = "1" if options.show_cursor else "0"
-    cmd = [ffmpeg, "-v", "error", "-y"]
+    cmd = [ffmpeg, "-v", "error", "-y", "-copyts"]
     prefix = ""
     size = options.capture_size()
+    ddagrab = windows_grabber() == "ddagrab"
+    output, part = options.screen_index, None  # écran et zone filmés par ddagrab
+    if options.source == "region" and options.region:
+        part = options.region
     area = window_rect(options.window_title) if options.source == "window" else None
-    if area is not None:  # la zone de la fenêtre sur le bureau (jamais noire)
-        x, y, w, h = area
-        size = (w - w % 2, h - h % 2)
-        cmd += ["-thread_queue_size", "512", "-f", "gdigrab", "-framerate", str(options.fps),
-                "-draw_mouse", mouse, "-offset_x", str(x), "-offset_y", str(y),
-                "-video_size", f"{size[0]}x{size[1]}", "-i", "desktop"]
-    elif options.source == "window" and options.window_title:
-        cmd += ["-thread_queue_size", "512", "-f", "gdigrab", "-framerate", str(options.fps),
-                "-draw_mouse", mouse, "-i", f"title={options.window_title}"]
-    elif windows_grabber() == "ddagrab":
-        grab = (f"ddagrab=output_idx={options.screen_index}:framerate={options.fps}"
-                f":draw_mouse={mouse}")
-        if options.source == "region" and options.region:
-            rx, ry, rw, rh = options.region
-            grab += f":offset_x={rx}:offset_y={ry}:video_size={rw - rw % 2}x{rh - rh % 2}"
-        cmd += ["-f", "lavfi", "-i", grab]
+    if area is not None and ddagrab:
+        # fenêtre : la zone qu'elle occupe sur son écran (jamais noire)
+        found = on_monitor(area, monitors())
+        if found is not None:
+            output, part = found
+        else:
+            ddagrab = False
+    if options.source == "window" and area is None:  # fenêtre introuvable : par son titre
+        cmd += [*WALLCLOCK, "-thread_queue_size", "1024", "-f", "gdigrab", "-framerate",
+                str(options.fps), "-draw_mouse", mouse, "-i", f"title={options.window_title}"]
+        size = None
+    elif ddagrab:
+        grab = f"ddagrab=output_idx={output}:framerate={options.fps}:draw_mouse={mouse}"
+        if part is not None:
+            px, py, pw, ph = part
+            grab += f":offset_x={px}:offset_y={py}:video_size={pw - pw % 2}x{ph - ph % 2}"
+            size = (pw - pw % 2, ph - ph % 2)
+        cmd += [*WALLCLOCK, "-f", "lavfi", "-i", grab]
         prefix = "hwdownload,format=bgra,"  # images rendues par la carte graphique
     else:
-        x, y, w, h = options.geometry
-        if options.source == "region" and options.region:
-            rx, ry, w, h = options.region
-            x, y = x + rx, y + ry
-        cmd += ["-thread_queue_size", "512", "-f", "gdigrab", "-framerate", str(options.fps),
-                "-draw_mouse", mouse, "-offset_x", str(x), "-offset_y", str(y),
-                "-video_size", f"{w - w % 2}x{h - h % 2}", "-i", "desktop"]
+        if area is not None:
+            x, y, w, h = area
+        else:
+            x, y, w, h = options.geometry
+            if part is not None:
+                rx, ry, w, h = part
+                x, y = x + rx, y + ry
+        size = (w - w % 2, h - h % 2)
+        cmd += [*WALLCLOCK, "-thread_queue_size", "1024", "-f", "gdigrab", "-framerate",
+                str(options.fps), "-draw_mouse", mouse, "-offset_x", str(x), "-offset_y",
+                str(y), "-video_size", f"{size[0]}x{size[1]}", "-i", "desktop"]
     inputs, audio, webcam = 1, [], None
     microphone = (options.microphone_device or next(iter(dshow_devices("audio")), "")) \
         if options.microphone else ""
@@ -391,14 +626,15 @@ def _command_windows(options: RecordOptions, target: str) -> list[str]:
         microphone = ""
     for device in (microphone, loopback):
         if device:
-            cmd += ["-thread_queue_size", "1024", "-f", "dshow", "-audio_buffer_size", "50",
-                    "-i", f"audio={device}"]
+            cmd += [*WALLCLOCK, "-thread_queue_size", "4096", "-f", "dshow", "-rtbufsize",
+                    "64M", "-audio_buffer_size", "50", "-i", f"audio={device}"]
             audio.append(inputs)
             inputs += 1
     if options.webcam:
-        cmd += ["-thread_queue_size", "512", "-f", "dshow", "-i", f"video={options.webcam}"]
+        # grand tampon : une webcam en MJPEG ne perd plus d'images quand l'ordinateur force
+        cmd += [*WALLCLOCK, "-thread_queue_size", "1024", *webcam_input(options.webcam)]
         webcam = inputs
-    return _encode(cmd, options, audio, webcam, target, prefix, size)
+    return _encode(cmd, options, audio, webcam, target, prefix, size, t0, live_masks)
 
 
 def webcam_graph(screen: str, cam: str, options: RecordOptions,
@@ -426,12 +662,14 @@ def webcam_graph(screen: str, cam: str, options: RecordOptions,
              "top_right": f"W-w-{MARGIN}:{MARGIN}",
              "top_left": f"{MARGIN}:{MARGIN}"}.get(options.webcam_position,
                                                    f"W-w-{MARGIN}:H-h-{MARGIN}")
-    if options.webcam_shape == "round":  # carré recadré au centre, masque rond
-        shaped = (f"{cam}crop='min(iw,ih)':'min(iw,ih)',format=yuva420p,"
-                  "geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':"
-                  "a='if(lte(hypot(X-W/2,Y-H/2),W/2-1),alpha(X,Y),0)'[shaped]")
-        scale = f"[shaped]{screen}scale2ref=w=trunc(iw*{share:g}/2)*2:h=ow[cam][base]"
-        return [shaped, scale, f"[base][cam]overlay={where},format=yuv420p{out}"]
+    if options.webcam_shape == "round":
+        # carré recadré au centre, réduit d'abord : le masque rond (geq, lent) ne porte
+        # que sur les points de l'incrustation
+        return [f"{cam}crop='min(iw,ih)':'min(iw,ih)'[square]",
+                f"[square]{screen}scale2ref=w=trunc(iw*{share:g}/2)*2:h=ow[camsmall][base]",
+                "[camsmall]format=yuva420p,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':"
+                "a='if(lte(hypot(X-W/2,Y-H/2),W/2-1),alpha(X,Y),0)'[cam]",
+                f"[base][cam]overlay={where},format=yuv420p{out}"]
     # scale2ref : iw / ih sont ceux de l'image de référence (l'écran), main_a les
     # proportions de la webcam
     return [f"{cam}{screen}scale2ref=w=trunc(iw*{share:g}/2)*2:h=trunc(ow/main_a/2)*2"
@@ -445,51 +683,82 @@ def parts(target: str) -> tuple[str, str]:
     return base + ".ecran.mkv", base + ".webcam.mkv"
 
 
+def mask_part(target: str) -> str:
+    """Vidéo des masques de la webcam (blanc = personne)."""
+    return str(Path(target).with_suffix("")) + ".masques.mkv"
+
+
+def start_time(path: str) -> float:
+    """Instant de la première image (les fichiers de l'enregistrement gardent l'heure
+    commune de départ : la webcam peut commencer après l'écran)."""
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe is None:
+        return 0.0
+    try:
+        out = subprocess.run([ffprobe, "-v", "error", "-show_entries", "format=start_time",
+                              "-of", "csv=p=0", path], capture_output=True, text=True,
+                             timeout=30).stdout.strip()
+        return max(0.0, float(out or 0))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return 0.0
+
+
+MASK_SIZE = (256, 144)  # images envoyées au détourage (taille du modèle)
+
+
 def _encode(cmd: list[str], options: RecordOptions, audio: list[int], webcam: int | None,
-            target: str, prefix: str = "", size: tuple[int, int] | None = None) -> list[str]:
-    """Montage des entrées (écran, webcam en incrustation, sons mélangés) et encodage."""
-    graph = [f"[0:v]{prefix}scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p[screen]"]
-    video = "[screen]"
-    if webcam is not None and options.processed:
-        # deux fichiers : l'écran (avec le son) et la webcam, assemblés après coup
-        screen_part, cam_part = parts(target)
-        maps = ["-map", video]
-        if len(audio) == 2:
-            graph.append(f"[{audio[0]}:a][{audio[1]}:a]amix=inputs=2:duration=longest[audio]")
-            maps += ["-map", "[audio]"]
-        elif audio:
-            maps += ["-map", f"{audio[0]}:a"]
-        quality = ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
-                   "-r", str(options.fps)]
-        cmd += ["-filter_complex", ";".join(graph), *maps, *quality]
-        if audio:
-            cmd += ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
-        return cmd + [screen_part, "-map", f"{webcam}:v", *quality, "-pix_fmt", "yuv420p",
-                      cam_part]
-    if webcam is not None:
-        graph += webcam_graph("[screen]", f"[{webcam}:v]", options, size)
-        video = "[video]"
-    maps = ["-map", video]
+            target: str, prefix: str = "", size: tuple[int, int] | None = None,
+            t0: float = 0.0, live_masks: bool = False) -> list[str]:
+    """Montage des entrées (écran, webcam, sons mélangés), ramenées à l'instant `t0`, et
+    encodage."""
+    shift = f"setpts=PTS-{t0:.6f}/TB"
+    graph = [f"[0:v]{prefix}{shift},scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p[screen]"]
+    for k, index in enumerate(audio):
+        graph.append(f"[{index}:a]asetpts=PTS-{t0:.6f}/TB,aresample=async=1000[a{k}]")
     if len(audio) == 2:
-        graph.append(f"[{audio[0]}:a][{audio[1]}:a]amix=inputs=2:duration=longest[audio]")
-        maps += ["-map", "[audio]"]
+        graph.append("[a0][a1]amix=inputs=2:duration=longest[audio]")
     elif audio:
-        maps += ["-map", f"{audio[0]}:a"]
-    cmd += ["-filter_complex", ";".join(graph), *maps,
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-r", str(options.fps)]
-    if audio:
-        cmd += ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
-    return cmd + ["-movflags", "+faststart", target]
+        graph.append("[a0]anull[audio]")
+    sound = ["-map", "[audio]", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"] if audio \
+        else []
+    video = [*recording_encoder(), "-r", str(options.fps)]
+    if webcam is not None:
+        graph.append(f"[{webcam}:v]{shift}[cam0]")
+    if webcam is not None and options.processed:
+        # deux fichiers (l'écran avec le son, la webcam), assemblés après coup ; avec le
+        # détourage en direct, images réduites de la webcam sur la sortie standard
+        screen_part, cam_part = parts(target)
+        outputs = ["-map", "[screen]", *video, *sound, screen_part,
+                   "-map", "[camfile]", *video, "-pix_fmt", "yuv420p", cam_part]
+        if live_masks:
+            w, h = MASK_SIZE
+            graph.append("[cam0]split=2[camfile][campipe]")
+            graph.append(f"[campipe]scale={w}:{h},format=rgb24[campix]")
+            outputs += ["-map", "[campix]", "-r", str(options.fps), "-f", "rawvideo",
+                        "pipe:1"]
+        else:
+            graph.append("[cam0]null[camfile]")
+        return cmd + ["-filter_complex", ";".join(graph), *outputs]
+    label = "[screen]"
+    if webcam is not None:
+        graph += webcam_graph("[screen]", "[cam0]", options, size)
+        label = "[video]"
+    return cmd + ["-filter_complex", ";".join(graph), "-map", label, *video, *sound,
+                  "-movflags", "+faststart", target]
 
 
 def compose_command(options: RecordOptions, screen_part: str, cam_part: str, mask: str,
-                    target: str, size: tuple[int, int] | None) -> list[str]:
+                    target: str, size: tuple[int, int] | None,
+                    cam_start: float = 0.0) -> list[str]:
     """Assemblage final d'un enregistrement traité : fond de la webcam flouté ou effacé
-    d'après les masques (`mask`, blanc = personne), webcam placée sur l'écran."""
+    d'après les masques (`mask`, blanc = personne, une image par image de la webcam, à
+    partir de `cam_start`), webcam placée sur l'écran. Les heures des fichiers sont
+    gardées (-copyts) : le son, l'écran et la webcam restent alignés."""
     ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
     graph = ["[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p[screen]",
+             f"[2:v]setpts=PTS-STARTPTS+{cam_start:.6f}/TB[maskat]",
              # masques agrandis à la taille de la webcam, bords adoucis
-             "[2:v][1:v]scale2ref=w=iw:h=ih[maskbig][cam]",
+             "[maskat][1:v]scale2ref=w=iw:h=ih[maskbig][cam]",
              "[maskbig]format=gray,gblur=sigma=2[mask]"]
     if options.webcam_background == "blur":
         graph += ["[cam]split[camback][camfront]",
@@ -499,7 +768,7 @@ def compose_command(options: RecordOptions, screen_part: str, cam_part: str, mas
     else:  # effacé : seule la personne reste, posée sur l'écran
         graph += ["[cam]format=yuva420p[camrgba]", "[camrgba][mask]alphamerge[camfx]"]
     graph += webcam_graph("[screen]", "[camfx]", options, size)
-    return [ffmpeg, "-v", "error", "-y", "-nostats", "-progress", "pipe:1",
+    return [ffmpeg, "-v", "error", "-y", "-nostats", "-progress", "pipe:1", "-copyts",
             "-i", screen_part, "-i", cam_part, "-i", mask,
             "-filter_complex", ";".join(graph), "-map", "[video]", "-map", "0:a?",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "copy",
@@ -511,11 +780,14 @@ class Finisher:
     assemblage, dans un fil. Mêmes attributs qu'un export : `progress`, `finished`,
     `error`, `cancelled`."""
 
-    def __init__(self, options: RecordOptions, target: Path, seconds: float) -> None:
+    def __init__(self, options: RecordOptions, target: Path, seconds: float,
+                 masks_ready: bool = False) -> None:
         self.options, self.target = options, target
         self.total = max(1, round(seconds * options.fps))
         self.done = 0
-        self.phase = "masks"
+        # masques déjà calculés pendant l'enregistrement : seul l'assemblage reste
+        self.masks_ready = masks_ready
+        self.phase = "compose" if masks_ready else "masks"
         self.finished = self.cancelled = False
         self.error = ""
         self.fallback: Path | None = None  # écran seul, si l'assemblage n'a pas pu se faire
@@ -527,11 +799,11 @@ class Finisher:
         if self.finished and not self.error:
             return 1.0
         ratio = min(1.0, self.done / self.total)
+        if self.masks_ready:
+            return ratio
         return 0.8 * ratio if self.phase == "masks" else 0.8 + 0.2 * ratio
 
     def start(self) -> None:
-        import threading
-
         self._thread = threading.Thread(target=self._run, name="montar-webcam", daemon=True)
         self._thread.start()
 
@@ -548,11 +820,12 @@ class Finisher:
         from montar.media.segment import webcam_masks
 
         screen_part, cam_part = parts(str(self.target))
-        mask = str(self.target.with_suffix("")) + ".masques.mkv"
+        mask = mask_part(str(self.target))
         try:
-            webcam_masks(Path(cam_part), Path(mask), self.options.fps,
-                         progress=lambda n: setattr(self, "done", n),
-                         cancelled=lambda: self._stop)
+            if not self.masks_ready:
+                webcam_masks(Path(cam_part), Path(mask), self.options.fps,
+                             progress=lambda n: setattr(self, "done", n),
+                             cancelled=lambda: self._stop)
             if self._stop:
                 raise ffmpeg_run.Cancelled()
             self.phase, self.done = "compose", 0
@@ -563,7 +836,8 @@ class Finisher:
                     self.done = int(int(value) / us_per_frame)
 
             ffmpeg_run.run(compose_command(self.options, screen_part, cam_part, mask,
-                                           str(self.target), self._size(screen_part)),
+                                           str(self.target), self._size(screen_part),
+                                           start_time(cam_part)),
                            on_progress, cancelled=lambda: self._stop)
         except ffmpeg_run.Cancelled:
             self.cancelled, self.error = True, "annulé"
@@ -594,19 +868,36 @@ class Recorder:
     def __init__(self, options: RecordOptions, target: Path) -> None:
         self.options, self.target = options, target
         self._proc: subprocess.Popen | None = None
+        self._masker = None
+        self.masks_ready = False  # détourage fait pendant l'enregistrement
         self.started = 0.0
         self.error = ""
 
     def start(self) -> None:
         self.target.parent.mkdir(parents=True, exist_ok=True)
         self._log = open(self.target.with_suffix(".log"), "w+b")  # noqa: SIM115
-        self._proc = subprocess.Popen(self._command(),
-                                      stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+        live = self.options.processed and self._can_segment()
+        self._proc = subprocess.Popen(self._command(live),
+                                      stdin=subprocess.PIPE,
+                                      stdout=subprocess.PIPE if live else subprocess.DEVNULL,
                                       stderr=self._log)
         self.started = time.monotonic()
+        if live:
+            from montar.media.segment import LiveMasker
 
-    def _command(self) -> list[str]:
-        return command(self.options, str(self.target))
+            self._masker = LiveMasker(self._proc.stdout, Path(mask_part(str(self.target))),
+                                      self.options.fps)
+
+    @staticmethod
+    def _can_segment() -> bool:
+        try:
+            from montar.media.segment import model_path
+        except ImportError:  # NumPy absent : détourage impossible
+            return False
+        return model_path().exists()
+
+    def _command(self, live_masks: bool = False) -> list[str]:
+        return command(self.options, str(self.target), time.time(), live_masks)
 
     @property
     def running(self) -> bool:
@@ -623,10 +914,19 @@ class Recorder:
             return False
         if proc.poll() is None:
             try:
-                proc.communicate(b"q", timeout=timeout)  # ffmpeg finalise le fichier
+                proc.stdin.write(b"q")  # ffmpeg finalise le fichier
+                proc.stdin.close()
+            except OSError:
+                pass
+            try:
+                proc.wait(timeout)
             except subprocess.TimeoutExpired:
                 proc.terminate()
                 proc.wait(5)
+        if self._masker is not None:
+            self.masks_ready = self._masker.close()
+            if not self.masks_ready:  # masques incomplets : recalculés après coup
+                Path(mask_part(str(self.target))).unlink(missing_ok=True)
         self._log.seek(0)
         lines = self._log.read().decode("utf-8", "replace").strip().splitlines()
         self._log.close()

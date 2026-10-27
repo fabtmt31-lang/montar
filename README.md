@@ -27,6 +27,20 @@ projet.
 - la finition peut être **vue et écoutée dans l'aperçu** de l'éditeur ; les préréglages
   personnels sont enregistrés dans `~/.config/montar/finition.json`.
 
+**Version 1.8** (1.8.0) : enregistreur d'écran plus fluide et synchrone.
+
+- **son et image synchrones** : chaque source (écran, micro, webcam) est datée avec
+  l'horloge de l'ordinateur puis ramenée au même départ ;
+- **plus fluide** : encodeur matériel de la carte graphique s'il est présent (NVIDIA,
+  Intel, AMD), fenêtre filmée par Desktop Duplication comme l'écran, tampons plus grands
+  pour la webcam, incrustation ronde calculée en petit ;
+- **démarrage immédiat** : périphériques et méthode de capture découverts en tâche de fond ;
+- **la zone filmée clignote** pendant le compte à rebours (écran, zone ou fenêtre) ;
+- **détourage pendant l'enregistrement** : à la fin, il ne reste que l'assemblage (quelques
+  secondes) ;
+- **tester la webcam** (image en direct) et **réécouter** le test du micro ;
+- correction : une transition à motif (balayage, stores…) faisait planter la timeline.
+
 **Version 1.7** (1.7.0) : enregistreur d'écran.
 
 - **webcam** : dans un coin (taille réglable, rectangle ou rond) ou en **écran partagé**

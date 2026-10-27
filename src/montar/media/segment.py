@@ -324,3 +324,96 @@ def webcam_masks(source: Path, target: Path, fps: int,
     if writer.returncode != 0 and not cancelled():
         raise SegmentationError("écriture des masques impossible")
     return count
+
+
+class LiveMasker:
+    """Détourage pendant l'enregistrement : lit les images réduites de la webcam que ffmpeg
+    écrit sur sa sortie standard et écrit, pour chacune, le dernier masque calculé.
+
+    La lecture ne s'arrête jamais (ffmpeg ne doit pas attendre) ; le calcul, plus lent que
+    la webcam sur un petit ordinateur, porte sur la dernière image reçue : les masques
+    suivent avec une ou deux images de retard au pire."""
+
+    def __init__(self, stream, target: Path, fps: int,
+                 segmenter: Segmenter | None = None) -> None:
+        import threading
+
+        self.seg = segmenter or Segmenter()
+        self.stream, self.target, self.fps = stream, target, fps
+        self.frames = 0  # images reçues (= masques écrits)
+        self.computed = 0  # masques réellement calculés
+        self.error = ""
+        self._latest: np.ndarray | None = None
+        self._fresh = threading.Event()
+        self._mask = np.zeros((self.seg.height, self.seg.width), np.uint8)
+        self._done = False
+        ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
+        self._errors = tempfile.TemporaryFile()
+        self._writer = subprocess.Popen(
+            [ffmpeg, "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "gray", "-s",
+             f"{self.seg.width}x{self.seg.height}", "-r", str(fps), "-i", "-", "-c:v", "ffv1",
+             str(target)], stdin=subprocess.PIPE, stderr=self._errors)
+        self._reader = threading.Thread(target=self._read, name="montar-webcam-lecture",
+                                        daemon=True)
+        self._worker = threading.Thread(target=self._work, name="montar-detourage",
+                                        daemon=True)
+        self._reader.start()
+        self._worker.start()
+
+    def _read(self) -> None:
+        w, h = self.seg.width, self.seg.height
+        size = w * h * 3
+        try:
+            while True:
+                data = self.stream.read(size)
+                if not data or len(data) < size:
+                    break
+                frame = np.frombuffer(data, dtype=np.uint8).reshape(h, w, 3)
+                if self.frames == 0:  # premier masque tout de suite (pas d'image vide)
+                    self._mask = self._compute(frame, None)
+                else:
+                    self._latest = frame
+                    self._fresh.set()
+                self._writer.stdin.write(self._mask.tobytes())
+                self.frames += 1
+        except Exception as exc:  # tuyau fermé, ffmpeg arrêté : on s'arrête
+            self.error = self.error or str(exc)
+        finally:
+            self._done = True
+            self._fresh.set()
+
+    def _compute(self, frame: np.ndarray, previous: np.ndarray | None) -> np.ndarray:
+        mask = self.seg.mask(frame)
+        if previous is not None:  # un peu de lissage dans le temps : moins de scintillement
+            mask = 0.65 * mask + 0.35 * previous.astype(np.float32) / 255
+        self.computed += 1
+        return (np.clip(mask, 0, 1) * 255).astype(np.uint8)
+
+    def _work(self) -> None:
+        while True:
+            self._fresh.wait()
+            self._fresh.clear()
+            frame, self._latest = self._latest, None
+            if frame is not None:
+                try:
+                    self._mask = self._compute(frame, self._mask)
+                except Exception as exc:
+                    self.error = str(exc)
+            if self._done and self._latest is None:
+                break
+
+    def close(self, timeout: float = 30.0) -> bool:
+        """Après la fin de ffmpeg : termine la vidéo de masques ; True si elle est complète."""
+        self._reader.join(timeout)
+        self._fresh.set()
+        self._worker.join(timeout)
+        try:
+            self._writer.stdin.close()
+        except OSError:
+            pass
+        try:
+            self._writer.wait(timeout)
+        except subprocess.TimeoutExpired:
+            self._writer.kill()
+        self._errors.close()
+        return self._writer.returncode == 0 and self.frames > 0 and not self.error

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QEventLoop, QPoint, QRect, QRectF, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QGuiApplication, QPainter, QPainterPath, QPen
+from PyQt6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
     QFrame,
     QHBoxLayout,
+    QLabel,
     QProgressBar,
     QSlider,
     QVBoxLayout,
@@ -19,6 +20,7 @@ from PyQt6.QtWidgets import (
 from montar.i18n import N_, _
 from montar.media.recorder import (
     ON_WINDOWS,
+    CameraPreview,
     LevelMeter,
     RecordOptions,
     can_pick_window,
@@ -166,8 +168,13 @@ class RecorderDialog(QDialog):
         self.test_button = button(_("Tester"), "secondary", "mic")
         self.test_button.setCheckable(True)
         self.test_button.toggled.connect(self._toggle_test)
+        self.replay_button = button(_("Réécouter"), "secondary", "play")
+        self.replay_button.setToolTip(_("Réécouter les dernières secondes du test du micro"))
+        self.replay_button.setEnabled(False)
+        self.replay_button.clicked.connect(self._replay)
         mic_row.addWidget(self.mic_device, 1)
         mic_row.addWidget(self.test_button)
+        mic_row.addWidget(self.replay_button)
         left.addLayout(mic_row)
         self.level = QProgressBar()
         self.level.setObjectName("BusyBar")
@@ -195,7 +202,23 @@ class RecorderDialog(QDialog):
         for device in webcams():
             self.webcam.addItem(device, device)
         self.webcam.currentIndexChanged.connect(lambda _i: self._webcam_changed())
-        right.addWidget(self.webcam)
+        cam_row = QHBoxLayout()
+        cam_row.addWidget(self.webcam, 1)
+        self.cam_test = button(_("Tester"), "secondary", "eye")
+        self.cam_test.setCheckable(True)
+        self.cam_test.toggled.connect(self._toggle_camera)
+        cam_row.addWidget(self.cam_test)
+        right.addLayout(cam_row)
+        self.cam_view = QLabel()
+        self.cam_view.setFixedSize(320, 180)
+        self.cam_view.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.cam_view.setStyleSheet("background: #17261E; color: #E8F0EC; border-radius: 8px;")
+        self.cam_view.setVisible(False)
+        right.addWidget(self.cam_view, 0, Qt.AlignmentFlag.AlignHCenter)
+        self._camera: CameraPreview | None = None
+        self._camera_timer = QTimer(self)
+        self._camera_timer.setInterval(66)
+        self._camera_timer.timeout.connect(self._show_camera)
         self.webcam_box = QWidget()
         wl = QVBoxLayout(self.webcam_box)
         wl.setContentsMargins(0, 0, 0, 0)
@@ -272,6 +295,9 @@ class RecorderDialog(QDialog):
     def _webcam_changed(self) -> None:
         on = bool(self.webcam.currentData())
         self.webcam_box.setVisible(on)
+        self.cam_test.setVisible(on)
+        if self._camera is not None and self._camera_device != self.webcam.currentData():
+            self._stop_camera()
         split = str(self.place.currentData()).startswith("split")
         self.shape.setVisible(not split)
         self.size_label.setText(f"{self.cam_size.value()} %")
@@ -311,6 +337,7 @@ class RecorderDialog(QDialog):
         self._meter_timer.stop()
         if self._meter is not None:
             self._meter.stop()
+            self._keep_sample(self._meter)
             self._meter = None
         self.level.setValue(0)
         self.level.setVisible(False)
@@ -320,6 +347,86 @@ class RecorderDialog(QDialog):
             self.test_button.setChecked(False)
             self.test_button.blockSignals(False)
         self.test_button.setText(_("Tester"))
+
+    def _keep_sample(self, meter: LevelMeter) -> None:
+        """Ce que le micro a entendu pendant le test, pour le réécouter."""
+        import tempfile
+        from pathlib import Path
+
+        path = Path(tempfile.gettempdir()) / "montar-test-micro.wav"
+        self._sample = (path, meter.seconds) if meter.save_wav(path) else None
+        self.replay_button.setEnabled(self._sample is not None)
+
+    def _replay(self) -> None:
+        sample = getattr(self, "_sample", None)
+        if sample is None:
+            return
+        path, seconds = sample
+        try:
+            from montar.engine import get_engine
+            from montar.engine.base import Canvas, ClipSpec, TimelineSpec, TrackSpec
+
+            frames = max(1, round(seconds * 25))
+            spec = TimelineSpec(Canvas(320, 180, 25), (TrackSpec(
+                "audio", False, False, (ClipSpec(str(path), "audio", 0, frames),)),))
+            self._stop_replay()
+            self._replay_output = get_engine().audio_output(spec)
+        except Exception as exc:  # moteur ou sortie son absents
+            self.level_hint.setText(str(exc))
+            self.level_hint.setVisible(True)
+            return
+        if self._replay_output is None:
+            self.level_hint.setText(_("Aucune sortie son pour réécouter."))
+            self.level_hint.setVisible(True)
+            return
+        self._replay_output.start(0)
+        QTimer.singleShot(round(seconds * 1000) + 300, self._stop_replay)
+
+    def _stop_replay(self) -> None:
+        output = getattr(self, "_replay_output", None)
+        self._replay_output = None
+        if output is not None:
+            output.stop()
+            output.close()
+
+    # --- test de la webcam -------------------------------------------------------------
+
+    def _toggle_camera(self, on: bool) -> None:
+        if not on:
+            self._stop_camera()
+            return
+        self._camera_device = self.webcam.currentData() or ""
+        self._camera = CameraPreview(self._camera_device)
+        self.cam_view.setText(self._camera.error or _("Ouverture de la webcam…"))
+        self.cam_view.setVisible(True)
+        self.cam_test.setText(_("Arrêter"))
+        self._camera_timer.start()
+        if self.isVisible():
+            self._fit()
+
+    def _show_camera(self) -> None:
+        camera = self._camera
+        if camera is None:
+            return
+        if camera.frame is not None:
+            w, h = camera.size
+            image = QImage(camera.frame, w, h, w * 3, QImage.Format.Format_RGB888)
+            self.cam_view.setPixmap(QPixmap.fromImage(image))
+        elif camera.error:
+            self.cam_view.setText(camera.error)
+
+    def _stop_camera(self) -> None:
+        self._camera_timer.stop()
+        if self._camera is not None:
+            self._camera.stop()
+            self._camera = None
+        self.cam_view.clear()
+        self.cam_view.setVisible(False)
+        if self.cam_test.isChecked():
+            self.cam_test.blockSignals(True)
+            self.cam_test.setChecked(False)
+            self.cam_test.blockSignals(False)
+        self.cam_test.setText(_("Tester"))
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -333,14 +440,17 @@ class RecorderDialog(QDialog):
             self.resize(self.width(), wanted)
 
     def done(self, result: int) -> None:  # noqa: D102
-        self._stop_test()  # le micro doit être libre pour l'enregistrement
+        # le micro et la webcam doivent être libres pour l'enregistrement
+        self._stop_test()
+        self._stop_camera()
+        self._stop_replay()
         if result == QDialog.DialogCode.Accepted:
             RecorderDialog.last = self.options()
         super().done(result)
 
     def _source_changed(self, key: str) -> None:
         # Windows : la zone se dessine sur l'écran choisi, avant le compte à rebours
-        self.screen.setVisible(key == "screen" or (ON_WINDOWS and key == "region"))
+        self.screen.setVisible(key in ("screen", "region"))
         self.window_choice.setVisible(ON_WINDOWS and key == "window")
         if ON_WINDOWS:
             hints = {"region": _("Après validation, dessinez la zone à filmer avec la souris "
@@ -350,9 +460,9 @@ class RecorderDialog(QDialog):
                                  "filmée : gardez-la devant les autres, sans la déplacer.")
                      if self.window_choice.count() else _("Aucune fenêtre à filmer.")}
         else:
-            hints = {"region": _("Après le compte à rebours, dessinez la zone à filmer avec la "
-                                 "souris."),
-                     "window": _("Après le compte à rebours, cliquez sur la fenêtre à filmer.")}
+            hints = {"region": _("Après validation, dessinez la zone à filmer avec la souris "
+                                 "(Échap pour annuler)."),
+                     "window": _("Après validation, cliquez sur la fenêtre à filmer.")}
         self.source_hint.setText(hints.get(key, ""))
 
     def options(self) -> RecordOptions:
@@ -458,6 +568,58 @@ def physical_region(screen, rect: QRect) -> tuple[int, int, int, int]:
     ratio = screen.devicePixelRatio()
     return (round(rect.x() * ratio), round(rect.y() * ratio),
             round(rect.width() * ratio), round(rect.height() * ratio))
+
+
+def logical_rect(area: tuple[int, int, int, int]) -> QRect:
+    """Rectangle en pixels réels (Windows) → coordonnées de Qt, d'après l'écran qui le
+    contient (mise à l'échelle propre à chaque écran)."""
+    x, y, w, h = area
+    for screen in QGuiApplication.screens():
+        g, ratio = screen.geometry(), screen.devicePixelRatio()
+        # Qt garde le coin de chaque écran en pixels réels et divise le reste
+        if g.x() <= x < g.x() + g.width() * ratio and g.y() <= y < g.y() + g.height() * ratio:
+            return QRect(round(g.x() + (x - g.x()) / ratio), round(g.y() + (y - g.y()) / ratio),
+                         round(w / ratio), round(h / ratio))
+    return QRect(x, y, w, h)
+
+
+class CaptureHighlight(QWidget):
+    """Cadre qui clignote autour de ce qui va être filmé pendant le compte à rebours :
+    on voit tout de suite si c'est le bon écran, la bonne zone ou la bonne fenêtre."""
+
+    BORDER = 6
+
+    def __init__(self, area: QRect) -> None:
+        super().__init__(None, Qt.WindowType.FramelessWindowHint
+                         | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
+                         | Qt.WindowType.WindowTransparentForInput)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        b = self.BORDER
+        self.setGeometry(area.adjusted(-b, -b, b, b))
+        self._on = True
+        self._timer = QTimer(self)
+        self._timer.setInterval(280)
+        self._timer.timeout.connect(self._blink)
+
+    def start(self) -> None:
+        self.show()
+        self._timer.start()
+
+    def _blink(self) -> None:
+        self._on = not self._on
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        color = QColor("#F7C948") if self._on else QColor("#2F7A56")
+        painter.setPen(QPen(color, self.BORDER))
+        b = self.BORDER / 2
+        painter.drawRect(QRectF(self.rect()).adjusted(b, b, -b, -b))
+        if self._on:  # léger voile pour bien voir la zone
+            painter.fillRect(self.rect().adjusted(self.BORDER, self.BORDER, -self.BORDER,
+                                                  -self.BORDER), QColor(247, 201, 72, 28))
+        painter.end()
 
 
 class RecordingBar(QFrame):

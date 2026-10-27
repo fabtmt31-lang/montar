@@ -38,8 +38,10 @@ dans la barre et le gestionnaire des tâches. Le `montar.exe` à la racine du do
 - Enregistrement d'écran : écran ou zone dessinée à la souris par ddagrab (Desktop
   Duplication : pixels réels, quelle que soit la mise à l'échelle de Windows ; repli sur
   gdigrab), fenêtre choisie dans la liste des fenêtres ouvertes (mise au premier plan, la
-  zone qu'elle occupe sur le bureau est filmée : filmée seule par gdigrab, une fenêtre
-  dessinée par la carte graphique sortait noire), micro au choix et webcam par DirectShow, son de l'ordinateur si Windows propose une entrée « Mixage stéréo » ; la
+  zone qu'elle occupe sur son écran est filmée par ddagrab : filmée seule par gdigrab, une
+  fenêtre dessinée par la carte graphique sortait noire), micro au choix et webcam par
+  DirectShow ; encodage par la carte graphique (NVENC, Quick Sync, AMF) quand un essai
+  réussit, sinon x264 ; sources datées avec l'horloge de l'ordinateur (synchro du son), son de l'ordinateur si Windows propose une entrée « Mixage stéréo » ; la
   petite fenêtre d'arrêt n'apparaît pas dans la vidéo.
 - Police : rendu lissé et graisse un cran au-dessus sous Windows (`ui_font`).
 - La version portable garde ses réglages dans `%APPDATA%\montar`, comme la version installée.

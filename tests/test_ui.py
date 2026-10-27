@@ -2474,21 +2474,38 @@ def test_recorder_dialog_and_processed_webcam(window, media_dir, monkeypatch, tm
     editor = imported_editor(window, media_dir, ["clip.mp4"])
     target = editor.project.media_dir / "Enregistrement webcam.mp4"
 
-    def fake_command(self):
-        screen_part, cam_part = recorder_module.parts(str(self.target))
-        ff = _shutil.which("ffmpeg")
-        return [ff, "-v", "error", "-y", "-re", "-f", "lavfi", "-i",
-                "testsrc=s=320x180:r=25", "-re", "-f", "lavfi", "-i",
-                "testsrc2=s=320x240:r=25", "-map", "0:v", "-c:v", "libx264",
-                "-preset", "ultrafast", screen_part, "-map", "1:v", "-c:v", "libx264",
-                "-preset", "ultrafast", cam_part]
+    person = tmp_path / "person.png"
+    from PyQt6.QtGui import QColor, QImage, QPainter
+
+    picture = QImage(320, 240, QImage.Format.Format_RGB32)
+    picture.fill(QColor("#8fa9b8"))
+    painter = QPainter(picture)
+    painter.setBrush(QColor("#2b4c7e"))
+    painter.drawEllipse(100, 170, 120, 110)
+    painter.setBrush(QColor("#e0b18c"))
+    painter.drawEllipse(130, 60, 60, 80)
+    painter.end()
+    picture.save(str(person))
+
+    def fake_command(self, live_masks=False):
+        # vraies chaînes de montar (horloge commune, détourage en direct), sources simulées
+        wall = recorder_module.WALLCLOCK
+        cmd = [_shutil.which("ffmpeg"), "-v", "error", "-y", "-copyts",
+               *wall, "-f", "lavfi", "-i", "testsrc=s=320x180:r=25,realtime",
+               *wall, "-f", "lavfi", "-i", "sine=r=48000,arealtime",
+               *wall, "-f", "lavfi", "-i",
+               f"movie={person.as_posix()}:loop=0,setpts=N/25/TB,fps=25,realtime"]
+        return recorder_module._encode(cmd, self.options, [1], 2, str(self.target), "",
+                                       (320, 180), time.time(), live_masks)
 
     monkeypatch.setattr(recorder_module.Recorder, "_command", fake_command)
     results = []
     editor.recordingFinished.connect(results.append)
     editor.start_recording(dataclasses.replace(options, fps=25), target, countdown=0)
     pump(1500)
+    recorder = editor._recorder
     editor.stop_recording()
+    assert recorder.masks_ready  # détourage fait pendant l'enregistrement
     assert editor._recording_job and editor.busy.isVisible()
     assert wait_until(lambda: results, 120)
     assert results == [str(target)] and target.exists()
@@ -2511,3 +2528,53 @@ def test_pattern_transition_is_drawn_in_timeline(window, media_dir):
     editor.inspector.show_transition(editor.project.transitions[0])
     editor.player.seek(45)
     assert wait_until(lambda: editor.player.position == 45)
+
+
+
+def test_capture_highlight_during_countdown(window, monkeypatch):
+    from PyQt6.QtCore import QRect
+
+    from montar.media import recorder as recorder_module
+
+    editor = window.create_project(NewProjectParams("Cadre", "16:9", "720p", 25))
+    started = []
+    monkeypatch.setattr(recorder_module.Recorder, "start",
+                        lambda self: (started.append(editor._highlight), None)[1])
+    monkeypatch.setattr(recorder_module.Recorder, "running", property(lambda self: True))
+    target = editor.project.media_dir / "cadre.mp4"
+    editor.start_recording(recorder_module.RecordOptions(microphone=False), target,
+                           countdown=1, area=QRect(10, 20, 300, 200))
+    highlight = editor._highlight
+    assert highlight is not None and highlight.isVisible()
+    assert highlight.geometry() == QRect(4, 14, 312, 212)  # autour de la zone filmée
+    assert wait_until(lambda: started, 5)
+    assert started == [None] and not highlight.isVisible()  # disparu avant de filmer
+    editor._recorder = None
+    editor.stop_recording()
+
+
+def test_microphone_test_can_be_replayed(window, monkeypatch):
+    import montar.ui.dialogs.recorder as dialog_module
+
+    class FakeMeter:
+        level, error, seconds = 0.5, "", 1.0
+
+        def __init__(self, device):
+            pass
+
+        def stop(self):
+            pass
+
+        def save_wav(self, path):
+            path.write_bytes(b"RIFF")
+            return True
+
+    monkeypatch.setattr(dialog_module, "LevelMeter", FakeMeter)
+    dialog = dialog_module.RecorderDialog()
+    assert not dialog.replay_button.isEnabled()
+    dialog.test_button.setChecked(True)
+    pump(200)
+    assert dialog.level.value() > 0
+    dialog.test_button.setChecked(False)
+    assert dialog.replay_button.isEnabled() and dialog._sample[1] == 1.0
+    dialog.done(QDialog.DialogCode.Rejected)
