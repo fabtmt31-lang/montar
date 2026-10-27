@@ -178,6 +178,17 @@ def test_scale_flip_crop(engine, media_dir):
     assert rgb(cropped, 0, 8, 18) == BLACK and near(rgb(cropped, 0, 56, 18), WHITE)
 
 
+def test_round_shape(engine, media_dir):
+    """Forme ronde (webcam d'un enregistrement) : coins transparents, centre visible."""
+    red, blue = str(media_dir / "red.mp4"), str(media_dir / "blue.mp4")
+    round_ = Transform(crop_left=0.21875, crop_right=0.21875, shape="round")
+    src = engine.build(spec(video(ClipSpec(red, "video", 0, 10, media_size=(64, 36))),
+                            video(ClipSpec(blue, "video", 0, 10, media_size=(64, 36),
+                                           transform=round_))))
+    assert near(rgb(src, 0, 32, 18), BLUE)
+    assert near(rgb(src, 0, 19, 2), RED)  # coin du carré gardé : hors du rond
+
+
 def test_color_and_preset(engine, media_dir):
     red = str(media_dir / "red.mp4")
     grey = engine.build(spec(video(ClipSpec(red, "video", 0, 10,

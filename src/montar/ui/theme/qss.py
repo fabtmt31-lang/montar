@@ -180,6 +180,7 @@ QPushButton[variant="choice"]:checked {{ background: {forest}; border-color: {fo
                                          color: {on_forest}; }}
 #DialogFooter {{ border-top: 1px solid {border}; }}
 #InfoBox {{ background: {mist}; border-radius: 12px; }}
+#FitBanner {{ background: {mist}; border-bottom: 1px solid {border}; }}
 #LogoMark {{ background: {forest}; border-radius: 10px; }}
 #Avatar {{ background: {mint}; color: {forest}; border-radius: 22px; font-weight: 700; }}
 #ThumbPlaceholder {{ background: {mint}; border-radius: {r_card}px; }}

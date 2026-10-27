@@ -41,8 +41,12 @@ dans la barre et le gestionnaire des tâches. Le `montar.exe` à la racine du do
   zone qu'elle occupe sur son écran est filmée par ddagrab : filmée seule par gdigrab, une
   fenêtre dessinée par la carte graphique sortait noire), micro au choix et webcam par
   DirectShow ; encodage par la carte graphique (NVENC, Quick Sync, AMF) quand un essai
-  réussit, sinon x264 ; sources datées avec l'horloge de l'ordinateur (synchro du son), son de l'ordinateur si Windows propose une entrée « Mixage stéréo » ; la
-  petite fenêtre d'arrêt n'apparaît pas dans la vidéo.
+  réussit, sinon x264 ; sources datées avec l'horloge de l'ordinateur (synchro du son), son
+  de l'ordinateur si Windows propose une entrée « Mixage stéréo » ; la petite fenêtre
+  d'arrêt n'apparaît pas dans la vidéo. ffmpeg démarre dès le compte à rebours : DirectShow
+  met plusieurs secondes à ouvrir une webcam, elle est prête quand l'enregistrement
+  commence (il l'attend au besoin). L'écran et la webcam sont écrits dans deux fichiers,
+  posés en deux clips liés dans la timeline.
 - Police : rendu lissé et graisse un cran au-dessus sous Windows (`ui_font`).
 - La version portable garde ses réglages dans `%APPDATA%\montar`, comme la version installée.
 - Paramètres : `%APPDATA%\montar` ; cache et journaux : `%LOCALAPPDATA%\montar\cache` ;

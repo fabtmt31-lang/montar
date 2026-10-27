@@ -123,6 +123,44 @@ def _ensure_factory() -> None:
             _factory_ready = True
 
 
+_VP9_ALPHA: bool | None = None
+
+
+def reads_vp9_alpha() -> bool:
+    """MLT relit-il la transparence d'une vidéo VP9 ? (essai réel sur deux images, une
+    fois : selon sa version, MLT décode le VP9 sans la couche de transparence)"""
+    global _VP9_ALPHA
+    if _VP9_ALPHA is not None:
+        return _VP9_ALPHA
+    import shutil
+    import subprocess
+    import tempfile
+
+    found = False
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is not None and mlt is not None:
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "essai.webm")
+            try:
+                done = subprocess.run(
+                    [ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i",
+                     "color=c=red@0.0:s=32x32:r=5:d=0.4,format=yuva420p", "-c:v",
+                     "libvpx-vp9", "-pix_fmt", "yuva420p", "-deadline", "realtime", path],
+                    capture_output=True, timeout=30)
+                if done.returncode == 0:
+                    _ensure_factory()
+                    producer = mlt.Producer(_profile(Canvas(32, 32, 5)), path)
+                    if producer is not None and producer.is_valid():
+                        frame = producer.get_frame()
+                        frame.set("consumer.rescale", "none")
+                        image = frame.get_image(mlt.mlt_image_rgba, 32, 32)
+                        found = bool(image) and image[(16 * 32 + 16) * 4 + 3] < 128
+            except (OSError, subprocess.SubprocessError, EngineUnavailable):
+                found = False
+    _VP9_ALPHA = found
+    return found
+
+
 def _profile(canvas: Canvas):
     profile = mlt.Profile()
     profile.set_explicit(1)
@@ -202,6 +240,12 @@ def _fade_points(duration: int, fade_in: int, fade_out: int, low: float,
     if fade_out:
         points += [(duration - fade_out - 1, high), (duration - 1, low)]
     return points
+
+
+# frei0r « alphaspot » : forme (0,3 = ellipse), centre, demi-taille, inclinaison nulle, bord
+# légèrement adouci, transparence gardée là où l'image en a déjà (opération « min »)
+ROUND_MASK = {"0": 0.3, "1": 0.5, "2": 0.5, "3": 0.5, "4": 0.5, "5": 0.5, "6": 0.01,
+              "7": 0.0, "8": 1.0, "9": 0.45}
 
 
 def _luma_file(kind: str, canvas: Canvas) -> str:
@@ -439,6 +483,8 @@ class _TimelineGraph:
             if left or right or top or bottom:
                 self._attach(producer, "crop", {"left": left, "right": right, "top": top,
                                                 "bottom": bottom})
+            if t.shape == "round":  # ellipse inscrite dans la partie gardée (rond si carrée)
+                self._attach(producer, "frei0r.alphaspot", ROUND_MASK)
             if t.flip_h:
                 self._attach(producer, "avfilter.hflip", {})
             if t.flip_v:

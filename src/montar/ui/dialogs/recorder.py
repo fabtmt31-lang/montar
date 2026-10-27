@@ -671,6 +671,11 @@ class RecordingBar(QFrame):
             self._timer.stop()
             self.countdownFinished.emit()
 
+    def set_waiting(self) -> None:
+        """Fin du compte à rebours, webcam pas encore prête : l'enregistrement attend."""
+        self.time.setText(_("Ouverture de la webcam…"))
+        self.adjustSize()
+
     def set_elapsed(self, seconds: float) -> None:
         s = int(seconds)
         self.time.setText(f"{s // 3600:02d}:{s // 60 % 60:02d}:{s % 60:02d}")

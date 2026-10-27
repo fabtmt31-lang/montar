@@ -42,6 +42,11 @@ class MediaItem:
     audio_codec: str = ""
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     original_path: str = ""  # fichier d'origine de la copie (évite d'importer deux fois)
+    # enregistrement d'écran avec webcam : l'écran et la webcam sont deux fichiers. Celui de
+    # l'écran porte `webcam` (média de la webcam, début utile de chacun, disposition) ;
+    # celui de la webcam a le rôle « webcam » et n'apparaît pas dans le panneau Médias.
+    role: str = ""  # "" | webcam
+    webcam: dict[str, Any] = field(default_factory=dict)
 
     @property
     def name(self) -> str:
@@ -110,6 +115,7 @@ class Transform:
     crop_right: float = 0.0
     crop_top: float = 0.0
     crop_bottom: float = 0.0
+    shape: str = "rect"  # rect | round (ellipse inscrite dans la partie visible)
 
     def is_identity(self) -> bool:
         return self == Transform()
@@ -251,6 +257,9 @@ class Clip:
     modules: dict[str, dict[str, Any]] = field(default_factory=dict)
     # images clés : propriété (x, y, scale, rotation, opacity) → [[image, valeur], …]
     keyframes: dict[str, list[list[float]]] = field(default_factory=dict)
+    # clips liés (écran et webcam d'un enregistrement) : même identifiant, ils se
+    # sélectionnent, se déplacent et se coupent ensemble ; vide : clip indépendant
+    group: str = ""
     id: str = field(default_factory=new_id)
 
     @property
@@ -306,6 +315,9 @@ class Project:
     aspect: str = formats.DEFAULT_ASPECT
     resolution: str = formats.DEFAULT_RESOLUTION
     fps: int = formats.DEFAULT_FPS
+    # format libre (aspect « custom ») : taille de la toile
+    width: int = 0
+    height: int = 0
     media: list[MediaItem] = field(default_factory=list)
     tracks: list[Track] = field(default_factory=list)  # de haut en bas, comme affiché
     clips: list[Clip] = field(default_factory=list)
@@ -319,7 +331,11 @@ class Project:
     path: Path | None = None  # emplacement du fichier .montar, non sérialisé
 
     def __post_init__(self) -> None:
-        formats.aspect_ratio(self.aspect)  # valide le format
+        if self.aspect == formats.CUSTOM:
+            self.width, self.height = formats.custom_size(self.width or 1920,
+                                                          self.height or 1080)
+        else:
+            formats.aspect_ratio(self.aspect)  # valide le format
         if self.resolution not in formats.RESOLUTIONS:
             raise ValueError(f"résolution inconnue : {self.resolution}")
         if not self.tracks:
@@ -327,7 +343,35 @@ class Project:
 
     @property
     def canvas_size(self) -> tuple[int, int]:
+        if self.aspect == formats.CUSTOM:
+            return self.width, self.height
         return formats.canvas_size(self.aspect, self.resolution)
+
+    @property
+    def format_label(self) -> str:
+        return formats.label(self.aspect, self.canvas_size)
+
+    def set_format(self, aspect: str, resolution: str, size: tuple[int, int] | None = None,
+                   fps: int | None = None) -> None:
+        """Change le format de la toile ; `size` : taille d'un format libre."""
+        if aspect == formats.CUSTOM:
+            self.width, self.height = formats.custom_size(*(size or self.canvas_size))
+        else:
+            formats.aspect_ratio(aspect)
+            self.width = self.height = 0
+        if resolution not in formats.RESOLUTIONS:
+            raise ValueError(f"résolution inconnue : {resolution}")
+        self.aspect, self.resolution = aspect, resolution
+        if fps is not None:
+            self.fps = int(fps)
+
+    def visible_media(self) -> list[MediaItem]:
+        """Médias montrés dans le panneau Médias (sans les webcams des enregistrements)."""
+        return [m for m in self.media if m.role != "webcam"]
+
+    def webcam_of(self, media: MediaItem) -> MediaItem | None:
+        """Média de la webcam d'un enregistrement d'écran, s'il en a une."""
+        return self.find_media(media.webcam.get("media", "")) if media.webcam else None
 
     def find_media(self, media_id: str) -> MediaItem | None:
         return next((m for m in self.media if m.id == media_id), None)
@@ -359,6 +403,8 @@ class Project:
             "aspect": self.aspect,
             "resolution": self.resolution,
             "fps": self.fps,
+            **({"width": self.width, "height": self.height}
+               if self.aspect == formats.CUSTOM else {}),
             "media": media,
             "tracks": [asdict(t) for t in self.tracks],
             "clips": [asdict(c) for c in self.clips],
@@ -400,6 +446,8 @@ class Project:
                 aspect=data.get("aspect", formats.DEFAULT_ASPECT),
                 resolution=data.get("resolution", formats.DEFAULT_RESOLUTION),
                 fps=int(data.get("fps", formats.DEFAULT_FPS)),
+                width=int(data.get("width", 0)),
+                height=int(data.get("height", 0)),
                 media=media,
                 tracks=tracks,
                 clips=clips,

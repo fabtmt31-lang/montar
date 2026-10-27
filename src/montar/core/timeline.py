@@ -226,14 +226,134 @@ class Timeline:
             track = self.first_track(kind) or self.add_track(kind)
         if not self.accepts(track, media):
             raise TimelineError("ce média ne peut pas être placé sur cette piste")
+        lead = round(media.webcam.get("screen_in", 0.0) * self.fps) if media.webcam else 0
         if duration is None:
-            duration = self.default_duration(media)
+            duration = self.default_duration(media) - lead
         if start is None:  # à la suite des clips de la piste
             start = max((c.end for c in self.clips_on(track.id)), default=0)
-        clip = Clip(media.id, track.id, 0, max(1, duration))
+        clip = Clip(media.id, track.id, 0, max(1, duration), source_in=max(0, lead))
         clip.start = self.free_start(track.id, start, clip.duration)
         self.project.clips.append(clip)
+        if track.kind == "video" and self.project.webcam_of(media) is not None:
+            self._add_webcam(clip, media)
         return clip
+
+    # --- enregistrements avec webcam ----------------------------------------------------
+
+    def _add_webcam(self, screen: Clip, media: MediaItem) -> Clip:
+        """Pose la webcam d'un enregistrement au-dessus de son écran (même instant, même
+        durée), à sa place ; les deux clips sont liés."""
+        from montar.core.recording import layout_transforms
+
+        camera = self.project.webcam_of(media)
+        assert camera is not None
+        offset = round(media.webcam.get("webcam_in", 0.0) * self.fps) \
+            + (screen.source_in - round(media.webcam.get("screen_in", 0.0) * self.fps))
+        available = camera.length_frames(self.fps) or screen.duration
+        duration = max(1, min(screen.duration, available - max(0, offset)))
+        video = [t for t in self.project.tracks if t.kind == "video"]  # de haut en bas
+        above = video[:video.index(self.track(screen.track_id))]
+        track = next((t for t in reversed(above)
+                      if self.free_start(t.id, screen.start, duration) == screen.start), None)
+        if track is None:
+            track = self.insert_track("video", self.project.tracks.index(
+                self.track(screen.track_id)))
+        cam = Clip(camera.id, track.id, screen.start, duration, source_in=max(0, offset))
+        cw, ch = self.project.canvas_size
+        screen.transform, cam.transform = layout_transforms(
+            (cw, ch), (media.width, media.height), (camera.width, camera.height),
+            media.webcam.get("layout", {}))
+        screen.group = cam.group = screen.group or new_id()
+        self.project.clips.append(cam)
+        return cam
+
+    def group_of(self, clip: Clip) -> list[Clip]:
+        """Clips liés à `clip` (lui compris)."""
+        if not clip.group:
+            return [clip]
+        return [c for c in self.project.clips if c.group == clip.group]
+
+    def unlink(self, clip_id: str) -> None:
+        for c in self.group_of(self.clip(clip_id)):
+            c.group = ""
+
+    def is_webcam(self, clip: Clip) -> bool:
+        media = None if clip.is_text else self.project.find_media(clip.media_id)
+        return media is not None and media.role == "webcam"
+
+    def webcam_clips(self, clip_id: str) -> list[Clip]:
+        """Clips de webcam liés au clip (un enregistrement découpé en a plusieurs)."""
+        return [c for c in self.group_of(self.clip(clip_id)) if self.is_webcam(c)]
+
+    def _recording_media(self, clip_id: str) -> MediaItem | None:
+        """Média de l'écran d'un enregistrement dont le clip fait partie."""
+        for c in self.group_of(self.clip(clip_id)):
+            media = None if c.is_text else self.project.find_media(c.media_id)
+            if media is not None and media.webcam:
+                return media
+        return None
+
+    def _range_pieces(self, clips: list[Clip], start: int, end: int) -> list[Clip]:
+        """Parties de `clips` comprises dans [start, end[ (coupées aux bornes)."""
+        return [self.isolate(c.id, start, end) for c in list(clips)
+                if c.start < end and start < c.end]
+
+    def remove_webcam(self, clip_id: str, start: int, end: int) -> None:
+        """Retire la webcam d'un enregistrement de `start` à `end` : elle s'efface puis
+        revient en fondu ; en écran partagé, l'écran reprend toute l'image sur ce passage."""
+        from montar.core.recording import FADE_SECONDS, zoom_keys
+
+        clip = self.clip(clip_id)
+        group = self.group_of(clip)
+        cams = [c for c in group if self.is_webcam(c)]
+        if not cams:
+            raise TimelineError("ce clip n'a pas de webcam")
+        media = self._recording_media(clip_id)
+        layout = media.webcam.get("layout", {}) if media is not None else {}
+        screens = [c for c in group if not self.is_webcam(c)]
+        fade = max(1, round(FADE_SECONDS * self.fps))
+        for piece in self._range_pieces(cams, start, end):
+            left, right = self.neighbour(piece.id, "left"), self.neighbour(piece.id, "right")
+            if left is not None and left.group == piece.group:
+                left.fade_out = min(fade, left.duration // 2)
+            if right is not None and right.group == piece.group:
+                right.fade_in = min(fade, right.duration // 2)
+            self.delete(piece.id)
+        if not str(layout.get("position", "")).startswith("split"):
+            return
+        for piece in self._range_pieces(screens, start, end):
+            left, right = self.neighbour(piece.id, "left"), self.neighbour(piece.id, "right")
+            full = type(piece.transform)()
+            piece.keyframes = zoom_keys(
+                piece.transform, full, piece.duration, fade,
+                enter=left is not None and left.group == piece.group,
+                leave=right is not None and right.group == piece.group)
+            piece.transform = full
+
+    def webcam_fullscreen(self, clip_id: str, start: int, end: int) -> None:
+        """Webcam en plein écran de `start` à `end`, avec un zoom à l'entrée et à la sortie."""
+        from montar.core.recording import (
+            FADE_SECONDS,
+            full_transform,
+            small_transform,
+            zoom_keys,
+        )
+
+        cams = self.webcam_clips(clip_id)
+        if not cams:
+            raise TimelineError("ce clip n'a pas de webcam")
+        canvas = self.project.canvas_size
+        for piece in self._range_pieces(cams, start, end):
+            camera = self.media_of(piece)
+            size = (camera.width, camera.height) if camera is not None else canvas
+            left, right = self.neighbour(piece.id, "left"), self.neighbour(piece.id, "right")
+            small = small_transform(canvas, size, piece.transform)
+            full = full_transform(canvas, size)
+            piece.keyframes = zoom_keys(
+                small, full, piece.duration, max(1, round(FADE_SECONDS * self.fps)),
+                enter=left is not None and left.group == piece.group,
+                leave=right is not None and right.group == piece.group)
+            piece.transform = full
 
     def add_text(self, style: TextStyle, start: int, track_id: str | None = None,
                  duration: int | None = None) -> Clip:
@@ -365,8 +485,19 @@ class Timeline:
 
     def split_at(self, frame: int, clip_id: str | None = None) -> list[Clip]:
         """Coupe le clip indiqué, ou à défaut tous les clips sous la tête de lecture."""
-        targets = [clip_id] if clip_id else [c.id for c in self.clips_at(frame)]
-        return [part for cid in targets if (part := self.split(cid, frame)) is not None]
+        if clip_id:  # le clip et ceux qui lui sont liés
+            targets = [c.id for c in self.group_of(self.clip(clip_id))
+                       if c.start < frame < c.end]
+        else:
+            targets = [c.id for c in self.clips_at(frame)]
+        parts = [part for cid in targets if (part := self.split(cid, frame)) is not None]
+        # chaque côté de la coupe forme son propre groupe de clips liés
+        for group in {p.group for p in parts if p.group}:
+            after = new_id()
+            for c in self.project.clips:
+                if c.group == group and c.start >= frame:
+                    c.group = after
+        return parts
 
     def delete(self, clip_id: str, ripple: bool = False) -> None:
         clip = self.clip(clip_id)
@@ -584,10 +715,60 @@ class Timeline:
         self.sanitize()
 
     def remove_media(self, media_id: str) -> None:
-        self.project.media = [m for m in self.project.media if m.id != media_id]
-        self.project.clips = [c for c in self.project.clips if c.media_id != media_id
+        media = self.project.find_media(media_id)
+        camera = self.project.webcam_of(media) if media is not None else None
+        removed = {media_id} | ({camera.id} if camera is not None else set())
+        self.project.media = [m for m in self.project.media if m.id not in removed]
+        self.project.clips = [c for c in self.project.clips if c.media_id not in removed
                               or c.is_text]
         self.sanitize()
+
+    def fit_canvas_to(self, media_id: str, with_fps: bool = False) -> None:
+        """Toile du projet à la taille du média (format connu s'il correspond, sinon libre) ;
+        avec `with_fps`, le projet prend aussi sa fréquence d'images."""
+        from montar.core import formats
+
+        media = self.project.find_media(media_id)
+        if media is None or media.kind not in ("video", "image") or not media.width:
+            raise TimelineError("la taille de ce média est inconnue")
+        aspect, resolution, size = formats.format_for(media.width, media.height)
+        fps = None
+        if with_fps and media.kind == "video" and media.fps:
+            fps = min(formats.FRAME_RATES, key=lambda r: abs(r - media.fps))
+        self.set_format(aspect, resolution, size, fps)
+
+    def set_format(self, aspect: str, resolution: str, size: tuple[int, int] | None = None,
+                   fps: int | None = None) -> None:
+        """Format de la toile ; une autre fréquence d'images convertit positions et durées."""
+        old_fps = self.project.fps
+        try:
+            self.project.set_format(aspect, resolution, size, fps)
+        except ValueError as exc:
+            raise TimelineError(str(exc)) from exc
+        if fps is not None and fps != old_fps:
+            self._retime(old_fps, fps)
+
+    def _retime(self, old: int, new: int) -> None:
+        """Positions et durées (en images) converties à une autre fréquence."""
+        k = new / old
+        for c in self.project.clips:
+            end = round(c.end * k)
+            c.start = round(c.start * k)
+            c.duration = max(1, end - c.start)
+            c.source_in = round(c.source_in * k)
+            c.fade_in, c.fade_out = round(c.fade_in * k), round(c.fade_out * k)
+            c.keyframes = {name: [[p[0] * k, p[1]] for p in points]
+                           for name, points in c.keyframes.items()}
+        for t in self.project.transitions:  # recouvrement exact des deux clips
+            left = next((c for c in self.project.clips if c.id == t.left_id), None)
+            right = next((c for c in self.project.clips if c.id == t.right_id), None)
+            if left is not None and right is not None:
+                t.duration = max(1, left.end - right.start)
+        for m in self.project.markers:
+            m.frame = round(m.frame * k)
+        for sub in self.project.subtitles:
+            sub.start, sub.end = round(sub.start * k), max(round(sub.start * k) + 1,
+                                                           round(sub.end * k))
 
     # --- transitions (modifications) -------------------------------------------------
 
@@ -764,11 +945,15 @@ def snapshot(project: Project) -> tuple:
     """Copie de l'état modifiable du projet (pour annuler / rétablir)."""
     return copy.deepcopy((project.media, project.tracks, project.clips, project.transitions,
                           project.markers, project.subtitles, project.subtitle_style,
-                          project.subtitles_shown, project.mastering))
+                          project.subtitles_shown, project.mastering,
+                          (project.aspect, project.resolution, project.fps, project.width,
+                           project.height)))
 
 
 def restore(project: Project, state: tuple) -> None:
     (project.media, project.tracks, project.clips, project.transitions,
      project.markers, project.subtitles, project.subtitle_style,
-     project.subtitles_shown, project.mastering) = copy.deepcopy(state)
+     project.subtitles_shown, project.mastering,
+     (project.aspect, project.resolution, project.fps, project.width,
+      project.height)) = copy.deepcopy(state)
 

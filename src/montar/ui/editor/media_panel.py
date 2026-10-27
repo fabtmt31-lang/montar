@@ -137,6 +137,7 @@ class MediaPanel(QFrame):
     removeRequested = pyqtSignal(object)  # MediaItem
     addToTimelineRequested = pyqtSignal(object)  # MediaItem
     editRequested = pyqtSignal(object)  # MediaItem
+    fitCanvasRequested = pyqtSignal(object)  # MediaItem : toile du projet à sa taille
     relinkRequested = pyqtSignal(object)  # MediaItem introuvable
     relinkAllRequested = pyqtSignal()
     libraryRequested = pyqtSignal()
@@ -250,6 +251,10 @@ class MediaPanel(QFrame):
         if not media.exists:
             item.setData(ROLE_WARNING, True)
             item.setToolTip(_("Fichier introuvable : {path}").format(path=media.path))
+        elif media.webcam:  # enregistrement : écran et webcam, posés ensemble
+            item.setToolTip(_("{path}\nÉcran + webcam : deux clips liés dans la timeline "
+                              "(la webcam peut être retirée sur une partie)").format(
+                                  path=media.path))
         else:
             item.setToolTip(media.path)
         if thumbnail:
@@ -332,6 +337,9 @@ class MediaPanel(QFrame):
         media = item.data(ROLE_PAYLOAD)
         if media.exists:
             menu.addAction(_("Modifier le média…"), lambda: self.editRequested.emit(media))
+            if media.kind in ("video", "image") and media.width and media.height:
+                menu.addAction(_("Ajuster le cadre à ce média"),
+                               lambda: self.fitCanvasRequested.emit(media))
         else:
             menu.addAction(_("Relier à un fichier…"), lambda: self.relinkRequested.emit(media))
         menu.addAction(_("Retirer du projet"),

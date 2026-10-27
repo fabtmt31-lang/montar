@@ -17,7 +17,9 @@ THRESHOLD = 1440  # au-delà de ce petit côté, la vidéo reçoit un proxy
 
 
 def needs_proxy(media: MediaItem) -> bool:
-    return media.kind == "video" and min(media.width, media.height) > THRESHOLD
+    # la webcam d'un enregistrement peut être transparente : pas de proxy (H.264, opaque)
+    return media.kind == "video" and min(media.width, media.height) > THRESHOLD \
+        and media.role != "webcam"
 
 
 def proxy_size(width: int, height: int) -> tuple[int, int]:

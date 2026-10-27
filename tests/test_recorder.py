@@ -20,8 +20,10 @@ def test_command(monkeypatch):
     line = " ".join(cmd)
     assert "-video_size 1280x720 -i :1+1920,0" in line
     assert "-f pulse -i default" in line and "-f pulse -i @DEFAULT_MONITOR@" in line
-    assert "amix=inputs=2" in line and "overlay=W-w-24:H-h-24" in line
-    assert "-f v4l2 -i /dev/video0" in line and cmd[-1] == "out.mp4"
+    assert "amix=inputs=2" in line and "overlay" not in line
+    # l'écran (avec le son) et la webcam dans deux fichiers ; vignettes « webcam prête »
+    assert "-f v4l2 -i /dev/video0" in line and "+faststart out.mp4" in line
+    assert "out.webcam-brut.mkv" in line and line.endswith("-f rawvideo pipe:1")
     region = " ".join(command(RecordOptions(source="region", geometry=(1920, 0, 1280, 720),
                                             region=(10, 20, 301, 200), microphone=False,
                                             display=":1"), "x.mp4"))
@@ -32,8 +34,15 @@ def test_command(monkeypatch):
                     t0=1000.5)
     line = " ".join(timed)
     assert line.count("-use_wallclock_as_timestamps 1") == 3 and "-copyts" in line
-    assert "[0:v]setpts=PTS-1000.500000/TB" in line and "[2:v]setpts=PTS-1000.500000/TB" in line
-    assert "asetpts=PTS-1000.500000/TB,aresample=async=1000" in line
+    assert "[0:v]setpts=PTS-1000.500000/TB,trim=start=0" in line
+    assert "[2:v]setpts=PTS-1000.500000/TB" in line
+    assert "asetpts=PTS-1000.500000/TB,atrim=start=0,aresample=async=1000" in line
+    # ffmpeg lancé pendant le compte à rebours : l'écran et le son d'avant sont jetés, la
+    # webcam garde tout (elle a eu le temps de s'ouvrir)
+    early = " ".join(command(RecordOptions(geometry=(0, 0, 640, 360), webcam="/dev/video0"),
+                             "t.mp4", t0=1003.5, origin=1000.5))
+    assert "[0:v]setpts=PTS-1003.500000/TB,trim=start=0" in early
+    assert "[2:v]setpts=PTS-1000.500000/TB" in early
     window = " ".join(command(RecordOptions(source="window", window_id="0x3a0000a",
                                             microphone=False), "x.mp4"))
     assert "-window_id 0x3a0000a" in window
@@ -148,8 +157,8 @@ def test_command_on_windows(monkeypatch):
     assert "-f gdigrab" in line and "-i desktop" in line
     assert "-offset_x 1920 -offset_y 0 -video_size 1280x720" in line
     assert "-i audio=Microphone (Realtek(R) Audio)" in line
-    assert "-i video=Integrated Camera" in line and "overlay=W-w-24:H-h-24" in line
-    assert "x11grab" not in line and "pulse" not in line and cmd[-1] == "out.mp4"
+    assert "-i video=Integrated Camera" in line and "out.webcam-brut.mkv" in line
+    assert "x11grab" not in line and "pulse" not in line and "+faststart out.mp4" in line
     zone = " ".join(command(RecordOptions(source="region", geometry=(1920, 0, 2560, 1440),
                                           region=(100, 50, 641, 360), microphone=False),
                             "z.mp4"))
@@ -219,40 +228,30 @@ def test_on_monitor():
     assert recorder.on_monitor((5000, 0, 100, 100), screens) is None
 
 
-def test_webcam_layouts_and_processed_parts(monkeypatch):
+def test_webcam_parts_and_processed_layer(monkeypatch):
     monkeypatch.setattr(recorder, "ON_WINDOWS", False)
     base = dict(geometry=(0, 0, 1280, 720), microphone=False, webcam="/dev/video0")
-    # coin choisi, taille réglable (part de la largeur de l'écran)
-    line = " ".join(command(RecordOptions(**base, webcam_position="top_left",
-                                          webcam_size=0.3), "a.mp4"))
-    assert "scale2ref=w=trunc(iw*0.3/2)*2" in line and "overlay=24:24" in line
-    rond = " ".join(command(RecordOptions(**base, webcam_shape="round"), "r.mp4"))
-    assert "geq=" in rond and "hypot" in rond
-    # écran partagé : écran réduit d'un côté, webcam recadrée de l'autre
-    split = " ".join(command(RecordOptions(**base, webcam_position="split_left",
-                                           webcam_size=0.4), "s.mp4"))
-    assert "pad=" in split and "overlay=0:0" in split and "crop=" in split
     # micro choisi (PulseAudio)
     mic = " ".join(command(RecordOptions(geometry=(0, 0, 640, 360),
                                          microphone_device="alsa_input.usb"), "m.mp4"))
     assert "-f pulse -i alsa_input.usb" in mic
-    # fond flouté ou effacé : deux fichiers, assemblés après l'enregistrement
+    # la disposition ne change plus la commande : elle sert dans la timeline
+    plain = command(RecordOptions(**base, webcam_position="split_left", webcam_shape="round"),
+                    "/tmp/rec.mp4")
+    assert "overlay" not in " ".join(plain) and "geq" not in " ".join(plain)
+    assert "/tmp/rec.mp4" in plain and recorder.camera_part("/tmp/rec.mp4") in plain
+    assert "fps=2,scale=8:8,format=gray[campix]" in " ".join(plain)
     options = RecordOptions(**base, webcam_background="blur")
-    cmd = command(options, "/tmp/rec.mp4")
-    screen_part, cam_part = recorder.parts("/tmp/rec.mp4")
-    assert screen_part in cmd and cam_part in cmd and "/tmp/rec.mp4" not in cmd
-    assert "pipe:1" not in cmd
     live = " ".join(command(options, "/tmp/rec.mp4", live_masks=True))  # détourage en direct
-    assert "split=2[camfile][campipe]" in live and "scale=256:144,format=rgb24" in live
+    assert "split=2[camfile][camtap]" in live and "scale=256:144,format=rgb24" in live
     assert live.endswith("-f rawvideo pipe:1")
-    compose = " ".join(recorder.compose_command(options, screen_part, cam_part, "m.mkv",
-                                                "/tmp/rec.mp4", (1280, 720), cam_start=1.25))
-    assert "setpts=PTS-STARTPTS+1.250000/TB" in compose and "-copyts" in compose
-    assert "alphamerge" in compose and "gblur=sigma=18" in compose and "0:a?" in compose
-    removed = " ".join(recorder.compose_command(
-        dataclasses.replace(options, webcam_background="remove"), screen_part, cam_part,
-        "m.mkv", "/tmp/rec.mp4", (1280, 720)))
+    blur = " ".join(recorder.layer_command(options, "c.mkv", "m.mkv", "w.mp4", []))
+    assert "alphamerge" in blur and "gblur=sigma=18" in blur and "libx264" in blur
+    removed = " ".join(recorder.layer_command(
+        dataclasses.replace(options, webcam_background="remove"), "c.mkv", "m.mkv", "w.webm",
+        recorder.VP9_ALPHA))
     assert "alphamerge" in removed and "gblur=sigma=18" not in removed
+    assert "yuva420p" in removed and "libvpx-vp9" in removed
 
 
 def test_pactl_sources():
@@ -296,28 +295,55 @@ def test_segmenter_finds_the_person():
     assert mask[10, 240] < 0.2 and mask[60, 40] < 0.2  # fond, meuble
 
 
-def test_finisher_blurs_webcam_background(tmp_path):
-    np = pytest.importorskip("numpy")
-    if shutil.which("ffmpeg") is None:
-        pytest.skip("ffmpeg absent")
-    target = tmp_path / "rec.mp4"
-    screen_part, cam_part = recorder.parts(str(target))
-    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
-                    "testsrc=s=320x180:r=25:d=1", "-f", "lavfi", "-i", "sine=d=1",
-                    "-c:v", "libx264", "-c:a", "aac", screen_part], check=True)
+def _webcam_file(np, tmp_path, path):
     frame = tmp_path / "person.raw"
     frame.write_bytes(_person(np).tobytes())
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
                     "-s", "256x144", "-i", str(frame), "-vf", "loop=24:1,setpts=N/25/TB",
-                    "-r", "25", "-c:v", "libx264", "-pix_fmt", "yuv420p", cam_part],
-                   check=True)
-    options = RecordOptions(webcam="cam", webcam_background="remove", fps=25,
-                            webcam_position="split_right", webcam_size=0.4)
+                    "-r", "25", "-c:v", "libx264", "-pix_fmt", "yuv420p", path], check=True)
+
+
+@pytest.mark.parametrize("background", ["remove", "blur"])
+def test_finisher_makes_the_webcam_layer(tmp_path, background):
+    np = pytest.importorskip("numpy")
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg absent")
+    target = tmp_path / "rec.mp4"
+    camera = recorder.camera_part(str(target))
+    _webcam_file(np, tmp_path, camera)
+    options = RecordOptions(webcam="cam", webcam_background=background, fps=25)
     job = recorder.Finisher(options, target, 1.0)
     job.start()
     assert job.wait(120) and not job.error, job.error
-    assert target.exists() and not Path(cam_part).exists() and not Path(screen_part).exists()
-    assert _duration(target) == pytest.approx(1.0, abs=0.3)
+    assert job.layer is not None and job.layer.exists() and not Path(camera).exists()
+    assert not Path(recorder.mask_part(str(target))).exists()
+    assert _duration(job.layer) == pytest.approx(1.0, abs=0.3)
+    if background == "blur":
+        assert job.layer.suffix == ".mp4"
+        return
+    # fond effacé : vidéo transparente que le moteur relit (personne opaque, fond transparent)
+    mlt = pytest.importorskip("mlt7")
+    from montar.engine.base import Canvas
+    from montar.engine.mlt_engine import _ensure_factory, _profile
+
+    _ensure_factory()
+    producer = mlt.Producer(_profile(Canvas(256, 144, 25)), str(job.layer))
+    frame = producer.get_frame()
+    frame.set("consumer.rescale", "none")
+    image = frame.get_image(mlt.mlt_image_rgba, 256, 144)
+    alpha = lambda x, y: image[(y * 256 + x) * 4 + 3]  # noqa: E731
+    assert alpha(128, 60) > 200 and alpha(240, 10) < 60
+
+
+def test_finisher_keeps_the_raw_webcam_on_failure(tmp_path):
+    target = tmp_path / "rec.mp4"
+    camera = Path(recorder.camera_part(str(target)))
+    camera.write_bytes(b"pas une video")
+    job = recorder.Finisher(RecordOptions(webcam="cam", webcam_background="remove"), target,
+                            1.0)
+    job.start()
+    assert job.wait(60) and job.error
+    assert job.layer == Path(recorder.webcam_layer(str(target), "mkv")) and job.layer.exists()
 
 
 def test_parse_xwininfo():

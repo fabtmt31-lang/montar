@@ -27,6 +27,25 @@ projet.
 - la finition peut être **vue et écoutée dans l'aperçu** de l'éditeur ; les préréglages
   personnels sont enregistrés dans `~/.config/montar/finition.json`.
 
+**Version 1.9** (1.9.0) : enregistrements en deux calques, format libre, lecteur.
+
+- **webcam prête dès la première seconde** : elle s'ouvre pendant le compte à rebours
+  (l'enregistrement l'attend si elle tarde) ; plus de webcam qui arrive après 5 s ni de
+  saccade au moment où elle apparaît ;
+- **l'écran et la webcam restent séparés** : dans la timeline, deux clips liés (ils se
+  sélectionnent, se déplacent et se coupent ensemble) ; la webcam se **retire sur un
+  passage** (Maj + glisser, puis clic droit « Supprimer la webcam sur la sélection »,
+  avec un fondu ; en écran partagé l'écran reprend toute l'image) ou passe **en plein
+  écran** sur un passage ; elle reste déplaçable et redimensionnable après coup ;
+- **forme ronde** réglée sur le clip (plus incrustée dans l'image) ; fond effacé : vidéo
+  transparente (VP9, sinon FFV1) ; plus d'étape d'assemblage à la fin ;
+- **format libre** : « Ajuster le cadre à ce média » (clic droit dans Médias), bandeau
+  « Adapter le projet » quand le premier média n'a pas le format du projet, format
+  « Libre » à la création et « Changer le format… » dans l'inspecteur du projet ;
+- **« Modifier le média »** : un grand lecteur avec le son (Espace, J / K / L), réglages
+  appliqués pendant la lecture, original au même instant (bascule ou touche C maintenue),
+  partie gardée en boucle.
+
 **Version 1.8** (1.8.0) : enregistreur d'écran plus fluide et synchrone.
 
 - **son et image synchrones** : chaque source (écran, micro, webcam) est datée avec

@@ -181,7 +181,8 @@ class MainWindow(QMainWindow):
 
     def create_project(self, params: NewProjectParams) -> EditorPage | None:
         project = Project(name=params.name, aspect=params.aspect,
-                          resolution=params.resolution, fps=params.fps)
+                          resolution=params.resolution, fps=params.fps,
+                          width=params.width, height=params.height)
         target = unique_project_folder(self.settings.projects_path, params.name)
         try:
             project.save(target)

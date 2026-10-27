@@ -8,8 +8,10 @@ occupe à l'écran (filmée seule, une fenêtre dessinée par la carte graphique
 applications modernes — sortirait noire), micro, webcam et son de l'ordinateur (entrée
 « Mixage stéréo » si Windows la propose) par DirectShow.
 
-La webcam s'incruste dans un coin (taille et forme réglables) ou partage l'écran ; son
-fond peut être flouté ou effacé (voir media/segment.py : calcul après l'enregistrement)."""
+L'écran (avec le son) et la webcam sont enregistrés dans deux fichiers : dans la timeline,
+la webcam est un clip lié posé sur l'écran (core/recording.py : coin, taille, rond, écran
+partagé), qu'on peut retirer ou passer en plein écran sur une partie. Son fond peut être
+flouté ou effacé (media/segment.py : pendant l'enregistrement, sinon après)."""
 from __future__ import annotations
 
 import glob
@@ -30,8 +32,6 @@ ON_WINDOWS = sys.platform == "win32"
 WEBCAM_WIDTH = 0.25  # largeur de l'incrustation, en fraction de la largeur de la vidéo
 WEBCAM_POSITIONS = ("bottom_right", "bottom_left", "top_right", "top_left",
                     "split_right", "split_left")
-MARGIN = 24  # écart entre l'incrustation et le bord de l'image (pixels)
-SPLIT_BACKGROUND = "0x17261E"  # fond de l'écran partagé (autour de l'écran réduit)
 
 
 @dataclass
@@ -538,13 +538,16 @@ WALLCLOCK = ["-use_wallclock_as_timestamps", "1"]
 
 
 def command(options: RecordOptions, target: str, t0: float | None = None,
-            live_masks: bool = False) -> list[str]:
-    """Commande ffmpeg de l'enregistrement ; `t0` : instant de départ commun (secondes,
-    horloge de l'ordinateur) ; `live_masks` : images réduites de la webcam envoyées sur la
-    sortie standard (détourage pendant l'enregistrement)."""
+            live_masks: bool = False, origin: float | None = None) -> list[str]:
+    """Commande ffmpeg de l'enregistrement ; `t0` : début de l'enregistrement (secondes,
+    horloge de l'ordinateur ; l'écran et le son filmés avant sont jetés) ; `origin` :
+    lancement de ffmpeg, pendant le compte à rebours (la webcam s'ouvre pendant ce temps) ;
+    `live_masks` : images réduites de la webcam envoyées sur la sortie standard (détourage
+    pendant l'enregistrement)."""
     t0 = time.time() if t0 is None else t0
+    origin = t0 if origin is None else min(origin, t0)
     if ON_WINDOWS:
-        return _command_windows(options, target, t0, live_masks)
+        return _command_windows(options, target, t0, live_masks, origin)
     ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
     display = options.display or os.environ.get("DISPLAY", ":0")
     cmd = [ffmpeg, "-v", "error", "-y", "-copyts", *WALLCLOCK, "-thread_queue_size", "1024",
@@ -571,11 +574,11 @@ def command(options: RecordOptions, target: str, t0: float | None = None,
     if options.webcam:
         cmd += [*WALLCLOCK, "-thread_queue_size", "1024", *webcam_input(options.webcam)]
         webcam = inputs
-    return _encode(cmd, options, audio, webcam, target, "", size, t0, live_masks)
+    return _encode(cmd, options, audio, webcam, target, "", size, t0, live_masks, origin)
 
 
 def _command_windows(options: RecordOptions, target: str, t0: float,
-                     live_masks: bool) -> list[str]:
+                     live_masks: bool, origin: float | None = None) -> list[str]:
     """Écran, zone ou fenêtre par ddagrab (ou gdigrab) ; sons et webcam par DirectShow."""
     ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
     mouse = "1" if options.show_cursor else "0"
@@ -634,53 +637,18 @@ def _command_windows(options: RecordOptions, target: str, t0: float,
         # grand tampon : une webcam en MJPEG ne perd plus d'images quand l'ordinateur force
         cmd += [*WALLCLOCK, "-thread_queue_size", "1024", *webcam_input(options.webcam)]
         webcam = inputs
-    return _encode(cmd, options, audio, webcam, target, prefix, size, t0, live_masks)
+    return _encode(cmd, options, audio, webcam, target, prefix, size, t0, live_masks, origin)
 
 
-def webcam_graph(screen: str, cam: str, options: RecordOptions,
-                 size: tuple[int, int] | None, out: str = "[video]") -> list[str]:
-    """Filtres ffmpeg qui posent la webcam `cam` sur l'image `screen` : dans un coin (taille
-    `webcam_size` de la largeur, rectangle ou rond) ou en écran partagé (l'écran réduit d'un
-    côté, la webcam recadrée de l'autre). `size` : taille de l'écran filmé si connue."""
-    share = max(0.1, min(0.6, options.webcam_size))
-    if options.split:
-        w, h = size or (16, 9)
-        aspect = share * w / h  # proportions de la bande de la webcam
-        # écran réduit puis complété jusqu'à sa taille d'origine (la bande de la webcam)
-        x = "0" if options.webcam_position == "split_right" else "ow-iw"
-        cam_x = "W-w" if options.webcam_position == "split_right" else "0"
-        return [
-            f"{screen}scale=trunc(iw*{1 - share:g}/2)*2:-2,"
-            f"pad=w=trunc(iw/{1 - share:g}/2)*2:h=trunc(ih/{1 - share:g}/2)*2:x={x}"
-            f":y=(oh-ih)/2:color={SPLIT_BACKGROUND}[canvas]",
-            f"{cam}crop='min(iw,ih*{aspect:.4f})':'min(ih,iw/{aspect:.4f})'[camcrop]",
-            f"[camcrop][canvas]scale2ref=w=trunc(iw*{share:g}/2)*2:h=ih[cam][base]",
-            f"[base][cam]overlay={cam_x}:0,format=yuv420p{out}",
-        ]
-    where = {"bottom_right": f"W-w-{MARGIN}:H-h-{MARGIN}",
-             "bottom_left": f"{MARGIN}:H-h-{MARGIN}",
-             "top_right": f"W-w-{MARGIN}:{MARGIN}",
-             "top_left": f"{MARGIN}:{MARGIN}"}.get(options.webcam_position,
-                                                   f"W-w-{MARGIN}:H-h-{MARGIN}")
-    if options.webcam_shape == "round":
-        # carré recadré au centre, réduit d'abord : le masque rond (geq, lent) ne porte
-        # que sur les points de l'incrustation
-        return [f"{cam}crop='min(iw,ih)':'min(iw,ih)'[square]",
-                f"[square]{screen}scale2ref=w=trunc(iw*{share:g}/2)*2:h=ow[camsmall][base]",
-                "[camsmall]format=yuva420p,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':"
-                "a='if(lte(hypot(X-W/2,Y-H/2),W/2-1),alpha(X,Y),0)'[cam]",
-                f"[base][cam]overlay={where},format=yuv420p{out}"]
-    # scale2ref : iw / ih sont ceux de l'image de référence (l'écran), main_a les
-    # proportions de la webcam
-    return [f"{cam}{screen}scale2ref=w=trunc(iw*{share:g}/2)*2:h=trunc(ow/main_a/2)*2"
-            "[cam][base]",
-            f"[base][cam]overlay={where},format=yuv420p{out}"]
+def camera_part(target: str) -> str:
+    """Webcam telle que filmée (avant le flou ou l'effacement du fond)."""
+    return str(Path(target).with_suffix("")) + ".webcam-brut.mkv"
 
 
-def parts(target: str) -> tuple[str, str]:
-    """Fichiers intermédiaires (écran avec le son, webcam) d'un enregistrement traité."""
-    base = str(Path(target).with_suffix(""))
-    return base + ".ecran.mkv", base + ".webcam.mkv"
+def webcam_layer(target: str, ext: str = "mkv") -> str:
+    """Fichier de la webcam d'un enregistrement, posé au-dessus de l'écran dans la
+    timeline."""
+    return str(Path(target).with_suffix("")) + f".webcam.{ext}"
 
 
 def mask_part(target: str) -> str:
@@ -689,8 +657,8 @@ def mask_part(target: str) -> str:
 
 
 def start_time(path: str) -> float:
-    """Instant de la première image (les fichiers de l'enregistrement gardent l'heure
-    commune de départ : la webcam peut commencer après l'écran)."""
+    """Instant de la première image d'un fichier de l'enregistrement (l'écran compte depuis
+    le début de l'enregistrement, la webcam depuis le lancement de ffmpeg)."""
     ffprobe = shutil.which("ffprobe")
     if ffprobe is None:
         return 0.0
@@ -704,17 +672,24 @@ def start_time(path: str) -> float:
 
 
 MASK_SIZE = (256, 144)  # images envoyées au détourage (taille du modèle)
+TAP_SIZE = 8  # sans détourage : vignettes 8 × 8 qui disent que la webcam est prête
 
 
 def _encode(cmd: list[str], options: RecordOptions, audio: list[int], webcam: int | None,
             target: str, prefix: str = "", size: tuple[int, int] | None = None,
-            t0: float = 0.0, live_masks: bool = False) -> list[str]:
-    """Montage des entrées (écran, webcam, sons mélangés), ramenées à l'instant `t0`, et
-    encodage."""
+            t0: float = 0.0, live_masks: bool = False,
+            origin: float | None = None) -> list[str]:
+    """Montage des entrées et encodage : l'écran et les sons mélangés, ramenés à l'instant
+    `t0` (ce qui précède est jeté) dans `target` ; la webcam, depuis le lancement
+    (`origin`), dans son propre fichier, plus des images réduites sur la sortie standard
+    (détourage en direct, ou simple signal « webcam prête »)."""
+    origin = t0 if origin is None else origin
     shift = f"setpts=PTS-{t0:.6f}/TB"
-    graph = [f"[0:v]{prefix}{shift},scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p[screen]"]
+    graph = [f"[0:v]{prefix}{shift},trim=start=0,scale=trunc(iw/2)*2:trunc(ih/2)*2,"
+             "format=yuv420p[screen]"]
     for k, index in enumerate(audio):
-        graph.append(f"[{index}:a]asetpts=PTS-{t0:.6f}/TB,aresample=async=1000[a{k}]")
+        graph.append(f"[{index}:a]asetpts=PTS-{t0:.6f}/TB,atrim=start=0,"
+                     f"aresample=async=1000[a{k}]")
     if len(audio) == 2:
         graph.append("[a0][a1]amix=inputs=2:duration=longest[audio]")
     elif audio:
@@ -722,75 +697,79 @@ def _encode(cmd: list[str], options: RecordOptions, audio: list[int], webcam: in
     sound = ["-map", "[audio]", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"] if audio \
         else []
     video = [*recording_encoder(), "-r", str(options.fps)]
+    outputs = ["-map", "[screen]", *video, *sound, "-movflags", "+faststart", target]
     if webcam is not None:
-        graph.append(f"[{webcam}:v]{shift}[cam0]")
-    if webcam is not None and options.processed:
-        # deux fichiers (l'écran avec le son, la webcam), assemblés après coup ; avec le
-        # détourage en direct, images réduites de la webcam sur la sortie standard
-        screen_part, cam_part = parts(target)
-        outputs = ["-map", "[screen]", *video, *sound, screen_part,
-                   "-map", "[camfile]", *video, "-pix_fmt", "yuv420p", cam_part]
+        graph.append(f"[{webcam}:v]setpts=PTS-{origin:.6f}/TB,"
+                     "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p,split=2[camfile][camtap]")
         if live_masks:
             w, h = MASK_SIZE
-            graph.append("[cam0]split=2[camfile][campipe]")
-            graph.append(f"[campipe]scale={w}:{h},format=rgb24[campix]")
-            outputs += ["-map", "[campix]", "-r", str(options.fps), "-f", "rawvideo",
-                        "pipe:1"]
+            graph.append(f"[camtap]scale={w}:{h},format=rgb24[campix]")
+            tap = ["-map", "[campix]", "-r", str(options.fps)]
         else:
-            graph.append("[cam0]null[camfile]")
-        return cmd + ["-filter_complex", ";".join(graph), *outputs]
-    label = "[screen]"
-    if webcam is not None:
-        graph += webcam_graph("[screen]", "[cam0]", options, size)
-        label = "[video]"
-    return cmd + ["-filter_complex", ";".join(graph), "-map", label, *video, *sound,
-                  "-movflags", "+faststart", target]
+            graph.append(f"[camtap]fps=2,scale={TAP_SIZE}:{TAP_SIZE},format=gray[campix]")
+            tap = ["-map", "[campix]"]
+        outputs += ["-map", "[camfile]", *video, camera_part(target),
+                    *tap, "-f", "rawvideo", "pipe:1"]
+    return cmd + ["-filter_complex", ";".join(graph), *outputs]
 
 
-def compose_command(options: RecordOptions, screen_part: str, cam_part: str, mask: str,
-                    target: str, size: tuple[int, int] | None,
-                    cam_start: float = 0.0) -> list[str]:
-    """Assemblage final d'un enregistrement traité : fond de la webcam flouté ou effacé
-    d'après les masques (`mask`, blanc = personne, une image par image de la webcam, à
-    partir de `cam_start`), webcam placée sur l'écran. Les heures des fichiers sont
-    gardées (-copyts) : le son, l'écran et la webcam restent alignés."""
+def layer_command(options: RecordOptions, camera: str, mask: str, target: str,
+                  codec: list[str]) -> list[str]:
+    """Webcam d'un enregistrement traité : fond flouté (vidéo ordinaire) ou effacé (vidéo
+    transparente, `codec`) d'après les masques (`mask`, blanc = personne, une image par
+    image de la webcam)."""
     ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
-    graph = ["[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p[screen]",
-             f"[2:v]setpts=PTS-STARTPTS+{cam_start:.6f}/TB[maskat]",
+    graph = ["[0:v]setpts=PTS-STARTPTS[camat]", "[1:v]setpts=PTS-STARTPTS[maskat]",
              # masques agrandis à la taille de la webcam, bords adoucis
-             "[maskat][1:v]scale2ref=w=iw:h=ih[maskbig][cam]",
+             "[maskat][camat]scale2ref=w=iw:h=ih[maskbig][cam]",
              "[maskbig]format=gray,gblur=sigma=2[mask]"]
     if options.webcam_background == "blur":
         graph += ["[cam]split[camback][camfront]",
                   "[camback]gblur=sigma=18[blurred]",
                   "[camfront][mask]alphamerge[person]",
-                  "[blurred][person]overlay=format=auto,format=yuv420p[camfx]"]
-    else:  # effacé : seule la personne reste, posée sur l'écran
-        graph += ["[cam]format=yuva420p[camrgba]", "[camrgba][mask]alphamerge[camfx]"]
-    graph += webcam_graph("[screen]", "[camfx]", options, size)
-    return [ffmpeg, "-v", "error", "-y", "-nostats", "-progress", "pipe:1", "-copyts",
-            "-i", screen_part, "-i", cam_part, "-i", mask,
-            "-filter_complex", ";".join(graph), "-map", "[video]", "-map", "0:a?",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "copy",
-            "-movflags", "+faststart", target]
+                  "[blurred][person]overlay=format=auto,format=yuv420p[layer]"]
+        codec = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-movflags",
+                 "+faststart"]
+    else:  # effacé : seule la personne reste, sur un fond transparent
+        graph += ["[cam]format=yuva420p[camrgba]", "[camrgba][mask]alphamerge[layer]"]
+    return [ffmpeg, "-v", "error", "-y", "-nostats", "-progress", "pipe:1",
+            "-i", camera, "-i", mask, "-filter_complex", ";".join(graph), "-map", "[layer]",
+            "-an", *codec, target]
+
+
+VP9_ALPHA = ["-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-deadline", "realtime",
+             "-cpu-used", "8", "-row-mt", "1", "-crf", "32", "-b:v", "0"]
+FFV1_ALPHA = ["-c:v", "ffv1", "-pix_fmt", "yuva420p"]
+
+
+def alpha_format() -> tuple[str, list[str]]:
+    """(extension, arguments ffmpeg) d'une vidéo transparente que montar sait relire : VP9
+    (léger) si le moteur lit sa transparence, sinon FFV1 (sans perte, plus lourd)."""
+    try:
+        from montar.engine.mlt_engine import reads_vp9_alpha
+    except ImportError:
+        return "mkv", FFV1_ALPHA
+    return ("webm", VP9_ALPHA) if reads_vp9_alpha() else ("mkv", FFV1_ALPHA)
 
 
 class Finisher:
-    """Après un enregistrement traité : masques de la webcam (media/segment.py) puis
-    assemblage, dans un fil. Mêmes attributs qu'un export : `progress`, `finished`,
-    `error`, `cancelled`."""
+    """Après un enregistrement au fond de webcam flouté ou effacé : masques de la webcam
+    (media/segment.py, sauf s'ils ont été calculés pendant l'enregistrement) puis fichier de
+    la webcam traitée, dans un fil. Mêmes attributs qu'un export : `progress`, `finished`,
+    `error`, `cancelled` ; `layer` : fichier de la webcam (telle que filmée si le
+    traitement n'a pas pu se faire)."""
 
     def __init__(self, options: RecordOptions, target: Path, seconds: float,
-                 masks_ready: bool = False) -> None:
+                 masks_ready: bool = False, webcam: dict | None = None) -> None:
         self.options, self.target = options, target
+        self.webcam = webcam or {}  # voir Recorder.webcam
         self.total = max(1, round(seconds * options.fps))
         self.done = 0
-        # masques déjà calculés pendant l'enregistrement : seul l'assemblage reste
         self.masks_ready = masks_ready
         self.phase = "compose" if masks_ready else "masks"
         self.finished = self.cancelled = False
         self.error = ""
-        self.fallback: Path | None = None  # écran seul, si l'assemblage n'a pas pu se faire
+        self.layer: Path | None = None
         self._stop = False
         self._thread = None
 
@@ -819,11 +798,11 @@ class Finisher:
         from montar.media import ffmpeg_run
         from montar.media.segment import webcam_masks
 
-        screen_part, cam_part = parts(str(self.target))
+        camera = camera_part(str(self.target))
         mask = mask_part(str(self.target))
         try:
             if not self.masks_ready:
-                webcam_masks(Path(cam_part), Path(mask), self.options.fps,
+                webcam_masks(Path(camera), Path(mask), self.options.fps,
                              progress=lambda n: setattr(self, "done", n),
                              cancelled=lambda: self._stop)
             if self._stop:
@@ -835,58 +814,89 @@ class Finisher:
                 if key == "out_time_us" and value.isdigit():
                     self.done = int(int(value) / us_per_frame)
 
-            ffmpeg_run.run(compose_command(self.options, screen_part, cam_part, mask,
-                                           str(self.target), self._size(screen_part),
-                                           start_time(cam_part)),
+            ext, codec = ("mp4", []) if self.options.webcam_background == "blur" \
+                else alpha_format()
+            out = Path(webcam_layer(str(self.target), ext))
+            ffmpeg_run.run(layer_command(self.options, camera, mask, str(out), codec),
                            on_progress, cancelled=lambda: self._stop)
+            self.layer = out
         except ffmpeg_run.Cancelled:
             self.cancelled, self.error = True, "annulé"
         except Exception as exc:  # jamais d'exception hors du fil
             self.error = str(exc)
         finally:
-            if self.error and Path(screen_part).exists():
-                # échec ou annulation : l'écran (avec le son) est gardé, sans la webcam
-                self.fallback = self.target.with_suffix(".mkv")
-                Path(screen_part).replace(self.fallback)
-            for leftover in (screen_part, cam_part, mask):
+            if self.layer is None and Path(camera).exists():
+                # échec ou annulation : la webcam est gardée telle que filmée
+                self.layer = Path(webcam_layer(str(self.target), "mkv"))
+                Path(camera).replace(self.layer)
+            for leftover in (camera, mask):
                 Path(leftover).unlink(missing_ok=True)
             self.finished = True
 
-    def _size(self, screen_part: str) -> tuple[int, int] | None:
-        from montar.media.probe import probe
-
-        try:
-            info = probe(screen_part)
-            return (info.width, info.height) if info.width and info.height else None
-        except Exception:  # taille inconnue : proportions 16:9 supposées
-            return None
-
 
 class Recorder:
-    """Un enregistrement en cours : `stop()` termine proprement le fichier."""
+    """Un enregistrement : ffmpeg est lancé dès le compte à rebours (`start`), pour que la
+    webcam ait le temps de s'ouvrir ; l'enregistrement commence vraiment avec `begin`, et
+    `stop()` termine proprement les fichiers."""
 
     def __init__(self, options: RecordOptions, target: Path) -> None:
         self.options, self.target = options, target
         self._proc: subprocess.Popen | None = None
         self._masker = None
+        self._tap_frames = 0
         self.masks_ready = False  # détourage fait pendant l'enregistrement
-        self.started = 0.0
+        self.origin = self.t0 = 0.0  # lancement de ffmpeg, début prévu (horloge)
+        self.begun = 0.0  # début réel (webcam prête), horloge de l'ordinateur
+        self.started = 0.0  # même instant, horloge monotone (durée affichée)
         self.error = ""
+        self.layer: Path | None = None  # webcam telle que filmée (fond inchangé)
+        self.webcam: dict = {}  # pour le média de l'écran (voir MediaItem.webcam)
 
-    def start(self) -> None:
+    def start(self, delay: float = 0.0) -> None:
+        """Lance ffmpeg ; l'écran et le son sont gardés à partir de `delay` secondes."""
         self.target.parent.mkdir(parents=True, exist_ok=True)
         self._log = open(self.target.with_suffix(".log"), "w+b")  # noqa: SIM115
         live = self.options.processed and self._can_segment()
+        self.origin = time.time()
+        self.t0 = self.origin + max(0.0, delay)
+        tapped = bool(self.options.webcam)
         self._proc = subprocess.Popen(self._command(live),
                                       stdin=subprocess.PIPE,
-                                      stdout=subprocess.PIPE if live else subprocess.DEVNULL,
+                                      stdout=subprocess.PIPE if tapped else subprocess.DEVNULL,
                                       stderr=self._log)
-        self.started = time.monotonic()
         if live:
             from montar.media.segment import LiveMasker
 
             self._masker = LiveMasker(self._proc.stdout, Path(mask_part(str(self.target))),
                                       self.options.fps)
+        elif tapped:
+            threading.Thread(target=self._drain_tap, name="montar-webcam-pret",
+                             daemon=True).start()
+
+    def _drain_tap(self) -> None:
+        """Lit (et jette) les vignettes de la webcam : ffmpeg ne doit jamais attendre."""
+        stream = self._proc.stdout
+        size = TAP_SIZE * TAP_SIZE
+        try:
+            while len(stream.read(size)) == size:
+                self._tap_frames += 1
+        except (OSError, ValueError):
+            pass
+
+    @property
+    def camera_ready(self) -> bool:
+        """Sans webcam, ou quand ses premières images arrivent (ffmpeg n'assemble rien
+        avant d'avoir reçu toutes ses sources)."""
+        if not self.options.webcam:
+            return True
+        if self._masker is not None:
+            return self._masker.frames > 0
+        return self._tap_frames > 0
+
+    def begin(self) -> None:
+        """Début réel de l'enregistrement (fin du compte à rebours, webcam prête)."""
+        self.begun = max(time.time(), self.t0)
+        self.started = time.monotonic() - (self.begun - time.time())
 
     @staticmethod
     def _can_segment() -> bool:
@@ -897,7 +907,8 @@ class Recorder:
         return model_path().exists()
 
     def _command(self, live_masks: bool = False) -> list[str]:
-        return command(self.options, str(self.target), time.time(), live_masks)
+        return command(self.options, str(self.target), self.t0 or time.time(), live_masks,
+                       self.origin or None)
 
     @property
     def running(self) -> bool:
@@ -905,7 +916,18 @@ class Recorder:
 
     @property
     def elapsed(self) -> float:
-        return time.monotonic() - self.started if self.started else 0.0
+        return max(0.0, time.monotonic() - self.started) if self.started else 0.0
+
+    def cancel(self) -> None:
+        """Abandon (pendant le compte à rebours) : rien n'est gardé."""
+        self.stop(timeout=5.0)
+        for path in (self.target, Path(camera_part(str(self.target))),
+                     Path(mask_part(str(self.target)))):
+            path.unlink(missing_ok=True)
+        if self.layer is not None:
+            self.layer.unlink(missing_ok=True)
+            self.layer = None
+        self.webcam = {}
 
     def stop(self, timeout: float = 15.0) -> bool:
         """Arrête l'enregistrement ; renvoie True si un fichier lisible a été écrit."""
@@ -914,7 +936,7 @@ class Recorder:
             return False
         if proc.poll() is None:
             try:
-                proc.stdin.write(b"q")  # ffmpeg finalise le fichier
+                proc.stdin.write(b"q")  # ffmpeg finalise les fichiers
                 proc.stdin.close()
             except OSError:
                 pass
@@ -931,8 +953,28 @@ class Recorder:
         lines = self._log.read().decode("utf-8", "replace").strip().splitlines()
         self._log.close()
         self.target.with_suffix(".log").unlink(missing_ok=True)
-        written = Path(parts(str(self.target))[0]) if self.options.processed else self.target
-        ok = written.exists() and written.stat().st_size > 0
+        ok = self.target.exists() and self.target.stat().st_size > 0
         if not ok:
             self.error = lines[-1] if lines else _("aucune image enregistrée")
+        camera = Path(camera_part(str(self.target)))
+        if ok and self.options.webcam and camera.exists() and camera.stat().st_size > 0:
+            self._describe_webcam(camera)
+        if not self.webcam:  # webcam sans image : rien à garder d'elle
+            camera.unlink(missing_ok=True)
+            Path(mask_part(str(self.target))).unlink(missing_ok=True)
         return ok
+
+    def _describe_webcam(self, camera: Path) -> None:
+        """Début utile de chaque fichier (l'écran a pu attendre la webcam, la webcam s'est
+        ouverte pendant le compte à rebours) et disposition choisie."""
+        o = self.options
+        begun = self.begun or self.t0
+        self.webcam = {
+            "screen_in": round(max(0.0, begun - self.t0 - start_time(str(self.target))), 3),
+            "webcam_in": round(max(0.0, begun - self.origin - start_time(str(camera))), 3),
+            "layout": {"position": o.webcam_position, "size": o.webcam_size,
+                       "shape": o.webcam_shape, "background": o.webcam_background},
+        }
+        if not o.processed:  # fond inchangé : la webcam filmée sert telle quelle
+            self.layer = Path(webcam_layer(str(self.target), "mkv"))
+            camera.replace(self.layer)

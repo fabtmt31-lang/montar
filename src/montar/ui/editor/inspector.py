@@ -73,6 +73,7 @@ INSPECTOR_MIN_WIDTH = 300
 class Inspector(QFrame):
     freezeRequested = pyqtSignal(str)  # clip : image fixe à la tête de lecture
     scopesRequested = pyqtSignal()  # fenêtre des scopes de l'étalonnage
+    formatRequested = pyqtSignal()  # changer le format de la toile du projet
     seekRequested = pyqtSignal(int)  # image de la timeline (clé choisie)
 
     def __init__(self, controller: EditorController, modules=None) -> None:
@@ -202,6 +203,10 @@ class Inspector(QFrame):
         self._grid.setVerticalSpacing(10)
         self._grid.setColumnStretch(1, 1)
         layout.addWidget(host)
+        layout.addSpacing(12)
+        self.format_button = button(_("Changer le format…"), "secondary", "crop")
+        self.format_button.clicked.connect(self.formatRequested)
+        layout.addWidget(self.format_button)
         layout.addStretch(1)
         return w
 
@@ -758,12 +763,13 @@ class Inspector(QFrame):
         self.subtitle.setText(_("Projet"))
         self.section.setText(_("PROJET"))
         self._set_rows([
-            (_("Format"), project.aspect),
+            (_("Format"), _("Personnalisé") if project.aspect == "custom" else project.aspect),
             (_("Toile"), f"{w} × {h}"),
             (_("Images/s"), str(project.fps)),
             (_("Médias"), str(len(project.media))),
             (_("Fichier"), str(project.path or "—")),
         ])
+        self.format_button.show()
         self._show_page(self._info)
 
     def show_media(self, media: MediaItem) -> None:
@@ -789,6 +795,7 @@ class Inspector(QFrame):
         if not media.exists:
             rows.append((_("État"), _("introuvable")))
         self._set_rows(rows)
+        self.format_button.hide()
         self._show_page(self._info)
 
     def show_clip(self, clip: Clip, media: MediaItem | None, track_label: str,

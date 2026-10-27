@@ -892,18 +892,33 @@ def test_media_editor_dialog_preview(window, media_dir):
     dialog.crop_rows["crop_left"].moved.emit(25)
     dialog._rotate(90)
     dialog.color_rows["saturation"].moved.emit(-100)
-    dialog._render()
     assert dialog.replace_button.isEnabled()
-    after = dialog.after.pixmap()
-    assert after.height() > after.width()  # recadré puis tourné : image en hauteur
+    # un seul grand lecteur : l'image arrive du fil de lecture, réglages appliqués
+    assert wait_until(lambda: dialog.screen.pixmap() is not None
+                      and not dialog.screen.pixmap().isNull())
+    assert wait_until(lambda: dialog.screen.pixmap().height() > dialog.screen.pixmap().width())
     assert dialog.edit.output_size(editor.project.media[0]) == (360, 480)
+    dialog.view.set_current("original")  # bascule (ou C maintenue) : l'original
+    dialog._view_changed()
+    assert wait_until(lambda: dialog.screen.pixmap().width() > dialog.screen.pixmap().height())
+    dialog.view.set_current("edited")
+    dialog._view_changed()
     dialog.position.setValue(10)
     dialog._mark("in")
     dialog.position.setValue(40)
     dialog._mark("out")
     assert dialog.edit.segment(editor.project.media[0]) == pytest.approx((0.4, 1.6))
+    assert dialog.trim_bar.kept[0] == pytest.approx(0.4 / editor.project.media[0].duration)
+    # lecture en boucle sur la partie gardée
+    dialog.toggle_play()
+    assert wait_until(lambda: dialog.player.playing)
+    assert wait_until(lambda: 10 <= dialog.position.value() < 40)
+    dialog.toggle_play()
+    assert wait_until(lambda: not dialog.player.playing)
     dialog.timelapse.setChecked(True)
     assert dialog.edit.timelapse["factor"] == 16
+    dialog.reject()
+    assert dialog.player is None
 
 
 @needs_ffmpeg
@@ -2482,22 +2497,42 @@ def test_recorder_dialog_and_processed_webcam(window, media_dir, monkeypatch, tm
                *wall, "-f", "lavfi", "-i", "sine=r=48000,arealtime",
                *wall, "-f", "lavfi", "-i", "testsrc2=s=320x240:r=25,realtime"]
         return recorder_module._encode(cmd, self.options, [1], 2, str(self.target), "",
-                                       (320, 180), time.time(), live_masks)
+                                       (320, 180), self.t0, live_masks, self.origin)
 
     monkeypatch.setattr(recorder_module.Recorder, "_command", fake_command)
     results = []
     editor.recordingFinished.connect(results.append)
-    editor.start_recording(dataclasses.replace(options, fps=25), target, countdown=0)
+    editor.start_recording(dataclasses.replace(options, fps=25), target, countdown=1)
     recorder = editor._recorder
+    assert wait_until(lambda: recorder.started, 15)  # webcam prête, enregistrement lancé
     pump(1500)
     assert editor._recorder is recorder, recorder.error  # ffmpeg ne s'est pas arrêté seul
     editor.stop_recording()
     assert recorder.masks_ready  # détourage fait pendant l'enregistrement
+    assert recorder.webcam["layout"]["position"] == "split_left"
     assert editor._recording_job and editor.busy.isVisible()
     assert wait_until(lambda: results, 120)
     assert results == [str(target)] and target.exists()
     assert wait_until(lambda: any(m.path == str(target) for m in editor.project.media))
-    assert not list(target.parent.glob("*.webcam.mkv"))
+    # deux médias liés : l'écran (dans le panneau Médias) et sa webcam transparente
+    screen = next(m for m in editor.project.media if m.path == str(target))
+    camera = editor.project.webcam_of(screen)
+    assert camera is not None and camera.role == "webcam"
+    assert camera not in editor.project.visible_media()
+    assert not list(target.parent.glob("*.webcam-brut.mkv"))
+    assert not list(target.parent.glob("*.masques.mkv"))
+    # dans la timeline : écran et webcam côte à côte, liés ; la webcam se retire sur une
+    # partie et la sélection d'un clip prend l'autre avec lui
+    editor.add_to_timeline(screen)
+    assert wait_until(lambda: any(c.media_id == camera.id for c in editor.project.clips))
+    clips = [c for c in editor.project.clips if c.media_id in (screen.id, camera.id)]
+    assert len(clips) == 2 and clips[0].group == clips[1].group
+    editor.controller.select(clips[0].id)
+    assert set(editor.controller.selection) == {c.id for c in clips}
+    end = min(c.end for c in clips)
+    editor.controller.edit("webcam", lambda t: t.remove_webcam(clips[0].id, 0, end // 2))
+    assert [c for c in editor.project.clips if c.media_id == camera.id][0].start == end // 2
+    editor.timeline.view.viewport().repaint()
 
 
 @needs_ffmpeg
@@ -2524,13 +2559,17 @@ def test_capture_highlight_during_countdown(window, monkeypatch):
     from montar.media import recorder as recorder_module
 
     editor = window.create_project(NewProjectParams("Cadre", "16:9", "720p", 25))
-    started = []
+    launched, started = [], []
+    # ffmpeg est lancé dès le début du compte à rebours, l'enregistrement commence à la fin
     monkeypatch.setattr(recorder_module.Recorder, "start",
-                        lambda self: (started.append(editor._highlight), None)[1])
+                        lambda self, delay=0.0: launched.append(delay))
+    monkeypatch.setattr(recorder_module.Recorder, "begin",
+                        lambda self: started.append(editor._highlight))
     monkeypatch.setattr(recorder_module.Recorder, "running", property(lambda self: True))
     target = editor.project.media_dir / "cadre.mp4"
     editor.start_recording(recorder_module.RecordOptions(microphone=False), target,
                            countdown=1, area=QRect(10, 20, 300, 200))
+    assert launched == [1]
     highlight = editor._highlight
     assert highlight is not None and highlight.isVisible()
     assert highlight.geometry() == QRect(4, 14, 312, 212)  # autour de la zone filmée
@@ -2568,3 +2607,54 @@ def test_microphone_test_can_be_replayed(window, monkeypatch):
     dialog.test_button.setChecked(False)
     assert dialog.replay_button.isEnabled() and dialog._sample[1] == 1.0
     dialog.done(QDialog.DialogCode.Rejected)
+
+
+def test_new_project_with_custom_size(app, window):
+    d = NewProjectDialog()
+    d._format_cards["custom"].setChecked(True)
+    d.custom_width.setValue(1365)
+    d.custom_height.setValue(768)
+    d._update_info()
+    p = d.params()
+    assert (p.aspect, p.width, p.height) == ("custom", 1365, 768)
+    assert not d._size_row.isHidden() and "1364 × 768" in d.info.text()
+    editor = window.create_project(p)
+    assert editor.project.canvas_size == (1364, 768)
+    assert editor.preview.canvas.canvas_size == (1364, 768)
+
+
+@needs_ffmpeg
+def test_fit_canvas_to_media_and_first_media_banner(window, media_dir, monkeypatch):
+    editor = imported_editor(window, media_dir, ["vertical.mp4", "clip.mp4"])
+    vertical = next(m for m in editor.project.media if m.name == "vertical.mp4")
+    # premier média d'un projet vide qui n'a pas le format : bandeau
+    editor.add_to_timeline(vertical)
+    assert wait_until(lambda: not editor.fit_banner.isHidden())
+    assert "360 × 640" in editor.fit_banner.text.text()
+    editor.fit_banner.accept_button.click()
+    assert editor.project.canvas_size == (360, 640) and editor.fit_banner.isHidden()
+    assert editor.preview.canvas.canvas_size == (360, 640)
+    editor.controller.undo()
+    assert editor.project.canvas_size == (1280, 720)
+    assert editor.preview.canvas.canvas_size == (1280, 720)
+    editor.controller.redo()
+    # menu Médias « Ajuster le cadre à ce média », avec sa fréquence d'images (30 i/s)
+    from PyQt6.QtWidgets import QMessageBox
+
+    def answer(box):
+        box.checkBox().setChecked(True)
+        return box.buttons()[0].click()
+
+    monkeypatch.setattr(QMessageBox, "exec", answer)
+    clip = next(m for m in editor.project.media if m.name == "clip.mp4")
+    editor.confirm_fit_canvas(vertical)
+    assert editor.project.canvas_size == (360, 640) and editor.project.fps == 30
+    editor.fit_canvas(clip.id)
+    assert editor.project.canvas_size == (640, 360) and editor.project.aspect == "custom"
+    # format changé depuis l'inspecteur du projet
+    from montar.ui.dialogs.new_project import FormatDialog
+
+    monkeypatch.setattr(FormatDialog, "exec", lambda self: QDialog.DialogCode.Accepted)
+    monkeypatch.setattr(FormatDialog, "values", lambda self: ("9:16", "720p", (0, 0), 30))
+    editor.change_format()
+    assert editor.project.canvas_size == (720, 1280)

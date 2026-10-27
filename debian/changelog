@@ -1,3 +1,20 @@
+montar (1.9.0) unstable; urgency=medium
+
+  * Enregistreur : ffmpeg démarre dès le compte à rebours, la webcam a le
+    temps de s'ouvrir et l'enregistrement l'attend si besoin (elle
+    apparaissait après 5 s, avec une saccade de l'image et du son).
+  * L'écran et la webcam sont deux fichiers : dans la timeline, deux clips
+    liés (sélection, déplacement et coupe ensemble) ; la webcam se retire ou
+    passe en plein écran sur un passage choisi ; « Délier » les sépare.
+  * Forme ronde réglée sur le clip ; fond effacé : vidéo transparente (VP9 ou
+    FFV1) ; plus d'assemblage à la fin de l'enregistrement.
+  * Format libre de la toile : « Ajuster le cadre à ce média », proposition
+    au premier média, format « Libre » à la création, « Changer le format… ».
+  * « Modifier le média » : grand lecteur avec le son, original au même
+    instant (touche C), partie gardée en boucle.
+
+ -- Fabien <admin@appsdoc.fr>  Tue, 27 Oct 2026 22:00:00 +0100
+
 montar (1.8.0) unstable; urgency=medium
 
   * Enregistreur d'écran : son, webcam et écran synchrones (sources datées

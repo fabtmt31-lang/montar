@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Édition d'un média avant le montage (F-MED-07) : aperçu partagé avant / après, puis
+"""Édition d'un média avant le montage (F-MED-07) : lecteur (image et son, réglages
+appliqués, original d'un clic ou en maintenant C), partie gardée en boucle, puis
 remplacement du média d'origine ou création d'une copie."""
 from __future__ import annotations
 
@@ -7,8 +8,8 @@ import copy
 import math
 from collections.abc import Callable
 
-from PyQt6.QtCore import QSize, Qt, QTimer
-from PyQt6.QtGui import QImage, QPixmap, QTransform
+from PyQt6.QtCore import QRectF, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QImage, QKeySequence, QPainter, QPixmap, QShortcut, QTransform
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -29,9 +30,9 @@ from montar.engine.looks import PRESETS
 from montar.i18n import _
 from montar.media.edit import MediaEdit
 from montar.ui.editor.controls import SliderRow, Tabs, page, section
-from montar.ui.widgets import Segmented, button, label
+from montar.ui.widgets import Segmented, button, label, set_icon
 
-PANE = QSize(400, 225)
+PANE = QSize(816, 459)  # grand lecteur
 _COLORS = (("brightness", "Luminosité"), ("contrast", "Contraste"),
            ("saturation", "Saturation"), ("temperature", "Température"),
            ("exposure", "Exposition"))
@@ -42,28 +43,80 @@ def _signed(v: float) -> str:
     return f"{v:+.0f}" if round(v) else "0"
 
 
+class TrimBar(QWidget):
+    """Barre de la partie gardée : zone verte bornée d'or, tête de lecture ; un clic y
+    place la lecture."""
+
+    seekRequested = pyqtSignal(float)  # fraction de la durée
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setFixedHeight(14)
+        self.kept = (0.0, 1.0)
+        self.head = 0.0
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def set_state(self, kept: tuple[float, float], head: float) -> None:
+        self.kept, self.head = kept, head
+        self.update()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - API Qt
+        self.seekRequested.emit(max(0.0, min(1.0, event.position().x() / max(1, self.width()))))
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - API Qt
+        w, h = self.width(), self.height()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(127, 140, 132, 60))
+        painter.drawRoundedRect(QRectF(0, 3, w, h - 6), 4, 4)
+        a, b = self.kept
+        painter.setBrush(QColor("#9CCBB0"))
+        painter.drawRect(QRectF(a * w, 3, max(1.0, (b - a) * w), h - 6))
+        painter.setBrush(QColor("#C99A2E"))
+        for x in (a * w, b * w):
+            painter.drawRect(QRectF(min(w - 3.0, max(0.0, x - 1.5)), 0, 3, h))
+        painter.setBrush(QColor("#D33A2C"))
+        painter.drawRect(QRectF(min(w - 2.0, self.head * w), 0, 2, h))
+        painter.end()
+
+
+def preview_size(media: MediaItem) -> tuple[int, int]:
+    """Taille des images d'aperçu (au plus 960 × 540, proportions du média)."""
+    mw, mh = media.width or 640, media.height or 360
+    scale = min(1.0, 960 / mw, 540 / mh)
+    return max(2, int(mw * scale) // 2 * 2), max(2, int(mh * scale) // 2 * 2)
+
+
+def preview_spec(media: MediaItem, edit: MediaEdit, fps: int, length: int) -> TimelineSpec:
+    """Le média seul, avec la couleur, le filtre, la vitesse et le volume de `edit` (le
+    recadrage et la rotation sont appliqués à l'image affichée)."""
+    w, h = preview_size(media)
+    speed = max(0.1, edit.speed) if media.kind != "image" else 1.0
+    duration = max(1, round(length / speed))
+    clip = ClipSpec(media.path, media.kind, 0, duration, speed=speed,
+                    volume=0.0 if edit.mute else edit.volume,
+                    media_size=(media.width, media.height),
+                    color=copy.deepcopy(edit.color), preset=edit.preset,
+                    preset_amount=edit.preset_amount, media_length=length)
+    kind = "audio" if media.kind == "audio" else "video"
+    return TimelineSpec(Canvas(w, h, fps), (TrackSpec(kind, False, False, (clip,)),))
+
+
 class _Renderer:
-    """Image source (gauche) et image avec couleur et filtres (droite), par le moteur."""
+    """Images fixes (photos) : source et version avec couleur et filtres, par le moteur."""
 
     def __init__(self, engine: Engine, media: MediaItem) -> None:
         self.media = media
         self.fps = max(1, round(media.fps or 25))
-        mw, mh = media.width or 640, media.height or 360
-        scale = min(1.0, 640 / mw, 360 / mh)
-        w, h = max(2, int(mw * scale) // 2 * 2), max(2, int(mh * scale) // 2 * 2)
-        self.size = (w, h)
-        self.length = 1 if media.kind == "image" else max(1, round(media.duration * self.fps))
-        self._canvas = Canvas(w, h, self.fps)
+        self.size = preview_size(media)
+        self.length = 1
         self._engine = engine
         self.original = engine.build(self._spec(MediaEdit()))
         self.edited = engine.build(self._spec(MediaEdit()))
 
     def _spec(self, edit: MediaEdit) -> TimelineSpec:
-        clip = ClipSpec(self.media.path, self.media.kind, 0, self.length,
-                        media_size=(self.media.width, self.media.height),
-                        color=copy.deepcopy(edit.color), preset=edit.preset,
-                        preset_amount=edit.preset_amount)
-        return TimelineSpec(self._canvas, (TrackSpec("video", False, False, (clip,)),))
+        return preview_spec(self.media, edit, self.fps, self.length)
 
     def set_edit(self, edit: MediaEdit) -> None:
         if not self.edited.update(self._spec(edit)):
@@ -105,7 +158,8 @@ class MediaEditorDialog(QDialog):
         self.result_mode = ""
         self._refreshing = False
         visual = media.kind in ("video", "image")
-        self._renderer = _Renderer(engine_factory(), media) if visual else None
+        timed = media.kind != "image"
+        self._renderer = _Renderer(engine_factory(), media) if not timed else None
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(40)
@@ -125,30 +179,48 @@ class MediaEditorDialog(QDialog):
                         "copie."), "muted")
         intro.setWordWrap(True)
         ll.addWidget(intro)
-        panes = QHBoxLayout()
-        panes.setSpacing(16)
-        self.before, self.after = QLabel(), QLabel()
-        for title, pane in ((_("Original"), self.before), (_("Modifié"), self.after)):
-            col = QVBoxLayout()
-            col.addWidget(label(title, "h3"))
-            pane.setFixedSize(PANE)
-            pane.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            pane.setStyleSheet("background: #0B120E; border-radius: 10px;")
-            col.addWidget(pane)
-            panes.addLayout(col)
+        self.view = Segmented([("edited", _("Modifié")), ("original", _("Original"))],
+                              "edited", compact=True)
+        self.view.setToolTip(_("Maintenez C pour voir l'original"))
+        self.view.changed.connect(lambda _k: self._view_changed())
+        top = QHBoxLayout()
+        top.addStretch()
+        top.addWidget(self.view)
+        ll.addLayout(top)
+        self.screen = QLabel()
+        self.screen.setFixedSize(PANE)
+        self.screen.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.screen.setStyleSheet("background: #0B120E; border-radius: 10px; color: #FFFFFF;")
         if not visual:
-            for pane in (self.before, self.after):
-                pane.setText(_("Son : aperçu non disponible"))
-                pane.setStyleSheet(pane.styleSheet() + "color: #FFFFFF;")
-        ll.addLayout(panes)
+            self.screen.setText(_("Son : pas d'image, la lecture fait entendre le résultat"))
+        ll.addWidget(self.screen, 0, Qt.AlignmentFlag.AlignHCenter)
+        self._frame_image: QImage | None = None  # dernière image du lecteur
 
         self.position = QSlider(Qt.Orientation.Horizontal)
-        length = self._renderer.length if self._renderer else max(1, round(media.duration
-                                                                            * 25))
-        self._fps = self._renderer.fps if self._renderer else 25
+        self._fps = max(1, round(media.fps or 25))
+        length = max(1, round(media.duration * self._fps)) if timed else 1
+        self._length = length
         self.position.setRange(0, max(0, length - 1))
         self.position.valueChanged.connect(self._position_changed)
+        self.position.sliderMoved.connect(self._scrubbed)
         self.timecode = label("", "mono")
+        self.trim_bar = TrimBar()
+        self.trim_bar.seekRequested.connect(
+            lambda f: self.position.setValue(round(f * self.position.maximum())))
+        transport = QHBoxLayout()
+        self.play_button = button("", "primary", "play", tooltip=_("Lecture / pause (Espace)"))
+        self.play_button.clicked.connect(self.toggle_play)
+        self.loop_button = button(_("Boucle"), "secondary", "repeat",
+                                  tooltip=_("Relire la partie gardée en continu"))
+        self.loop_button.setCheckable(True)
+        self.loop_button.setChecked(True)
+        bars = QVBoxLayout()
+        bars.setSpacing(2)
+        bars.addWidget(self.trim_bar)
+        bars.addWidget(self.position)
+        transport.addWidget(self.play_button)
+        transport.addLayout(bars, 1)
+        transport.addWidget(self.loop_button)
         trim_row = QHBoxLayout()
         self.set_in = button(_("Début ici"), "secondary")
         self.set_out = button(_("Fin ici"), "secondary")
@@ -160,10 +232,10 @@ class MediaEditorDialog(QDialog):
         trim_row.addWidget(self.trim_label)
         trim_row.addWidget(self.set_in)
         trim_row.addWidget(self.set_out)
-        timed = media.kind != "image"
-        for w in (self.position, self.set_in, self.set_out, self.trim_label, self.timecode):
+        for w in (self.position, self.set_in, self.set_out, self.trim_label, self.timecode,
+                  self.trim_bar, self.play_button, self.loop_button):
             w.setVisible(timed)
-        ll.addWidget(self.position)
+        ll.addLayout(transport)
         ll.addLayout(trim_row)
         self.summary = label("", "small")
         ll.addWidget(self.summary)
@@ -199,6 +271,19 @@ class MediaEditorDialog(QDialog):
         final.addWidget(self.replace_button, 1)
         sl.addLayout(final)
         outer.addWidget(side)
+        self.player = None
+        if timed:  # vidéo ou son : vrai lecteur, avec le son
+            from montar.ui.editor.player import Player
+
+            self.player = Player(engine_factory, self)
+            self.player.frameReady.connect(self._on_frame)
+            self.player.playingChanged.connect(self._on_playing)
+            self.player.set_render_size(*preview_size(media))
+        for key, action in (("Space", self.toggle_play), ("K", self._pause),
+                            ("J", lambda: self._shuttle(-1)), ("L", lambda: self._shuttle(1))):
+            shortcut = QShortcut(QKeySequence(key), self)
+            shortcut.activated.connect(action)
+        self._showing_original = False
         self._position_changed(0)
         self._changed()
 
@@ -321,9 +406,109 @@ class MediaEditorDialog(QDialog):
             self.edit.trim_out = max(t, self.edit.trim_in + 1 / self._fps)
         self._changed()
 
+    # --- lecture ------------------------------------------------------------------
+
+    def _speed(self) -> float:
+        return 1.0 if self._showing_original else max(0.1, self.edit.speed)
+
+    def _player_spec(self) -> TimelineSpec:
+        edit = MediaEdit() if self._showing_original else self.edit
+        return preview_spec(self.media, edit, self._fps, self._length)
+
     def _position_changed(self, _value: int) -> None:
         self.timecode.setText(frames_to_timecode(self.position.value(), self._fps))
+        self._update_trim_bar()
+        if self.player is not None and not self.player.playing:
+            self._seek_player()
         self._timer.start()
+
+    def _scrubbed(self, value: int) -> None:
+        if self.player is not None and self.player.playing:
+            self.player.pause()
+        self.position.setValue(value)
+
+    def _seek_player(self) -> None:
+        if self.player is not None:
+            self.player.seek(round(self.position.value() / self._speed()))
+
+    def toggle_play(self) -> None:
+        if self.player is None:
+            return
+        if self.player.playing:
+            self.player.pause()
+            return
+        start, end = self.edit.segment(self.media)
+        here = self.position.value() / self._fps
+        if self.loop_button.isChecked() and not start <= here < end - 1 / self._fps:
+            self.position.setValue(round(start * self._fps))  # repart du début gardé
+        self._seek_player()
+        self.player.play()
+
+    def _pause(self) -> None:
+        if self.player is not None:
+            self.player.pause()
+
+    def _shuttle(self, direction: int) -> None:
+        if self.player is not None:
+            self.player.shuttle(direction)
+
+    def _on_playing(self, playing: bool) -> None:
+        set_icon(self.play_button, "pause" if playing else "play")
+
+    def _on_frame(self, image: QImage, frame: int) -> None:
+        self._frame_image = image
+        media_frame = min(self._length - 1, round(frame * self._speed()))
+        if self.player is not None and self.player.playing:
+            start, end = self.edit.segment(self.media)
+            if self.loop_button.isChecked() and media_frame >= round(end * self._fps) - 1:
+                self.position.setValue(round(start * self._fps))  # boucle sur la partie gardée
+                self.player.seek(round(self.position.value() / self._speed()))
+                return
+            self.position.blockSignals(True)
+            self.position.setValue(media_frame)
+            self.position.blockSignals(False)
+            self.timecode.setText(frames_to_timecode(media_frame, self._fps))
+            self._update_trim_bar()
+        self._show()
+
+    def _update_trim_bar(self) -> None:
+        total = max(1e-6, self.media.duration)
+        start, end = self.edit.segment(self.media)
+        self.trim_bar.set_state((start / total, end / total),
+                                self.position.value() / max(1, self._length - 1))
+
+    def _view_changed(self) -> None:
+        original = self.view.current() == "original"
+        if original == self._showing_original:
+            return
+        self._showing_original = original
+        if self.player is not None:
+            playing = self.player.playing
+            self.player.load(self._player_spec())
+            self._seek_player()
+            if playing:
+                self.player.play()
+        self._timer.start()
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - API Qt
+        if event.key() == Qt.Key.Key_C and not event.isAutoRepeat():
+            self.view.set_current("original")  # maintenir C : l'original
+            self._view_changed()
+            return
+        super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event) -> None:  # noqa: N802 - API Qt
+        if event.key() == Qt.Key.Key_C and not event.isAutoRepeat():
+            self.view.set_current("edited")
+            self._view_changed()
+            return
+        super().keyReleaseEvent(event)
+
+    def done(self, result: int) -> None:
+        if self.player is not None:
+            self.player.shutdown()
+            self.player = None
+        super().done(result)
 
     def _changed(self) -> None:
         start, end = self.edit.segment(self.media)
@@ -343,20 +528,32 @@ class MediaEditorDialog(QDialog):
         modified = not self.edit.is_identity()
         self.copy_button.setEnabled(modified)
         self.replace_button.setEnabled(modified)
+        self._update_trim_bar()
         if self._renderer is not None:
             self._renderer.set_edit(self.edit)
+        if self.player is not None and not self._showing_original:
+            playing = self.player.playing
+            self.player.load(self._player_spec())  # vitesse, son, couleur à jour
+            if not playing:
+                self._seek_player()
         self._timer.start()
 
     def _render(self) -> None:
-        if self._renderer is None:
+        """Photo : images du moteur ; vidéo : dernière image du lecteur, redessinée."""
+        if self._renderer is not None:
+            source = self._renderer.original if self._showing_original \
+                else self._renderer.edited
+            self._frame_image = self._renderer.image(source, 0)
+        self._show()
+
+    def _show(self) -> None:
+        image = self._frame_image
+        if image is None or self.media.kind == "audio":
             return
-        frame = self.position.value()
-        before = self._renderer.image(self._renderer.original, frame)
-        after = geometry(self._renderer.image(self._renderer.edited, frame), self.edit)
-        for pane, image in ((self.before, before), (self.after, after)):
-            pane.setPixmap(QPixmap.fromImage(image).scaled(
-                PANE, Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation))
+        if not self._showing_original:
+            image = geometry(image, self.edit)
+        self.screen.setPixmap(QPixmap.fromImage(image).scaled(
+            PANE, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
 
     def _finish(self, mode: str) -> None:
         self.result_mode = mode

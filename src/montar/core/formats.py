@@ -54,3 +54,36 @@ def canvas_size(aspect_id: str, resolution: str) -> tuple[int, int]:
     if ar.width >= ar.height:
         return _even(short * ar.ratio), short
     return short, _even(short / ar.ratio)
+
+
+# Format libre : la toile prend une taille donnée (celle d'un média, en général).
+CUSTOM = "custom"
+MIN_SIDE, MAX_SIDE = 16, 8192
+
+
+def custom_size(width: int, height: int) -> tuple[int, int]:
+    """Taille d'une toile libre : bornée et paire (exigé par la plupart des codecs)."""
+    w = max(MIN_SIDE, min(MAX_SIDE, int(width)))
+    h = max(MIN_SIDE, min(MAX_SIDE, int(height)))
+    return w - w % 2, h - h % 2
+
+
+def format_for(width: int, height: int,
+               tolerance: float = 0.02) -> tuple[str, str, tuple[int, int]]:
+    """Format de projet qui épouse une image de `width` × `height` : un format connu (16:9,
+    9:16…) quand ses proportions et sa taille correspondent à `tolerance` près (1920 × 1080 →
+    16:9 en 1080p), sinon le format libre à cette taille exacte. Renvoie (format,
+    résolution, taille de la toile)."""
+    if width <= 0 or height <= 0:
+        raise ValueError("taille inconnue")
+    for ar in ASPECT_RATIOS:
+        for resolution in RESOLUTIONS:
+            w, h = canvas_size(ar.id, resolution)
+            if abs(width / w - 1) <= tolerance and abs(height / h - 1) <= tolerance:
+                return ar.id, resolution, (w, h)
+    return CUSTOM, DEFAULT_RESOLUTION, custom_size(width, height)
+
+
+def label(aspect_id: str, size: tuple[int, int]) -> str:
+    """Nom court du format : « 16:9 », ou la taille pour un format libre."""
+    return f"{size[0]} × {size[1]}" if aspect_id == CUSTOM else aspect_id

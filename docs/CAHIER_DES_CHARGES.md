@@ -541,6 +541,7 @@ Les clips de **voix off** utilisent une variante beige-vert de la pistache (cf. 
 - ✅ aperçu plein écran avec commandes de lecture ; plantage au double-clic corrigé ;
 - ✅ enregistreur d'écran (version 1.7, F-MED-06) : webcam dans un coin ou en écran partagé, taille et forme réglables, fond flouté ou effacé (détourage local, modèle MediaPipe exécuté par NumPy), choix et test du micro ; capture de fenêtre sous Windows par sa zone à l'écran (plus d'image noire) ;
 - ✅ enregistreur (version 1.8) : son et image synchronisés (horloge commune), encodeur matériel, détourage pendant l'enregistrement, zone filmée signalée pendant le compte à rebours, test de la webcam et réécoute du micro.
+- ✅ version 1.9 : webcam ouverte pendant le compte à rebours ; écran et webcam en deux clips liés (webcam retirée ou en plein écran sur un passage, déplaçable après coup, forme ronde réglée sur le clip) ; format libre de la toile (« Ajuster le cadre à ce média », proposition au premier média) ; lecteur avec le son dans « Modifier le média » (F-MED-07).
 
 **Suite prévue** : Flatpak, `.rpm`, arm64 ; dépôt APT signé ; signature de l'installeur Windows.
 

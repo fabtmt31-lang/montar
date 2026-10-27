@@ -118,7 +118,7 @@ class EditorController(QObject):
     def select_many(self, clip_ids: list[str], primary: str | None = None) -> None:
         """Sélection de plusieurs clips ; `primary` (par défaut le dernier) est celui que
         montrent l'inspecteur et l'aperçu."""
-        ids = list(dict.fromkeys(clip_ids))
+        ids = list(dict.fromkeys(self._with_linked(clip_ids)))
         if primary is None or primary not in ids:
             primary = ids[-1] if ids else None
         if ids:
@@ -129,10 +129,18 @@ class EditorController(QObject):
             self.selected = primary
             self.selectionChanged.emit(primary)
 
+    def _with_linked(self, clip_ids: list[str]) -> list[str]:
+        """Les clips liés (écran et webcam d'un enregistrement) se sélectionnent ensemble."""
+        groups = {c.group for c in self.project.clips if c.id in set(clip_ids) and c.group}
+        if not groups:
+            return list(clip_ids)
+        return [*clip_ids, *(c.id for c in self.project.clips if c.group in groups)]
+
     def toggle_selected(self, clip_id: str) -> None:
         """Ctrl + clic : ajoute le clip à la sélection ou l'en retire."""
         if clip_id in self.selection:
-            ids = [c for c in self.selection if c != clip_id]
+            linked = set(self._with_linked([clip_id]))
+            ids = [c for c in self.selection if c not in linked]
             self.select_many(ids, self.selected if self.selected != clip_id else None)
         else:
             self.select_many([*self.selection, clip_id], clip_id)

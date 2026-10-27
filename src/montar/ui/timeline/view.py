@@ -437,6 +437,8 @@ class TimelineView(QAbstractScrollArea):
             badges.append("mute")
         if clip.preset or not clip.color.is_identity() or not clip.effects.is_identity():
             badges.append("fx")
+        if clip.group:  # écran et webcam d'un enregistrement
+            badges.append("link")
         return badges
 
     def _paint_badge(self, painter: QPainter, badge: str, right: float, top: float) -> float:
@@ -444,7 +446,7 @@ class TimelineView(QAbstractScrollArea):
         f.setPixelSize(10)
         f.setWeight(QFont.Weight.Bold)
         painter.setFont(f)
-        if badge in ("mute", "fx"):
+        if badge in ("mute", "fx", "link"):
             width = 20.0
         else:
             width = QFontMetrics(f).horizontalAdvance(badge) + 10.0
@@ -455,9 +457,10 @@ class TimelineView(QAbstractScrollArea):
         if badge == "mute":
             painter.drawPixmap(int(rect.left()) + 3, int(rect.top()) + 1,
                                icon_pixmap("volume-x", "#FFFFFF", 14))
-        elif badge == "fx":
+        elif badge in ("fx", "link"):
             painter.drawPixmap(int(rect.left()) + 3, int(rect.top()) + 1,
-                               icon_pixmap("sparkles", "#FFFFFF", 14))
+                               icon_pixmap("sparkles" if badge == "fx" else "link",
+                                           "#FFFFFF", 14))
         else:
             painter.setPen(QColor("#FFFFFF"))
             painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, badge)
@@ -910,10 +913,22 @@ class TimelineView(QAbstractScrollArea):
                                clip.track_id, clip.start, clip.duration, group=group)
             self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
             return
-        self.controller.select(clip.id)
+        self.controller.select(clip.id)  # avec les clips qui lui sont liés
         if self.controller.timeline.track(clip.track_id).locked:
             return  # piste verrouillée : sélection seulement, ni déplacement ni rognage
         shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        linked = tuple(c for c in self.controller.selection if c != clip.id)
+        if linked and zone == "body" and not (shift or self.range_tool):
+            # clip lié (écran et webcam) : ils se déplacent ensemble
+            if self.selection_range is not None and self.selection_range[0] != clip.id:
+                self.clear_range()
+            if any(self.controller.timeline.track(c.track_id).locked
+                   for c in self.controller.selected_clips()):
+                return
+            self._drag = _Drag("move", clip.id, pos, self.x_to_frame(pos.x()) - clip.start,
+                               clip.track_id, clip.start, clip.duration, group=linked)
+            self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+            return
         if zone == "body" and (shift or self.range_tool):
             # sélection d'une partie du clip (pour couper ou appliquer un module)
             anchor = max(clip.start, min(clip.end, self.x_to_frame(pos.x())))
@@ -1209,6 +1224,7 @@ class TimelineView(QAbstractScrollArea):
                     and timeline.track(hit[0].track_id).kind == "video" and hit[0].volume > 0):
                 menu.addAction(_("Détacher l'audio"), lambda: self.controller.edit(
                     _("Détacher l'audio"), lambda t: t.detach_audio(clip_id)))
+            self._webcam_actions(menu, hit[0], found)
             menu.addSeparator()
             on_range = found is not None and found[0].id == clip_id
             apply = menu.addAction(
@@ -1217,11 +1233,45 @@ class TimelineView(QAbstractScrollArea):
                 lambda: self.applyRequested.emit(clip_id))
             set_icon_action(apply, "sparkles")
             menu.addSeparator()
+            linked = [c.id for c in timeline.group_of(hit[0])]
             menu.addAction(_("Supprimer"), lambda: self.controller.edit(
-                _("Supprimer"), lambda t: t.delete(clip_id)))
+                _("Supprimer"), lambda t: [t.delete(c) for c in linked]))
             menu.addAction(_("Supprimer et refermer l'espace"), lambda: self.controller.edit(
-                _("Supprimer et refermer l'espace"), lambda t: t.delete(clip_id, ripple=True)))
+                _("Supprimer et refermer l'espace"),
+                lambda t: [t.delete(c, ripple=True) for c in linked]))
         menu.exec(event.globalPos())
+
+    def _webcam_actions(self, menu: QMenu, clip: Clip, found) -> None:
+        """Enregistrement avec webcam : la retirer ou la passer en plein écran sur la plage
+        choisie (Maj + glisser), ou sur tout le clip ; délier l'écran et la webcam."""
+        timeline = self.controller.timeline
+        if not clip.group:
+            return
+        menu.addSeparator()
+        if timeline.webcam_clips(clip.id):
+            linked = {c.id for c in timeline.group_of(clip)}
+            if found is not None and found[0].id in linked:
+                start, end = found[1], found[2]
+                remove = menu.addAction(_("Supprimer la webcam sur la sélection"),
+                                        lambda: self._remove_webcam(clip.id, start, end))
+                menu.addAction(_("Webcam en plein écran sur la sélection"),
+                               lambda: self.controller.edit(
+                                   _("Webcam en plein écran"),
+                                   lambda t: t.webcam_fullscreen(clip.id, start, end)))
+            else:
+                start, end = clip.start, clip.end
+                remove = menu.addAction(_("Supprimer la webcam de ce clip"),
+                                        lambda: self._remove_webcam(clip.id, start, end))
+                hint = menu.addAction(_("Maj + glisser sur le clip : choisir un passage"))
+                hint.setEnabled(False)
+            set_icon_action(remove, "unlink")
+        menu.addAction(_("Délier l'écran et la webcam"), lambda: self.controller.edit(
+            _("Délier"), lambda t: t.unlink(clip.id)))
+
+    def _remove_webcam(self, clip_id: str, start: int, end: int) -> None:
+        self.controller.edit(_("Supprimer la webcam"),
+                             lambda t: t.remove_webcam(clip_id, start, end))
+        self.clear_range()
 
     def _volume_action(self, menu: QMenu, track: Track):
         """Curseur « Volume de la piste » intégré au menu contextuel de l'en-tête."""

@@ -56,6 +56,6 @@ class RecentProjects:
             except (ProjectError, OSError):
                 continue
             visual = next((m.path for m in project.media if m.kind in ("video", "image")), None)
-            result.append(RecentEntry(path, project.name, project.aspect, modified, visual))
+            result.append(RecentEntry(path, project.name, project.format_label, modified, visual))
         result.sort(key=lambda e: e.modified, reverse=True)
         return result

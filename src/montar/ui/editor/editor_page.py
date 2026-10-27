@@ -106,6 +106,43 @@ from montar.ui.widgets import LogoMark, button, label, set_icon
 log = logging.getLogger(__name__)
 
 
+class FitBanner(QFrame):
+    """Bandeau au-dessus de l'aperçu : « Adapter le projet à ce média ? » (une fois par
+    projet ouvert)."""
+
+    accepted = pyqtSignal(str)  # identifiant du média
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("FitBanner")
+        self.offered = False
+        self._media_id = ""
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(16, 8, 10, 8)
+        layout.setSpacing(10)
+        self.text = label("", "small")
+        self.text.setWordWrap(True)
+        self.accept_button = button(_("Adapter le projet"), "primary")
+        self.accept_button.clicked.connect(lambda: self.accepted.emit(self._media_id))
+        close = button(_("Non merci"), "ghost")
+        close.clicked.connect(self.dismiss)
+        layout.addWidget(self.text, 1)
+        layout.addWidget(self.accept_button)
+        layout.addWidget(close)
+        self.hide()
+
+    def offer(self, media_id: str, name: str, size: str) -> None:
+        self.offered = True
+        self._media_id = media_id
+        self.text.setText(_("« {name} » n'a pas le format du projet. Adapter le projet à ce "
+                            "média ({size}) ?").format(name=name, size=size))
+        self.show()
+
+    def dismiss(self) -> None:
+        self.offered = True
+        self.hide()
+
+
 _RAIL = (
     ("media", "Médias", "image"),
     ("audio", "Audio", "music"),
@@ -197,12 +234,21 @@ class EditorPage(QWidget):
         self._engine_factory = engine_factory
         self.player = Player(engine_factory, self)
         self.preview = PreviewPanel(self.player, preview_quality)
-        self.panes.addWidget(self.preview)
+        center = QWidget()
+        column = QVBoxLayout(center)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(0)
+        self.fit_banner = FitBanner()
+        self.fit_banner.accepted.connect(lambda media_id: self.fit_canvas(media_id))
+        column.addWidget(self.fit_banner)
+        column.addWidget(self.preview, 1)
+        self.panes.addWidget(center)
         self.inspector = Inspector(self.controller, self.modules)
         self.inspector.freezeRequested.connect(self.freeze_frame)
         self.inspector.playhead = self._playhead
         self.inspector.seekRequested.connect(self.player.seek)
         self.inspector.scopesRequested.connect(self.open_scopes)
+        self.inspector.formatRequested.connect(self.change_format)
         self.scopes: ScopesWindow | None = None
         self._scope_timer = QTimer(self)
         self._scope_timer.setSingleShot(True)
@@ -272,6 +318,7 @@ class EditorPage(QWidget):
         self.media_panel.removeRequested.connect(self.remove_media)
         self.media_panel.addToTimelineRequested.connect(self.add_to_timeline)
         self.media_panel.editRequested.connect(self.edit_media)
+        self.media_panel.fitCanvasRequested.connect(self.confirm_fit_canvas)
         self.media_panel.relinkRequested.connect(self.relink)
         self.media_panel.relinkAllRequested.connect(self.relink_first_missing)
         self.media_panel.libraryRequested.connect(self.open_library)
@@ -329,6 +376,10 @@ class EditorPage(QWidget):
         # fichier → (début, sous la vidéo, logo du kit de marque)
         self._overlay_pending: dict[str, tuple[int, bool, bool]] = {}
         self._freeze_pending: dict[str, tuple[str, int]] = {}  # fichier → (clip, image)
+        # enregistrement avec webcam : fichier de la webcam → (écran, informations) ; l'écran
+        # importé attend sa webcam
+        self._recording_pending: dict[str, tuple[str, dict]] = {}
+        self._recording_screens: dict[str, tuple | None] = {}
         self._merge_pending: dict[str, list[str]] = {}  # rendu → clips qu'il remplace
         self._merge_job: list[str] | None = None  # clips en cours d'unification
         self._animated_job: tuple[str, int] | None = None  # effet animé : (fichier, début)
@@ -351,6 +402,8 @@ class EditorPage(QWidget):
         self._refresh_header()
         self._update_history_buttons()
         self.preview.set_canvas(*project.canvas_size)
+        # projet déjà commencé : pas de proposition d'adapter le format
+        self.fit_banner.offered = any(not c.is_text for c in project.clips)
         self.inspector.show_project(project)
         self._reload_player()
 
@@ -536,7 +589,7 @@ class EditorPage(QWidget):
             elif m.exists and m.kind != "audio":
                 self.importer.ensure_thumbnail(m)
             self._ensure_derived(m)
-        self.media_panel.set_media(self.project.media, self.thumbnails)
+        self.media_panel.set_media(self.project.visible_media(), self.thumbnails)
         self._shown_media = [m.id for m in self.project.media]
         self._used_media: set[str] = set()
         self._update_used_media()
@@ -607,7 +660,7 @@ class EditorPage(QWidget):
             if relink:
                 for clip in [c for c in self.project.clips if c.media_id == media_id]:
                     self.controller.timeline.fit_to_media(clip.id)
-                self.media_panel.set_media(self.project.media, self.thumbnails)
+                self.media_panel.set_media(self.project.visible_media(), self.thumbnails)
                 self._reload_player()
 
     # --- médias manquants ------------------------------------------------------------
@@ -933,7 +986,7 @@ class EditorPage(QWidget):
                 title = _("Préparation de l'effet animé")
             elif self._recording_job:
                 title = _("Détourage de la webcam") if phase == "masks" else \
-                    _("Assemblage de l'enregistrement")
+                    _("Préparation de la webcam")
                 phase = ""
             if phase:  # export avec la finition : étape en cours
                 title += " — " + {"analyse": _("1. Analyse du projet"),
@@ -1059,7 +1112,7 @@ class EditorPage(QWidget):
         if new.kind != "audio":
             self.importer.ensure_thumbnail(new)
         self._ensure_derived(new)
-        self.media_panel.set_media(self.project.media, self.thumbnails)
+        self.media_panel.set_media(self.project.visible_media(), self.thumbnails)
         self.media_panel.select(new.id)
         self._reload_player()
 
@@ -1111,29 +1164,44 @@ class EditorPage(QWidget):
             else None
         if self._highlight is not None:
             self._highlight.start()
+        # ffmpeg démarre dès maintenant : la webcam s'ouvre pendant le compte à rebours, ce
+        # qui est filmé avant la fin du compte à rebours est jeté
+        self._camera_deadline = 0.0
+        self._recorder.start(delay=countdown)
+        self._record_timer.start()
         self._record_bar.start_countdown(countdown)
+
+    CAMERA_WAIT = 20.0  # secondes d'attente au plus d'une webcam lente à s'ouvrir
 
     def _begin_recording(self) -> None:
         recorder = self._recorder
-        if recorder is None:
+        if recorder is None or recorder.started:
             return
+        if not recorder.camera_ready and recorder.running:
+            # webcam pas encore prête : l'enregistrement attend ses premières images
+            if not self._camera_deadline:
+                self._camera_deadline = time.monotonic() + self.CAMERA_WAIT
+                self._record_bar.set_waiting()
+            if time.monotonic() < self._camera_deadline:
+                QTimer.singleShot(50, self._begin_recording)
+                return
         highlight, self._highlight = getattr(self, "_highlight", None), None
         if highlight is not None:  # surtout pas dans la vidéo
             highlight.close()
             highlight.deleteLater()
             QApplication.processEvents()
-        recorder.start()
-        self._record_timer.start()
+        recorder.begin()
 
     def _poll_recording(self) -> None:
         recorder = self._recorder
         if recorder is None:
             self._record_timer.stop()
             return
-        if recorder.started and not recorder.running:  # ffmpeg s'est arrêté seul
+        if not recorder.running:  # ffmpeg s'est arrêté seul (source introuvable…)
             self.stop_recording()
             return
-        self._record_bar.set_elapsed(recorder.elapsed)
+        if recorder.started:
+            self._record_bar.set_elapsed(recorder.elapsed)
 
     def stop_recording(self) -> None:
         recorder, self._recorder = self._recorder, None
@@ -1150,14 +1218,19 @@ class EditorPage(QWidget):
         window.showNormal()
         window.raise_()
         window.activateWindow()
-        if recorder is None or not recorder.started:
+        if recorder is None:
+            return
+        if not recorder.started and recorder.running:  # arrêt pendant le compte à rebours
+            recorder.cancel()
             return
         seconds = recorder.elapsed
-        if recorder.stop() and recorder.options.processed:
-            # fond de la webcam flouté ou effacé : détourage puis assemblage, en tâche de fond
+        if recorder.stop() and recorder.options.processed and recorder.webcam:
+            # fond de la webcam flouté ou effacé : détourage puis webcam traitée, en tâche
+            # de fond
             self._recording_job = True
             self._export_job = Finisher(recorder.options, recorder.target, seconds,
-                                        masks_ready=recorder.masks_ready)
+                                        masks_ready=recorder.masks_ready,
+                                        webcam=recorder.webcam)
             self._export_settings = None
             self._export_started = time.monotonic()
             self._export_job.start()
@@ -1165,7 +1238,7 @@ class EditorPage(QWidget):
             self.export_button.setEnabled(False)
             self._update_jobs()
         elif recorder.error == "":
-            self.import_files([str(recorder.target)])
+            self.import_recording(recorder.target, recorder.layer, recorder.webcam)
             self.recordingFinished.emit(str(recorder.target))
         else:
             self.recordingFinished.emit("")
@@ -1174,18 +1247,40 @@ class EditorPage(QWidget):
                                     error=recorder.error))
 
     def _recording_finished(self, job) -> None:
-        if not job.error:
-            self.import_files([str(job.target)])
-            self.recordingFinished.emit(str(job.target))
-            return
-        kept = job.fallback
-        if kept is not None:  # l'écran et le son restent, sans la webcam
-            self.import_files([str(kept)])
-        self.recordingFinished.emit(str(kept or ""))
-        if not job.cancelled:
+        self.import_recording(job.target, job.layer, job.webcam)
+        self.recordingFinished.emit(str(job.target))
+        if job.error and not job.cancelled:
             QMessageBox.warning(self, _("Enregistrer l'écran"), _(
-                "Le fond de la webcam n'a pas pu être traité : {error}. L'écran et le son "
-                "ont été gardés.").format(error=job.error))
+                "Le fond de la webcam n'a pas pu être traité : {error}. La webcam a été "
+                "gardée telle qu'elle a été filmée.").format(error=job.error))
+
+    def import_recording(self, screen: Path, layer: Path | None, webcam: dict) -> None:
+        """Importe un enregistrement : l'écran seul, ou l'écran et sa webcam (deux médias
+        liés, la webcam cachée du panneau Médias)."""
+        if layer is None or not webcam or not layer.exists():
+            self.import_files([str(screen)])
+            return
+        self._recording_pending[str(layer)] = (str(screen), webcam)
+        self._recording_screens[str(screen)] = None
+        self.import_files([str(screen), str(layer)])
+
+    def _place_recording(self, screen: MediaItem | None, thumb: str | None,
+                         camera: MediaItem, webcam: dict) -> None:
+        if screen is None:  # l'écran n'a pas pu être importé : la webcam seule
+            self._add_media(camera, None)
+            return
+        if thumb:
+            self.thumbnails[screen.path] = thumb
+        camera.role = "webcam"
+        screen.webcam = {"media": camera.id, **webcam}
+        self._ensure_derived(screen)
+        self._ensure_derived(camera)
+
+        def add(t):
+            t.project.media.append(screen)
+            t.project.media.append(camera)
+
+        self.controller.edit(_("Importer {name}").format(name=screen.name), add)
 
     # --- notifications ----------------------------------------------------------------------
 
@@ -2005,10 +2100,16 @@ class EditorPage(QWidget):
 
     def _on_project_changed(self) -> None:
         self.mark_dirty()
+        if tuple(self.preview.canvas.canvas_size) != self.project.canvas_size:
+            self.preview.set_canvas(*self.project.canvas_size)  # format changé
+            self.timeline.view.clear_caches()
+            if self.controller.selected is None:
+                self.inspector.show_project(self.project)
+        self._offer_fit_canvas()
         media_ids = [m.id for m in self.project.media]
         if media_ids != self._shown_media:
             self._shown_media = media_ids
-            self.media_panel.set_media(self.project.media, self.thumbnails)
+            self.media_panel.set_media(self.project.visible_media(), self.thumbnails)
         self._update_used_media()
         self._schedule_reload()
         if self.controller.selected_transition:
@@ -2016,6 +2117,75 @@ class EditorPage(QWidget):
         else:
             self._on_clip_selected(self.controller.selected)
         self._update_preview_selection()
+
+    # --- format de la toile -----------------------------------------------------------
+
+    def confirm_fit_canvas(self, media: MediaItem) -> None:
+        """« Ajuster le cadre à ce média » : la toile prend la taille du média."""
+        from montar.core import formats
+
+        aspect, resolution, size = formats.format_for(media.width, media.height)
+        before = self.project.format_label
+        after = formats.label(aspect, size)
+        box = QMessageBox(QMessageBox.Icon.Question, _("Ajuster le cadre"), _(
+            "Ajuster le cadre à « {name} » ?\n\nLa toile passe de {before} à {after}. Les "
+            "autres clips gardent leur réglage « Ajuster » et se replacent tout seuls "
+            "(Ctrl+Z pour annuler).").format(name=media.name, before=before, after=after),
+            parent=self)
+        same_fps = not (media.kind == "video" and media.fps) or \
+            min(formats.FRAME_RATES, key=lambda r: abs(r - media.fps)) == self.project.fps
+        fps_box = None
+        if not same_fps:
+            from PyQt6.QtWidgets import QCheckBox
+
+            fps_box = QCheckBox(_("Prendre aussi sa fréquence : {fps} i/s (projet : {now} "
+                                  "i/s)").format(fps=round(media.fps), now=self.project.fps))
+            box.setCheckBox(fps_box)
+        ok = box.addButton(_("Ajuster le cadre"), QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(_("Annuler"), QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is ok:
+            self.fit_canvas(media.id, fps_box is not None and fps_box.isChecked())
+
+    def change_format(self) -> None:
+        """Format de la toile (bouton de l'inspecteur du projet), taille libre comprise."""
+        from montar.ui.dialogs.new_project import FormatDialog
+
+        p = self.project
+        dialog = FormatDialog(p.aspect, p.resolution, p.canvas_size, p.fps, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        aspect, resolution, size, fps = dialog.values()
+        self.fit_banner.dismiss()
+        self.controller.edit(_("Format du projet"),
+                             lambda t: t.set_format(aspect, resolution, size, fps))
+
+    def fit_canvas(self, media_id: str, with_fps: bool = False) -> None:
+        self.fit_banner.dismiss()
+        self.controller.edit(_("Ajuster le cadre"),
+                             lambda t: t.fit_canvas_to(media_id, with_fps))
+
+    def _offer_fit_canvas(self) -> None:
+        """Premier média d'un projet vide qui n'a pas le format du projet : un bandeau
+        propose d'adapter la toile."""
+        clips = [c for c in self.project.clips if not c.is_text]
+        if len(clips) != 1:  # pas encore de clip, ou le montage a commencé
+            if clips or not self.fit_banner.isHidden():
+                self.fit_banner.dismiss()
+            return
+        if self.fit_banner.offered:
+            return
+        media = self.project.find_media(clips[0].media_id)
+        if media is None or media.kind not in ("video", "image") or not media.width:
+            return
+        cw, ch = self.project.canvas_size
+        if abs(media.width / media.height - cw / ch) < 0.01:
+            self.fit_banner.offered = True  # même proportions : rien à proposer
+            return
+        from montar.core import formats
+
+        aspect, _r, size = formats.format_for(media.width, media.height)
+        self.fit_banner.offer(media.id, media.name, formats.label(aspect, size))
 
     def _update_used_media(self) -> None:
         self.media_panel.set_missing(len(self.missing_media()))
@@ -2056,6 +2226,22 @@ class EditorPage(QWidget):
         while self._import_queue and self._import_queue[0] in self._import_results:
             queued = self._import_queue.pop(0)
             item, thumb, error = self._import_results.pop(queued)
+            if queued in self._recording_screens:  # écran d'un enregistrement : attend
+                self._recording_screens[queued] = (item, thumb)  # sa webcam
+                if item is None:
+                    errors.append(f"{Path(queued).name} : {error}")
+                continue
+            if queued in self._recording_pending:  # webcam : les deux médias sont liés
+                screen_path, webcam = self._recording_pending.pop(queued)
+                screen, screen_thumb = self._recording_screens.pop(screen_path, None) \
+                    or (None, None)
+                if item is None:
+                    errors.append(f"{Path(queued).name} : {error}")
+                    if screen is not None:
+                        self._add_media(screen, screen_thumb)
+                else:
+                    self._place_recording(screen, screen_thumb, item, webcam)
+                continue
             if item is None:
                 errors.append(f"{Path(queued).name} : {error}")
             elif queued in self._freeze_pending:

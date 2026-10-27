@@ -7,12 +7,16 @@ from dataclasses import dataclass
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QButtonGroup,
+    QComboBox,
     QDialog,
+    QDialogButtonBox,
+    QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -24,8 +28,10 @@ from montar.ui.widgets import button, label, set_icon
 
 _SWATCHES = {
     "16:9": ("mist", 66, 37), "9:16": ("pistachio", 36, 62), "1:1": ("water", 52, 52),
-    "4:5": ("voiceover", 46, 57), "21:9": ("mist", 72, 31),
+    "4:5": ("voiceover", 46, 57), "21:9": ("mist", 72, 31), formats.CUSTOM: ("sage", 56, 44),
 }
+# format libre : largeur et hauteur au choix
+CUSTOM_FORMAT = formats.AspectRatio(formats.CUSTOM, "Personnalisé", 0, 0)
 
 
 @dataclass
@@ -34,6 +40,8 @@ class NewProjectParams:
     aspect: str
     resolution: str
     fps: int
+    width: int = 0  # format libre
+    height: int = 0
 
 
 class _FormatCard(QPushButton):
@@ -57,7 +65,8 @@ class _FormatCard(QPushButton):
         hl.addWidget(self._swatch, 0, Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(holder)
         layout.addSpacing(6)
-        for text, role_name in ((ar.id, "h3"), (_(ar.label), "small")):
+        title = _("Libre") if ar.id == formats.CUSTOM else ar.id
+        for text, role_name in ((title, "h3"), (_(ar.label), "small")):
             lbl = label(text, role_name)
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
@@ -135,7 +144,7 @@ class NewProjectDialog(QDialog):
         fmt_row.setSpacing(12)
         self._format_group = QButtonGroup(self)
         self._format_cards: dict[str, _FormatCard] = {}
-        for ar in formats.ASPECT_RATIOS:
+        for ar in (*formats.ASPECT_RATIOS, CUSTOM_FORMAT):
             c = _FormatCard(ar)
             c.setChecked(ar.id == aspect)
             c.clicked.connect(self._update_info)
@@ -152,6 +161,16 @@ class NewProjectDialog(QDialog):
         res_row, self._res_group = _choice_row(list(formats.RESOLUTIONS),
                                                formats.DEFAULT_RESOLUTION)
         res_col.addLayout(res_row)
+        self._size_row = QWidget()  # format libre : la taille à la place de la résolution
+        size_layout = QHBoxLayout(self._size_row)
+        size_layout.setContentsMargins(0, 0, 0, 0)
+        self.custom_width, self.custom_height = size_spinboxes(1920, 1080)
+        for widget in (self.custom_width, label("×"), self.custom_height, label(_("pixels"))):
+            size_layout.addWidget(widget)
+        size_layout.addStretch()
+        for box in (self.custom_width, self.custom_height):
+            box.valueChanged.connect(self._update_info)
+        res_col.addWidget(self._size_row)
         fps_col = QVBoxLayout()
         fps_col.addWidget(label(_("Images par seconde")))
         fps_col.addSpacing(8)
@@ -203,20 +222,94 @@ class NewProjectDialog(QDialog):
 
     def params(self) -> NewProjectParams:
         aspect = next(k for k, c in self._format_cards.items() if c.isChecked())
+        custom = aspect == formats.CUSTOM
         return NewProjectParams(
             name=self.name_edit.text().strip(),
             aspect=aspect,
             resolution=self._res_group.checkedButton().text(),
             fps=int(self._fps_group.checkedButton().text()),
+            width=self.custom_width.value() if custom else 0,
+            height=self.custom_height.value() if custom else 0,
         )
 
     def _update_info(self) -> None:
         from montar.ui.theme.icons import pixmap
 
         p = self.params()
-        w, h = formats.canvas_size(p.aspect, p.resolution)
+        custom = p.aspect == formats.CUSTOM
+        self._size_row.setVisible(custom)
+        for b in self._res_group.buttons():
+            b.setVisible(not custom)
+        w, h = formats.custom_size(p.width, p.height) if custom else \
+            formats.canvas_size(p.aspect, p.resolution)
         mono = "font-family: 'JetBrains Mono'; font-weight: 700;"
         self.info.setText(
             _("Taille de la toile : {size} · {fps} i/s").format(
                 size=f"<span style=\"{mono}\">{w} × {h}</span>", fps=p.fps))
         self._info_icon.setPixmap(pixmap("info", theme().palette.forest, 18))
+
+
+def size_spinboxes(width: int, height: int) -> tuple[QSpinBox, QSpinBox]:
+    boxes = []
+    for value in (width, height):
+        box = QSpinBox()
+        box.setRange(formats.MIN_SIDE, formats.MAX_SIDE)
+        box.setSingleStep(2)
+        box.setValue(value)
+        box.setMinimumHeight(40)
+        boxes.append(box)
+    return boxes[0], boxes[1]
+
+
+class FormatDialog(QDialog):
+    """Format d'un projet ouvert : format connu (et résolution) ou taille libre, images
+    par seconde."""
+
+    def __init__(self, aspect: str, resolution: str, size: tuple[int, int], fps: int,
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(_("Format du projet"))
+        self.setModal(True)
+        form = QFormLayout(self)
+        self.aspect = QComboBox()
+        for ar in (*formats.ASPECT_RATIOS, CUSTOM_FORMAT):
+            text = _("Personnalisé") if ar.id == formats.CUSTOM else f"{ar.id} · {_(ar.label)}"
+            self.aspect.addItem(text, ar.id)
+        self.aspect.setCurrentIndex(self.aspect.findData(aspect))
+        self.resolution = QComboBox()
+        for name in formats.RESOLUTIONS:
+            self.resolution.addItem(name, name)
+        self.resolution.setCurrentIndex(self.resolution.findData(resolution))
+        self.width_box, self.height_box = size_spinboxes(*size)
+        size_row = QWidget()
+        sl = QHBoxLayout(size_row)
+        sl.setContentsMargins(0, 0, 0, 0)
+        for widget in (self.width_box, label("×"), self.height_box):
+            sl.addWidget(widget)
+        self.fps = QComboBox()
+        for rate in formats.FRAME_RATES:
+            self.fps.addItem(f"{rate}", rate)
+        self.fps.setCurrentIndex(max(0, self.fps.findData(fps)))
+        form.addRow(_("Format"), self.aspect)
+        form.addRow(_("Résolution"), self.resolution)
+        form.addRow(_("Taille"), size_row)
+        form.addRow(_("Images par seconde"), self.fps)
+        self._size_row = size_row
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                   | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+        self.aspect.currentIndexChanged.connect(self._update)
+        self._update()
+
+    def _update(self) -> None:
+        custom = self.aspect.currentData() == formats.CUSTOM
+        form = self.layout()
+        form.setRowVisible(1, not custom)
+        form.setRowVisible(2, custom)
+
+    def values(self) -> tuple[str, str, tuple[int, int], int]:
+        return (self.aspect.currentData(), self.resolution.currentData(),
+                formats.custom_size(self.width_box.value(), self.height_box.value()),
+                int(self.fps.currentData()))

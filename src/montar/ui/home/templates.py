@@ -85,7 +85,7 @@ def user_templates(folder: Path) -> list[Template]:
             project = Project.load(path)
         except ProjectError:
             continue
-        result.append(Template(str(path), project.name, _("Votre modèle"), project.aspect,
+        result.append(Template(str(path), project.name, _("Votre modèle"), project.format_label,
                                False, path))
     return result
 
