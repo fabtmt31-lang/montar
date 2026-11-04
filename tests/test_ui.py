@@ -1802,7 +1802,9 @@ def test_preview_drag_keeps_background_and_defers_render(window, media_dir):
     editor.player.load = lambda spec: (loads.append(spec), real_load(spec))
     QTest.mousePress(canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, start)
     drag = canvas._drag
-    assert drag is not None and drag.background is not None and drag.ghost is not None
+    assert drag is not None and drag.ghost is not None  # tout de suite (image affichée)
+    # puis l'image exacte, rendue dans le fil du moteur (l'interface ne se fige pas)
+    assert wait_until(lambda: drag.background is not None)
     # le fond est rendu sans l'image déplacée : la vidéo rouge au centre du cadre
     bg = drag.background
     color = bg.pixelColor(bg.width() // 2, bg.height() // 2)
@@ -2444,7 +2446,14 @@ def test_elements_panel_accordion_and_animated_effect(window, media_dir):
     effect = editor.project.clips[-1]
     assert effect.start == 0 and effect.duration == round(2.5 * 25)
     editor.timeline.set_playhead(30)
-    image = editor._render_still(editor.project, (320, 180))
+    from PyQt6.QtGui import QImage
+
+    from montar.engine import get_engine
+
+    source = get_engine().build(editor._still_spec(editor.project))
+    data = source.render(30, 320, 180)
+    source.close()
+    image = QImage(data, 320, 180, 320 * 4, QImage.Format.Format_RGBA8888)
     corner = image.pixelColor(image.width() // 20, image.height() // 20)
     middle = image.pixelColor(image.width() // 2, image.height() // 2)
     assert corner.red() > 200 and corner.green() < 60  # le rouge se voit autour
@@ -2711,3 +2720,14 @@ def test_plain_webcam_recording_moves_and_lasts(window, media_dir, monkeypatch):
         "video", False, False, (ClipSpec(camera.path, "video", 0, length,
                                          media_size=(camera.width, camera.height)),)),)))
     assert source.render(2, 64, 48) != source.render(length - 3, 64, 48)  # elle bouge
+
+
+def test_crash_report_dialog(app, tmp_path):
+    from PyQt6.QtGui import QGuiApplication
+
+    from montar.ui.dialogs.crash_report import CrashReportDialog
+
+    dialog = CrashReportDialog("trace du plantage", tmp_path)
+    dialog.copy()
+    assert QGuiApplication.clipboard().text() == "trace du plantage"
+    assert dialog.view.toPlainText() == "trace du plantage"

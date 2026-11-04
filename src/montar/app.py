@@ -12,31 +12,65 @@ from montar import __version__
 from montar.platform import paths, windows
 
 
-def _setup_logging() -> None:
-    log_dir = paths.cache_dir() / "logs"
+def log_dir() -> Path:
+    return paths.cache_dir() / "logs"
+
+
+def _setup_logging() -> tuple[object | None, str]:
+    """Journaux ; renvoie le fichier des traces de la session et la trace de la session
+    précédente si elle s'est mal terminée."""
+    folder = log_dir()
     # pas de console sous Windows (pythonw.exe) : sys.stderr vaut None
     handlers: list[logging.Handler] = [logging.StreamHandler()] if sys.stderr else []
+    stream, previous = None, ""
     try:
-        log_dir.mkdir(parents=True, exist_ok=True)
+        folder.mkdir(parents=True, exist_ok=True)
         handlers.append(logging.handlers.RotatingFileHandler(
-            log_dir / "montar.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8"))
-        _enable_stack_dumps(log_dir / "traces.log")
+            folder / "montar.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8"))
+        stream, previous = _enable_stack_dumps(folder / "traces.log")
     except OSError:
         pass
     logging.basicConfig(level=logging.INFO, handlers=handlers,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    return stream, previous
 
 
-def _enable_stack_dumps(file: Path) -> None:
+def _enable_stack_dumps(file: Path) -> tuple[object, str]:
     """Diagnostic des blocages : `pkill -USR1 -f montar` écrit la pile de chaque fil dans
     ~/.cache/montar/logs/traces.log ; les plantages y sont aussi consignés."""
     import faulthandler
     import signal
 
+    from montar import crash
+
+    previous = crash.previous_crash(file)
+    crash.trim(file)
     stream = open(file, "a", encoding="utf-8")  # noqa: SIM115 - ouvert toute la session
+    crash.begin_session(stream, __version__)
     faulthandler.enable(stream)
     if hasattr(signal, "SIGUSR1"):
         faulthandler.register(signal.SIGUSR1, stream, all_threads=True)
+    return stream, previous
+
+
+def _notify_error(window, message: str) -> None:
+    """Erreur interne rattrapée : prévenue une fois par session, sans fermer montar."""
+    from PyQt6.QtCore import QTimer
+    from PyQt6.QtWidgets import QMessageBox
+
+    from montar.i18n import _
+
+    if getattr(_notify_error, "shown", False):
+        return
+    _notify_error.shown = True
+
+    def show() -> None:
+        QMessageBox.warning(window, _("Erreur interne"), _(
+            "Une erreur interne s'est produite ({error}). montar continue ; le détail est "
+            "dans le journal (montar.log), à transmettre si le problème revient.").format(
+                error=message))
+
+    QTimer.singleShot(0, show)
 
 
 def diagnostic() -> int:
@@ -144,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.new_module or args.pack_module:
         return _module_tool(args)
 
-    _setup_logging()
+    traces, previous_crash = _setup_logging()
     from PyQt6.QtWidgets import QApplication
 
     from montar.core.settings import Settings
@@ -171,10 +205,29 @@ def main(argv: list[str] | None = None) -> int:
     _install_language(app, settings.language)
     theme().apply(settings.theme, settings.accent)
     window = MainWindow(settings, settings_file)
+    if traces is not None:
+        from montar import crash
+
+        crash.install_hooks(traces, lambda message: _notify_error(window, message))
     window.show()
+    if previous_crash:  # la session précédente s'est mal terminée : rapport à transmettre
+        _show_crash_report(window, previous_crash)
     if args.project:
         window.session.close()
         window.open_project(Path(args.project))
     else:
         window.check_interrupted()
-    return app.exec()
+    code = app.exec()
+    if traces is not None:
+        from montar import crash
+
+        crash.end_session(traces)
+    return code
+
+
+def _show_crash_report(window, block: str) -> None:
+    from montar import crash
+    from montar.ui.dialogs.crash_report import CrashReportDialog
+
+    text = crash.report(block, log_dir() / "montar.log", __version__)
+    CrashReportDialog(text, log_dir(), window).exec()

@@ -43,6 +43,11 @@ except ImportError:  # pragma: no cover - dépend de l'installation
 log = logging.getLogger(__name__)
 
 _init_lock = threading.Lock()
+# Accès au moteur réservé à un fil à la fois : la lecture de l'aperçu, les rendus demandés
+# par l'interface et les exports en tâche de fond se partagent MLT, dont une partie
+# (création des producteurs et des filtres, modules chargés à la demande) n'est pas prévue
+# pour deux fils à la fois ; le rendu d'une image se fait sans le verrou de Python.
+ENGINE_LOCK = threading.RLock()
 _factory_ready = False
 
 # Modules MLT liés à Qt 5 : chargés dans montar (Qt 6), ils font cohabiter deux versions
@@ -151,18 +156,26 @@ def reads_vp9_alpha() -> bool:
                     capture_output=True, timeout=30)
                 if done.returncode == 0:
                     _ensure_factory()
-                    producer = mlt.Producer(_profile(Canvas(32, 32, 5)), path)
-                    if producer is not None and producer.is_valid():
-                        frame = producer.get_frame()
-                        frame.set("consumer.rescale", "none")
-                        image = frame.get_image(mlt.mlt_image_rgba, 32, 32)
-                        found = bool(image) and image[(16 * 32 + 16) * 4 + 3] < 128
-                        del frame
-                    del producer  # fichier refermé avant d'effacer le dossier
+                    found = _alpha_kept(path)
             except (OSError, subprocess.SubprocessError, EngineUnavailable):
                 found = False
     _VP9_ALPHA = found
     return found
+
+
+def _alpha_kept(path: str) -> bool:
+    """La vidéo d'essai (transparente) est-elle relue transparente ?"""
+    with ENGINE_LOCK:
+        producer = mlt.Producer(_profile(Canvas(32, 32, 5)), path)
+        try:
+            if producer is None or not producer.is_valid():
+                return False
+            frame = producer.get_frame()
+            frame.set("consumer.rescale", "none")
+            image = frame.get_image(mlt.mlt_image_rgba, 32, 32)
+            return bool(image) and image[(16 * 32 + 16) * 4 + 3] < 128
+        finally:
+            del producer  # fichier refermé avant d'effacer le dossier
 
 
 def _profile(canvas: Canvas):
@@ -646,14 +659,21 @@ class _TimelineGraph:
 
 class MltSource(Source):
     def __init__(self, spec: TimelineSpec) -> None:
-        self._graph = _TimelineGraph(spec)
+        with ENGINE_LOCK:
+            self._graph = _TimelineGraph(spec)
 
     @property
     def length(self) -> int:
         return self._graph.length
 
     def render(self, frame: int, width: int, height: int) -> bytes:
+        with ENGINE_LOCK:
+            return self._render(frame, width, height)
+
+    def _render(self, frame: int, width: int, height: int) -> bytes:
         expected = width * height * 4
+        if self._graph is None:
+            raise SourceError("source fermée")
         if self.length == 0:
             return bytes(expected)
         tractor = self._graph.tractor
@@ -677,10 +697,12 @@ class MltSource(Source):
         return bytes(data[:expected])
 
     def update(self, spec: TimelineSpec) -> bool:
-        return self._graph.update_settings(spec)
+        with ENGINE_LOCK:
+            return self._graph is not None and self._graph.update_settings(spec)
 
     def close(self) -> None:
-        self._graph = None
+        with ENGINE_LOCK:  # objets MLT détruits sous le verrou
+            self._graph = None
 
 
 def _png(path: str, width: int, height: int, rgba: tuple[int, int, int, int]) -> None:
@@ -764,6 +786,10 @@ class MltAudioOutput(AudioOutput):
     """Son joué par le consommateur MLT « sdl2_audio » sur une copie de la timeline."""
 
     def __init__(self, spec: TimelineSpec) -> None:
+        with ENGINE_LOCK:
+            self._setup(spec)
+
+    def _setup(self, spec: TimelineSpec) -> None:
         self._graph = _TimelineGraph(spec)
         consumer = mlt.Consumer(self._graph.profile, "sdl2_audio")
         if consumer is None or not consumer.is_valid():
@@ -777,6 +803,10 @@ class MltAudioOutput(AudioOutput):
         self._consumer = consumer
 
     def start(self, frame: int) -> None:
+        with ENGINE_LOCK:
+            self._start(frame)
+
+    def _start(self, frame: int) -> None:
         self.stop()
         tractor = self._graph.tractor
         tractor.seek(frame)
@@ -786,9 +816,10 @@ class MltAudioOutput(AudioOutput):
             raise SourceError("lecture du son impossible")
 
     def stop(self) -> None:
-        self._graph.tractor.set_speed(0)
-        if not self._consumer.is_stopped():
-            self._consumer.stop()
+        with ENGINE_LOCK:
+            self._graph.tractor.set_speed(0)
+            if not self._consumer.is_stopped():
+                self._consumer.stop()
 
     def position(self) -> int:
         return self._consumer.position()
@@ -797,9 +828,10 @@ class MltAudioOutput(AudioOutput):
         self._consumer.set("volume", max(0.0, min(1.0, volume)))
 
     def close(self) -> None:
-        self.stop()
-        self._consumer = None
-        self._graph = None
+        with ENGINE_LOCK:
+            self.stop()
+            self._consumer = None
+            self._graph = None
 
 
 class MltExport(ExportJob):
@@ -877,8 +909,9 @@ class MltExport(ExportJob):
 
     def _encode(self, output: str, props: dict) -> bool:
         use_c_numeric()
-        graph = _TimelineGraph(self.spec)
-        consumer = mlt.Consumer(graph.profile, "avformat", output)
+        with ENGINE_LOCK:  # le rendu lui-même se fait ensuite dans les fils de MLT
+            graph = _TimelineGraph(self.spec)
+            consumer = mlt.Consumer(graph.profile, "avformat", output)
         if consumer is None or not consumer.is_valid():
             raise SourceError("consommateur avformat indisponible")
         for key, value in props.items():

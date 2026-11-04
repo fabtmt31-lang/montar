@@ -1,3 +1,16 @@
+montar (1.10.0) unstable; urgency=medium
+
+  * Stabilité : une erreur interne n'arrête plus montar (PyQt fermait
+    l'application, sans rien écrire sous Windows) ; elle est consignée dans
+    le journal et signalée une fois.
+  * Rapport de plantage au démarrage suivant un arrêt brutal (trace de la
+    session, fin du journal), à copier d'un clic.
+  * Moteur : un seul fil à la fois (verrou) ; l'aperçu de la finition pro et
+    les images d'un glisser dans l'aperçu se calculent en tâche de fond :
+    l'interface ne se fige plus sur un gros projet.
+
+ -- Fabien <admin@appsdoc.fr>  Wed, 04 Nov 2026 12:00:00 +0100
+
 montar (1.9.1) unstable; urgency=medium
 
   * Enregistreur : la webcam a son propre ffmpeg. Dans le même que l'écran,

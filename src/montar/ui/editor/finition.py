@@ -42,6 +42,7 @@ from montar.ui.editor.controls import SliderRow, section
 from montar.ui.editor.finition_widgets import CompareView, EqEditor, LoudnessGraph, ShotStrip
 from montar.ui.editor.grading import ColorWheel, CurvesEditor, import_lut
 from montar.ui.editor.scopes import render_scope
+from montar.ui.engine_worker import engine_worker
 from montar.ui.widgets import Segmented, Switch, button, label
 
 log = logging.getLogger(__name__)
@@ -146,11 +147,12 @@ class FinitionDialog(QDialog):
         self._lut_path = lut_path
         self._engine: Engine | None = None
         self._base: TimelineSpec | None = None
-        self._before: Source | None = None
-        self._after: Source | None = None
         self._length = 0
         self._frame = playhead
         self._loading = False
+        self._closed = False  # fermée : les rendus encore en cours sont ignorés
+        # sources du moteur (avant / après) : lues et modifiées seulement dans son fil
+        self._live: dict[str, Source] = {}
         self._analysis_thread: threading.Thread | None = None
         self._analysis_result: Analysis | Exception | None = None
         self._analysis_progress = 0.0
@@ -722,25 +724,46 @@ class FinitionDialog(QDialog):
         return width, max(2, round(width * h / w / 2) * 2)
 
     def _prepare_preview(self) -> None:
+        """Les deux timelines de l'aperçu (sans et avec finition) se construisent dans le
+        fil du moteur : la fenêtre s'ouvre tout de suite, même sur un gros projet."""
         try:
             self._base = self._spec_factory()
-            self._length = self._base.length
-            if self._length == 0:
-                self.compare.set_message(_("La timeline est vide."))
-                return
-            self._engine = self._engine_factory()
-            self._before = self._engine.build(self._base)
-            self._after = self._engine.build(self._master_spec())
-        except Exception as exc:  # moteur absent, média illisible
+        except Exception as exc:  # média illisible
             log.warning("aperçu de la finition impossible : %s", exc)
             self.compare.set_message(_("Aperçu indisponible : {error}").format(error=exc))
             return
+        self._length = self._base.length
+        if self._length == 0:
+            self.compare.set_message(_("La timeline est vide."))
+            return
+        self.compare.set_message(_("Préparation de l'aperçu…"))
         self.position.blockSignals(True)
         self.position.setRange(0, max(0, self._length - 1))
         self._frame = max(0, min(self._frame, self._length - 1))
         self.position.setValue(self._frame)
         self.position.blockSignals(False)
+        base, master, factory = self._base, self._master_spec(), self._engine_factory
+
+        live = self._live
+
+        def build():
+            engine = factory()
+            live["before"], live["after"] = engine.build(base), engine.build(master)
+            return engine
+
+        engine_worker().submit(build, self._preview_ready, self._preview_failed,
+                               key=(id(self), "aperçu"))
+
+    def _preview_ready(self, engine) -> None:
+        if self._closed:
+            return
+        self._engine = engine
         self._render(before=True)
+
+    def _preview_failed(self, exc: BaseException) -> None:
+        log.warning("aperçu de la finition impossible : %s", exc)
+        if not self._closed:
+            self.compare.set_message(_("Aperçu indisponible : {error}").format(error=exc))
 
     def _master_spec(self) -> TimelineSpec:
         m = self.mastering
@@ -750,28 +773,37 @@ class FinitionDialog(QDialog):
         self._frame = frame
         self._render(before=True)
 
-    def _image(self, source: Source) -> QImage:
-        w, h = self._preview_size()
-        data = source.render(self._frame, w, h)
-        return QImage(data, w, h, w * 4, QImage.Format.Format_RGBA8888).copy()
-
     def _render(self, before: bool = False) -> None:
-        if self._after is None or self._engine is None:
+        """Image avant / après à la position, calculée dans le fil du moteur ; seule la
+        dernière demande compte (curseur déplacé vite)."""
+        if self._engine is None or self._closed:
             return
-        spec = self._master_spec()
-        try:
-            if not self._after.update(spec):
-                self._after.close()
-                self._after = self._engine.build(spec)
-            after = self._image(self._after)
-            previous = self.compare.before
-            first = self._image(self._before) if before or previous is None else previous
-        except Exception as exc:
-            log.warning("rendu de la finition impossible : %s", exc)
+        spec, frame, size = self._master_spec(), self._frame, self._preview_size()
+        need_before = before or self.compare.before is None
+        engine, live = self._engine, self._live
+
+        def work():
+            if not live["after"].update(spec):
+                live["after"].close()
+                live["after"] = engine.build(spec)
+            after = _image(live["after"], frame, size)
+            first = _image(live["before"], frame, size) if need_before else None
+            return after, first, frame
+
+        engine_worker().submit(work, self._rendered, self._render_failed,
+                               key=(id(self), "image"))
+
+    def _render_failed(self, exc: BaseException) -> None:
+        log.warning("rendu de la finition impossible : %s", exc)
+        if not self._closed:
             self.compare.set_message(_("Aperçu indisponible : {error}").format(error=exc))
+
+    def _rendered(self, result) -> None:
+        if self._closed:
             return
-        self.compare.set_images(first, after)
-        self.timecode.setText(frames_to_timecode(self._frame, self.project.fps))
+        after, first, frame = result
+        self.compare.set_images(first if first is not None else self.compare.before, after)
+        self.timecode.setText(frames_to_timecode(frame, self.project.fps))
         for key, view in self.scopes.items():
             try:
                 scope = render_scope(after, key)
@@ -781,6 +813,17 @@ class FinitionDialog(QDialog):
             view.setPixmap(QPixmap.fromImage(scope).scaled(
                 view.width(), view.height(), Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation))
+
+    def _close_sources(self) -> None:
+        """Les sources du moteur se ferment dans son fil, après les rendus en cours."""
+        live = self._live
+
+        def close():
+            for source in live.values():
+                source.close()
+            live.clear()
+
+        engine_worker().submit(close)
 
     # --- analyse -----------------------------------------------------------------------
 
@@ -889,8 +932,14 @@ class FinitionDialog(QDialog):
             self._analysis_thread.join(30)
         self._poll.stop()
         self._render_timer.stop()
-        for source in (self._before, self._after):
-            if source is not None:
-                source.close()
-        self._before = self._after = None
+        self._closed = True
+        for task in ("aperçu", "image"):
+            engine_worker().cancel((id(self), task))
+        self._close_sources()
         super().done(result)
+
+
+def _image(source: Source, frame: int, size: tuple[int, int]) -> QImage:
+    w, h = size
+    data = source.render(frame, w, h)
+    return QImage(data, w, h, w * 4, QImage.Format.Format_RGBA8888).copy()

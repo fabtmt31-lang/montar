@@ -116,7 +116,9 @@ class PreviewCanvas(QWidget):
         self.safe_zone = False  # cadres « action » (95 %) et « titres » (90 %)
         # fournit (élément seul dans son cadre, image sans l'élément) au début d'un glisser ;
         # sans lui, le fantôme est découpé dans l'image affichée
-        self.drag_images: Callable[[QRectF], tuple[QImage | None, QImage | None]] | None = None
+        # images exactes d'un glisser (élément seul, fond sans lui), calculées en tâche de
+        # fond : (cadre, rappel(élément, fond)) ; en attendant, l'image affichée sert
+        self.drag_images: Callable[[QRectF, Callable], None] | None = None
         theme().changed.connect(self.update)
 
     def set_selection(self, rect: QRectF | None, rotation: float = 0.0) -> None:
@@ -220,11 +222,18 @@ class PreviewCanvas(QWidget):
         hit = self._hit(event.position())
         if hit and event.button() == Qt.MouseButton.LeftButton:
             rect = QRectF(self.selection)
-            ghost, background = self.drag_images(rect) if self.drag_images else (None, None)
-            if ghost is None:
-                ghost, background = self._grab_ghost(rect), None
-            self._drag = _Drag(hit[0], hit[1], self._to_canvas(event.position()), rect,
-                               ghost, QRectF(rect), background)
+            drag = _Drag(hit[0], hit[1], self._to_canvas(event.position()), rect,
+                         self._grab_ghost(rect), QRectF(rect), None)
+            self._drag = drag
+            if self.drag_images is not None:
+                self.drag_images(rect, lambda ghost, background:
+                                 self._drag_images_ready(drag, ghost, background))
+
+    def _drag_images_ready(self, drag: _Drag, ghost: QImage | None,
+                           background: QImage | None) -> None:
+        if self._drag is drag and ghost is not None:  # glisser toujours en cours
+            drag.ghost, drag.background = ghost, background
+            self.update()
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
         if self._panning is not None:

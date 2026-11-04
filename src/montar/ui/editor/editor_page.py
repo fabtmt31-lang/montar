@@ -95,6 +95,7 @@ from montar.ui.editor.player import Player
 from montar.ui.editor.preview import PreviewPanel, crop_box
 from montar.ui.editor.scopes import ScopesWindow
 from montar.ui.editor.subtitles_panel import SubtitlesPanel
+from montar.ui.engine_worker import engine_worker
 from montar.ui.graphics import graphic_size, render_graphic
 from montar.ui.home.library import LibraryDialog
 from montar.ui.text_render import image_path as text_image_path
@@ -2024,49 +2025,63 @@ class EditorPage(QWidget):
             self._reload_after_drag = False
             self._schedule_reload()
 
-    def _render_still(self, project: Project, size: tuple[int, int]) -> QImage | None:
-        """Image de la tête de lecture pour une variante du projet (glisser dans l'aperçu)."""
-        spec = timeline_spec(project, self._text_image, self.modules.hook,
+    def _still_spec(self, project: Project):
+        return timeline_spec(project, self._text_image, self.modules.hook,
                              transition_hook=self.modules.transition_hook,
                              text_sequence=self._text_sequence, proxy=self._proxy_for)
-        try:
-            source = self._engine_factory().build(spec)
-            try:
-                data = source.render(self.timeline.view.playhead, *size)
-            finally:
-                source.close()
-        except Exception as exc:  # le glisser reste possible avec le fantôme simple
-            log.warning("rendu pour le glisser impossible : %s", exc)
-            return None
-        return QImage(data, size[0], size[1], size[0] * 4,
-                      QImage.Format.Format_RGBA8888).copy()
 
-    def _drag_images(self, rect: QRectF) -> tuple[QImage | None, QImage | None]:
+    def _drag_images(self, rect: QRectF, done) -> None:
         """Élément sélectionné seul (dans son cadre) et image sans lui, au début d'un
-        glisser : le fond ne suit plus la souris."""
+        glisser : le fond ne suit plus la souris. Rendus dans le fil du moteur (une timeline
+        entière à construire : plusieurs secondes sur un gros projet) ; `done(élément,
+        fond)` est appelé ensuite, le glisser commence sans attendre."""
         clip = self.controller.selected_clip()
         shown = self.preview.canvas.image
         if clip is None or shown is None:
-            return None, None
+            return
         size = (shown.width(), shown.height())
-        others = dataclasses.replace(self.project, clips=[
-            c for c in self.project.clips if c.id != clip.id])
-        background = self._render_still(others, size)
-        if background is None:
-            return None, None
+        frame = self.timeline.view.playhead
+        try:  # les descriptions sont faites ici : le projet peut changer pendant le rendu
+            others = self._still_spec(dataclasses.replace(self.project, clips=[
+                c for c in self.project.clips if c.id != clip.id]))
+            media = None if clip.is_text else self.project.find_media(clip.media_id)
+            video = media is not None and media.kind == "video"
+            alone = self._still_spec(dataclasses.replace(
+                self.project, clips=[clip], subtitles=[])) if video else None
+        except Exception as exc:  # le glisser reste possible avec le fantôme simple
+            log.warning("rendu pour le glisser impossible : %s", exc)
+            return
         cw, ch = self.project.canvas_size
         rotation = self.preview.canvas.rotation
-        media = None if clip.is_text else self.project.find_media(clip.media_id)
-        if clip.is_text:
-            layer = QImage(self._text_image(clip, cw, ch))
-        elif media is not None and media.kind == "image":
-            layer = self._image_layer(clip, media, size)
-        else:  # vidéo : rendue seule, son contenu est opaque
-            alone = dataclasses.replace(self.project, clips=[clip], subtitles=[])
-            layer = self._render_still(alone, size)
-        if layer is None or layer.isNull():
-            return None, None
-        return crop_box(layer, (cw, ch), rect, rotation), background
+        factory = self._engine_factory
+
+        def render():
+            engine = factory()
+            images = []
+            for spec in (others, alone):
+                if spec is None:
+                    images.append(None)
+                    continue
+                source = engine.build(spec)
+                try:
+                    data = source.render(frame, *size)
+                finally:
+                    source.close()
+                images.append(QImage(data, size[0], size[1], size[0] * 4,
+                                     QImage.Format.Format_RGBA8888).copy())
+            return images
+
+        def ready(images) -> None:
+            background, layer = images
+            if clip.is_text:
+                layer = QImage(self._text_image(clip, cw, ch))
+            elif media is not None and media.kind == "image":
+                layer = self._image_layer(clip, media, size)
+            if layer is None or layer.isNull():
+                return
+            done(crop_box(layer, (cw, ch), rect, rotation), background)
+
+        engine_worker().submit(render, ready, key="glisser")
 
     def _image_layer(self, clip, media: MediaItem, size: tuple[int, int]) -> QImage | None:
         """Image fixe placée comme au rendu (recadrage compris), sur fond transparent."""

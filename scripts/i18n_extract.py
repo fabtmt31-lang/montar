@@ -21,7 +21,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent / "src" / "montar"
 MODULES = ROOT / "modules"
 ERRORS = {"TimelineError", "ProjectError"}
-SKIP = {"plugins/devtools.py"}  # modèles de code des nouveaux modules, pas de l'interface
+SKIP = {"plugins/devtools.py",  # modèles de code des nouveaux modules, pas de l'interface
+        "crash.py"}  # marques techniques de traces.log
 LANGUAGE = "en"
 
 
