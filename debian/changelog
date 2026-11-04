@@ -1,3 +1,16 @@
+montar (1.11.0) unstable; urgency=medium
+
+  * Historique léger : états du projet sérialisés (8 fois plus rapide que la
+    copie objet par objet) et gardés compressés ; les curseurs restent
+    fluides sur un gros projet.
+  * Timeline : pistes calculées une fois par dessin, médias retrouvés par un
+    index, existence des fichiers gardée 2 s (relue au retour dans montar),
+    crête des formes d'onde calculée une fois.
+  * Panneau Médias : un média ajouté ou retiré ne reconstruit plus toute la
+    liste, vignettes lues une seule fois.
+
+ -- Fabien <admin@appsdoc.fr>  Wed, 04 Nov 2026 15:00:00 +0100
+
 montar (1.10.0) unstable; urgency=medium
 
   * Stabilité : une erreur interne n'arrête plus montar (PyQt fermait

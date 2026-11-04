@@ -235,6 +235,23 @@ class MediaPanel(QFrame):
         self._used: set[str] = set()
 
     def set_media(self, media: list[MediaItem], thumbnails: dict[str, str]) -> None:
+        """Liste des médias ; un média ajouté ou retiré ne fait plus reconstruire toute la
+        liste (des centaines de vignettes relues à chaque import)."""
+        ids = [m.id for m in media]
+        current = list(self._items)
+        if current == ids[:len(current)] and all(
+                self._items[m.id].data(ROLE_PAYLOAD) is m for m in media[:len(current)]):
+            for m in media[len(current):]:  # médias ajoutés à la fin
+                self.add_media(m, thumbnails.get(m.path))
+            self._update_count()
+            return
+        kept = [i for i in current if i in set(ids)]
+        if kept == ids and all(self._items[m.id].data(ROLE_PAYLOAD) is m for m in media):
+            for media_id in set(current) - set(ids):  # médias retirés
+                item = self._items.pop(media_id)
+                self.grid.takeItem(self.grid.row(item))
+            self._update_count()
+            return
         self.grid.clear()
         self._items.clear()
         for m in media:
@@ -258,7 +275,7 @@ class MediaPanel(QFrame):
         else:
             item.setToolTip(media.path)
         if thumbnail:
-            item.setData(Qt.ItemDataRole.DecorationRole, QPixmap(thumbnail))
+            item.setData(Qt.ItemDataRole.DecorationRole, _pixmap(thumbnail))
         item.setData(ROLE_USED, media.id in self._used)
         self.grid.addItem(item)
         self._items[media.id] = item
@@ -345,3 +362,16 @@ class MediaPanel(QFrame):
         menu.addAction(_("Retirer du projet"),
                        lambda: self.removeRequested.emit(item.data(ROLE_PAYLOAD)))
         menu.exec(self.grid.viewport().mapToGlobal(pos))
+
+
+_PIXMAPS: dict[str, QPixmap] = {}
+
+
+def _pixmap(path: str) -> QPixmap:
+    """Vignette lue une fois (la liste des médias se reconstruit sans relire le disque)."""
+    pm = _PIXMAPS.get(path)
+    if pm is None:
+        if len(_PIXMAPS) > 2000:
+            _PIXMAPS.clear()
+        pm = _PIXMAPS[path] = QPixmap(path)
+    return pm

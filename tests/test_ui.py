@@ -1047,7 +1047,8 @@ def test_save_as_and_relink(window, media_dir, tmp_path, monkeypatch):
         _shutil = __import__("shutil")
         _shutil.copy(m.path, elsewhere / Path(m.path).name)
         _unlink_released(copy_editor, Path(m.path))
-    copy_editor._update_used_media()
+    # retour dans montar après avoir supprimé les fichiers : existence relue
+    copy_editor._app_state_changed(Qt.ApplicationState.ApplicationActive)
     panel = copy_editor.media_panel
     assert panel.missing_box.isVisibleTo(panel) and "2" in panel.missing_label.text()
     clip_media = copy_editor.project.media[0]

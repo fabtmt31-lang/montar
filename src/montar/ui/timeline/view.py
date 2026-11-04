@@ -91,6 +91,8 @@ class TimelineView(QAbstractScrollArea):
         self._thumbnail_for = thumbnail_for
         self._peaks_for = peaks_for
         self._thumb_cache: dict[tuple[str, int], QPixmap] = {}
+        self._peak_max: dict[tuple[str, int], int] = {}  # forme d'onde → crête maximale
+        self._rows: list[_Row] | None = None  # pistes, calculées une fois par dessin
         self.pps = 40.0
         self.playhead = 0
         self.snap = True
@@ -132,6 +134,8 @@ class TimelineView(QAbstractScrollArea):
         return max(0, round((x - HEADER_W + self.horizontalScrollBar().value()) / self.ppf))
 
     def rows(self) -> list[_Row]:
+        if self._rows is not None:  # pendant un dessin : déjà calculées
+            return self._rows
         labels = self.controller.timeline.track_labels()
         rows, top = [], RULER_H
         for t in self.controller.project.tracks:
@@ -255,6 +259,15 @@ class TimelineView(QAbstractScrollArea):
         w, h = self.viewport().width(), self.viewport().height()
         painter.fillRect(0, 0, w, h, QColor(p.surface))
         rows = self.rows()
+        self._rows = rows  # chaque clip les demande : calculées une seule fois
+        try:
+            self._paint_all(painter, rows, w, h)
+        finally:
+            self._rows = None
+            painter.end()
+
+    def _paint_all(self, painter: QPainter, rows: list[_Row], w: int, h: int) -> None:
+        p = theme().palette
 
         painter.save()
         painter.setClipRect(QRect(HEADER_W, RULER_H, w - HEADER_W, h - RULER_H))
@@ -325,7 +338,6 @@ class TimelineView(QAbstractScrollArea):
                 self._drag.insert_at is not None:
             self._paint_insert_line(painter, self._boundary_y(rows, self._drag.insert_at), 0, w)
         self._paint_playhead(painter, h)
-        painter.end()
 
     def _boundary_y(self, rows: list[_Row], index: int) -> int:
         """Ordonnée (écran) de la limite au-dessus de la piste n° `index`."""
@@ -640,7 +652,12 @@ class TimelineView(QAbstractScrollArea):
             mid, amp = rect.bottom() - 8, 6
         visible_left = max(rect.left(), HEADER_W)
         visible_right = min(rect.right(), self.viewport().width())
-        peak_scale = max(1, max(peaks))
+        key = (media.path, len(peaks))
+        peak_scale = self._peak_max.get(key)
+        if peak_scale is None:  # 360 000 valeurs pour une heure : calculé une fois
+            if len(self._peak_max) > 512:
+                self._peak_max.clear()
+            peak_scale = self._peak_max[key] = max(1, max(peaks))
         x = visible_left
         while x < visible_right:
             frame = clip.source_in + (x - rect.left()) / self.ppf * clip.speed

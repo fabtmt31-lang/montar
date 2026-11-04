@@ -32,7 +32,14 @@ from PyQt6.QtWidgets import (
 )
 
 from montar.core import keyframes, shortcuts, subtitles
-from montar.core.project import EXPORT_DIR, MediaItem, Project, ProjectError, new_id
+from montar.core.project import (
+    EXPORT_DIR,
+    MediaItem,
+    Project,
+    ProjectError,
+    forget_exists,
+    new_id,
+)
 from montar.core.project_files import backup
 from montar.core.timecode import frames_to_timecode
 from montar.core.timeline import TimelineError
@@ -320,6 +327,7 @@ class EditorPage(QWidget):
         self.media_panel.addToTimelineRequested.connect(self.add_to_timeline)
         self.media_panel.editRequested.connect(self.edit_media)
         self.media_panel.fitCanvasRequested.connect(self.confirm_fit_canvas)
+        QApplication.instance().applicationStateChanged.connect(self._app_state_changed)
         self.media_panel.relinkRequested.connect(self.relink)
         self.media_panel.relinkAllRequested.connect(self.relink_first_missing)
         self.media_panel.libraryRequested.connect(self.open_library)
@@ -591,7 +599,7 @@ class EditorPage(QWidget):
                 self.importer.ensure_thumbnail(m)
             self._ensure_derived(m)
         self.media_panel.set_media(self.project.visible_media(), self.thumbnails)
-        self._shown_media = [m.id for m in self.project.media]
+        self._shown_media = [(m.id, id(m)) for m in self.project.media]
         self._used_media: set[str] = set()
         self._update_used_media()
 
@@ -617,6 +625,8 @@ class EditorPage(QWidget):
         source, relink = self._gathering.pop(media_id, ("", False))
         self._copies.pop(source, None)
         self._update_jobs()
+        if copy is not None:
+            forget_exists(copy)  # fichier tout juste copié
         media = self.project.find_media(media_id)
         if media is None or copy is None:
             if error:
@@ -665,6 +675,13 @@ class EditorPage(QWidget):
                 self._reload_player()
 
     # --- médias manquants ------------------------------------------------------------
+
+    def _app_state_changed(self, state) -> None:
+        """Retour dans montar : des fichiers ont pu être supprimés ou remis entre-temps."""
+        if state == Qt.ApplicationState.ApplicationActive:
+            forget_exists()
+            self._update_used_media()
+            self.timeline.view.viewport().update()
 
     def missing_media(self) -> list[MediaItem]:
         return [m for m in self.project.media if not m.exists]
@@ -2128,7 +2145,8 @@ class EditorPage(QWidget):
             if self.controller.selected is None:
                 self.inspector.show_project(self.project)
         self._offer_fit_canvas()
-        media_ids = [m.id for m in self.project.media]
+        # annuler recrée les médias : le panneau doit montrer les nouveaux objets
+        media_ids = [(m.id, id(m)) for m in self.project.media]
         if media_ids != self._shown_media:
             self._shown_media = media_ids
             self.media_panel.set_media(self.project.visible_media(), self.thumbnails)

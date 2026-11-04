@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 import uuid
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
@@ -54,13 +55,39 @@ class MediaItem:
 
     @property
     def exists(self) -> bool:
-        return Path(self.path).exists()
+        return file_exists(self.path)
 
     def length_frames(self, fps: int) -> int | None:
         """Nombre d'images disponibles à la fréquence du projet ; None pour une image fixe."""
         if self.kind == "image":
             return None
         return max(1, round(self.duration * fps))
+
+
+_EXISTS: dict[str, tuple[float, bool]] = {}
+EXISTS_TTL = 2.0  # secondes : la timeline redessinée pendant la lecture ne relit pas le disque
+
+
+def file_exists(path: str) -> bool:
+    """Le fichier existe-t-il ? Réponse gardée EXISTS_TTL secondes (dessiner la timeline
+    vérifiait chaque fichier à chaque image, lent sur un gros projet ou un disque réseau)."""
+    now = time.monotonic()
+    cached = _EXISTS.get(path)
+    if cached is not None and now - cached[0] < EXISTS_TTL:
+        return cached[1]
+    found = Path(path).exists()
+    if len(_EXISTS) > 4096:
+        _EXISTS.clear()
+    _EXISTS[path] = (now, found)
+    return found
+
+
+def forget_exists(path: str | None = None) -> None:
+    """Oublie les réponses gardées (fichier créé, relié ou supprimé par montar)."""
+    if path is None:
+        _EXISTS.clear()
+    else:
+        _EXISTS.pop(path, None)
 
 
 def new_id() -> str:
@@ -329,6 +356,8 @@ class Project:
     # finition pro (étalonnage et mastering de tout le projet, à l'export)
     mastering: Mastering = field(default_factory=lambda: _new_mastering())
     path: Path | None = None  # emplacement du fichier .montar, non sérialisé
+    _media_index: dict[str, int] | None = field(default=None, init=False, repr=False,
+                                                 compare=False)
 
     def __post_init__(self) -> None:
         if self.aspect == formats.CUSTOM:
@@ -374,7 +403,16 @@ class Project:
         return self.find_media(media.webcam.get("media", "")) if media.webcam else None
 
     def find_media(self, media_id: str) -> MediaItem | None:
-        return next((m for m in self.media if m.id == media_id), None)
+        """Média par identifiant : un index (position dans la liste) évite de parcourir tous
+        les médias pour chaque clip dessiné ; la position est vérifiée à chaque appel."""
+        index = self._media_index
+        position = index.get(media_id) if index is not None else None
+        if position is not None and position < len(self.media) \
+                and self.media[position].id == media_id:
+            return self.media[position]
+        self._media_index = {m.id: i for i, m in enumerate(self.media)}
+        position = self._media_index.get(media_id)
+        return self.media[position] if position is not None else None
 
     @property
     def media_dir(self) -> Path | None:

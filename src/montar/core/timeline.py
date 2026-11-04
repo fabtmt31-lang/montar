@@ -11,6 +11,7 @@ Règles :
 from __future__ import annotations
 
 import copy
+import pickle
 
 from montar.core import keyframes
 from montar.core.project import (
@@ -941,19 +942,20 @@ class Timeline:
                 c.start = max(0, c.start + delta)
 
 
-def snapshot(project: Project) -> tuple:
-    """Copie de l'état modifiable du projet (pour annuler / rétablir)."""
-    return copy.deepcopy((project.media, project.tracks, project.clips, project.transitions,
-                          project.markers, project.subtitles, project.subtitle_style,
-                          project.subtitles_shown, project.mastering,
-                          (project.aspect, project.resolution, project.fps, project.width,
-                           project.height)))
+def snapshot(project: Project) -> bytes:
+    """Copie de l'état modifiable du projet (pour annuler / rétablir), sérialisée : bien
+    plus rapide qu'une copie objet par objet (2,6 ms au lieu de 21 ms pour 300 clips), et
+    deux états identiques donnent les mêmes octets (comparaison immédiate)."""
+    return pickle.dumps((project.media, project.tracks, project.clips, project.transitions,
+                         project.markers, project.subtitles, project.subtitle_style,
+                         project.subtitles_shown, project.mastering,
+                         (project.aspect, project.resolution, project.fps, project.width,
+                          project.height)), protocol=pickle.HIGHEST_PROTOCOL)
 
 
-def restore(project: Project, state: tuple) -> None:
+def restore(project: Project, state: bytes) -> None:
     (project.media, project.tracks, project.clips, project.transitions,
      project.markers, project.subtitles, project.subtitle_style,
      project.subtitles_shown, project.mastering,
      (project.aspect, project.resolution, project.fps, project.width,
-      project.height)) = copy.deepcopy(state)
-
+      project.height)) = pickle.loads(state)
