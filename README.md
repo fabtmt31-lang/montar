@@ -27,7 +27,7 @@ projet.
 - la finition peut être **vue et écoutée dans l'aperçu** de l'éditeur ; les préréglages
   personnels sont enregistrés dans `~/.config/montar/finition.json`.
 
-**Version 1.10** (1.11.0) : stabilité et rapidité sur les gros projets.
+**Version 1.10** (1.11.1) : stabilité et rapidité sur les gros projets.
 
 - une erreur interne n'arrête plus montar : elle est consignée dans le journal et signalée ;
 - après un arrêt brutal, montar affiche au démarrage suivant un **rapport de plantage**
@@ -35,7 +35,9 @@ projet.
 - la **finition pro** s'ouvre tout de suite et le glisser dans l'aperçu démarre sans
   attendre, même sur un gros projet (rendus du moteur en tâche de fond) ;
 - 1.11 : annuler / rétablir et les curseurs de l'inspecteur restent fluides sur un gros
-  projet ; timeline et panneau Médias plus légers avec des centaines de médias.
+  projet ; timeline et panneau Médias plus légers avec des centaines de médias ;
+- 1.11.1 : plantages au hasard à l'ouverture d'un projet ou d'une fenêtre (ramasse-miettes
+  de Python lancé depuis un autre fil que celui de l'interface).
 
 **Version 1.9** (1.9.1) : enregistrements en deux calques, format libre, lecteur.
 

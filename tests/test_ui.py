@@ -26,10 +26,12 @@ from .conftest import needs_ffmpeg  # noqa: E402
 
 @pytest.fixture(scope="module")
 def app():
+    from montar.ui import gc_guard
     from montar.ui.theme import theme
     from montar.ui.theme.manager import load_fonts
 
     instance = QApplication.instance() or QApplication(["montar-tests"])
+    gc_guard.install(instance)  # comme l'application : jamais dans un autre fil
     load_fonts()
     theme().apply("light")
     return instance

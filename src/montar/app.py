@@ -188,6 +188,10 @@ def main(argv: list[str] | None = None) -> int:
 
     windows.set_app_id()
     app = QApplication([sys.argv[0], *qt_args])
+    # ramasse-miettes dans le fil de l'interface seulement (voir ui/gc_guard.py)
+    from montar.ui import gc_guard
+
+    gc_guard.install(app)
     # QApplication adopte la convention numérique du système (virgule en français), que
     # MLT utiliserait pour lire ses nombres : le moteur exige le point décimal.
     from montar.engine.mlt_engine import use_c_numeric

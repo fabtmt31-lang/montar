@@ -1,3 +1,12 @@
+montar (1.11.1) unstable; urgency=medium
+
+  * Plantages au hasard (création d'une fenêtre, ouverture d'un projet) : le
+    ramasse-miettes de Python pouvait détruire des objets de l'interface
+    depuis le fil de lecture ou d'import ; il ne tourne plus que dans le fil
+    de l'interface.
+
+ -- Fabien <admin@appsdoc.fr>  Wed, 04 Nov 2026 16:00:00 +0100
+
 montar (1.11.0) unstable; urgency=medium
 
   * Historique léger : états du projet sérialisés (8 fois plus rapide que la

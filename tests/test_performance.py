@@ -58,3 +58,25 @@ def test_file_existence_is_kept_briefly(tmp_path, monkeypatch):
     path.unlink()
     monkeypatch.setattr(project_module, "EXISTS_TTL", 0.0)
     assert not file_exists(str(path))
+
+
+def test_garbage_collector_runs_in_the_interface_thread():
+    import gc
+
+    from PyQt6.QtWidgets import QApplication
+
+    from montar.ui.gc_guard import GarbageCollector
+
+    QApplication.instance() or QApplication(["t"])  # (une seule application par essai)
+    guard = GarbageCollector(interval=10)
+    try:
+        assert not gc.isenabled()  # plus de ramassage dans le fil qui alloue
+        for _ in range(3000):
+            a = []
+            a.append(a)  # cycles à ramasser
+        before = gc.get_count()[0]
+        guard.check()
+        assert gc.get_count()[0] < before
+    finally:
+        guard.stop()
+    assert gc.isenabled()
