@@ -357,14 +357,17 @@ class Engine(ABC):
     def version(self) -> str: ...
 
     @abstractmethod
-    def build(self, spec: TimelineSpec) -> Source:
-        """Construit la timeline ; à utiliser depuis un seul fil d'exécution."""
+    def build(self, spec: TimelineSpec, previous: Source | None = None) -> Source:
+        """Construit la timeline ; à utiliser depuis un seul fil d'exécution. `previous` :
+        source qu'elle remplace (ses fichiers déjà ouverts sont repris, puis elle est
+        fermée par l'appelant)."""
 
     def export(self, spec: TimelineSpec, settings) -> ExportJob:
         """Prépare l'export (`settings` : `engine.export.ExportSettings`), à lancer par
         `start()` ; la timeline doit être à la taille et à la fréquence de sortie."""
         raise NotImplementedError
 
-    def audio_output(self, spec: TimelineSpec) -> AudioOutput | None:
-        """Sortie son, ou None si aucune n'est disponible."""
+    def audio_output(self, spec: TimelineSpec,
+                     previous: AudioOutput | None = None) -> AudioOutput | None:
+        """Sortie son, ou None si aucune n'est disponible ; `previous` comme pour build."""
         return None

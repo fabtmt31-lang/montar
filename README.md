@@ -27,6 +27,10 @@ projet.
 - la finition peut être **vue et écoutée dans l'aperçu** de l'éditeur ; les préréglages
   personnels sont enregistrés dans `~/.config/montar/finition.json`.
 
+**Version 1.12** (1.12.0) : aperçu instantané après chaque modification, même sur un
+gros projet (300 médias : 0,04 s au lieu de 6 s) ; seule la première ouverture du projet
+ouvre tous les fichiers.
+
 **Version 1.10** (1.11.1) : stabilité et rapidité sur les gros projets.
 
 - une erreur interne n'arrête plus montar : elle est consignée dans le journal et signalée ;

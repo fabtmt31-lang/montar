@@ -1,3 +1,13 @@
+montar (1.12.0) unstable; urgency=medium
+
+  * Aperçu reconstruit en une fraction de seconde après une coupe, un
+    déplacement ou une suppression, même sur un gros projet : les fichiers
+    déjà ouverts sont repris d'une reconstruction à l'autre (300 médias :
+    0,04 s au lieu de 6 s) ; chaque clip en a sa propre découpe. Deux clips
+    qui jouent en même temps gardent chacun leur fichier ouvert.
+
+ -- Fabien <admin@appsdoc.fr>  Mon, 09 Nov 2026 12:00:00 +0100
+
 montar (1.11.1) unstable; urgency=medium
 
   * Plantages au hasard (création d'une fenêtre, ouverture d'un projet) : le

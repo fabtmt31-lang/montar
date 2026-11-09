@@ -783,9 +783,9 @@ class FinitionDialog(QDialog):
         engine, live = self._engine, self._live
 
         def work():
-            if not live["after"].update(spec):
-                live["after"].close()
-                live["after"] = engine.build(spec)
+            if not live["after"].update(spec):  # fichiers déjà ouverts repris
+                previous, live["after"] = live["after"], engine.build(spec, live["after"])
+                previous.close()
             after = _image(live["after"], frame, size)
             first = _image(live["before"], frame, size) if need_before else None
             return after, first, frame

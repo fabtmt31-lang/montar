@@ -432,3 +432,24 @@ def test_text_motion_animations(engine, tmp_path):
     assert entering[0] < settled[0] - 10  # encore décalé vers la gauche
     width = lambda span: span[1] - span[0]  # noqa: E731
     assert leaving is None or width(leaving) < width(settled) * 0.9  # rapetisse en sortant
+
+
+def test_rebuild_reuses_open_files_and_renders_the_same(engine, media_dir):
+    """Reconstruction après une modification : les fichiers déjà ouverts sont repris
+    (plusieurs secondes gagnées sur un gros projet), l'image est la même qu'à neuf."""
+    redblue = str(media_dir / "redblue.mp4")
+    first = spec(video(ClipSpec(redblue, "video", 0, 20, 0),
+                       ClipSpec(redblue, "video", 20, 20, 20)))
+    source = engine.build(first)
+    # coupe : trois morceaux, plus un son détaché qui joue en même temps (fichier à part)
+    second = spec(video(ClipSpec(redblue, "video", 0, 10, 0),
+                        ClipSpec(redblue, "video", 10, 10, 10),
+                        ClipSpec(redblue, "video", 20, 20, 20)),
+                  TrackSpec("audio", False, False, (ClipSpec(redblue, "audio", 0, 40, 0),)))
+    rebuilt = engine.build(second, source)
+    source.close()
+    assert rebuilt.pool.opened == 1  # seul le son, qui joue en même temps, ouvre le fichier
+    fresh = engine.build(second)
+    for frame in (5, 15, 25, 35):
+        assert rebuilt.render(frame, 64, 36) == fresh.render(frame, 64, 36)
+    assert near(rgb(rebuilt, 5), RED) and near(rgb(rebuilt, 35), BLUE)

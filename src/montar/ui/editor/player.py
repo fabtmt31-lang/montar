@@ -43,6 +43,7 @@ class PlaybackWorker(QObject):
         self._spec: TimelineSpec | None = None
         self._source: Source | None = None
         self._audio: AudioOutput | None = None
+        self._audio_last: AudioOutput | None = None  # sortie son remplacée, à reprendre
         self._audio_stale = True
         self._size = (320, 180)
         self._position = 0
@@ -104,10 +105,12 @@ class PlaybackWorker(QObject):
                 self._timer.stop()
             if self._audio is not None:
                 self._audio.stop()
+        previous = self._source  # ses fichiers ouverts sont repris (reconstruction rapide)
+        self._source = None
         self._close()
         self._spec = spec
         try:
-            self._source = self._ensure_engine().build(spec)
+            self._source = self._ensure_engine().build(spec, previous)
         except Exception as exc:  # moteur absent ou média illisible
             self._source = None
             if was_playing:
@@ -115,6 +118,9 @@ class PlaybackWorker(QObject):
                 self.playingChanged.emit(False)
             self.failed.emit(str(exc))
             return
+        finally:
+            if previous is not None:
+                previous.close()
         self._audio_stale = True
         self._position = max(0, min(self._position, self._length - 1))
         self.loaded.emit(self._length, float(spec.canvas.fps))
@@ -132,13 +138,17 @@ class PlaybackWorker(QObject):
             self._source.close()
             self._source = None
         if self._audio is not None:
-            self._audio.close()
+            self._audio.stop()
+            self._audio_last = self._audio  # refermée à la reconstruction du son
             self._audio = None
 
     @pyqtSlot()
     def close(self) -> None:
         self._stop()
         self._close()
+        if self._audio_last is not None:
+            self._audio_last.close()
+            self._audio_last = None
 
     @pyqtSlot(int, int)
     def set_render_size(self, width: int, height: int) -> None:
@@ -204,13 +214,16 @@ class PlaybackWorker(QObject):
 
     def _start_clock(self) -> None:
         if self._audio_stale and self._spec is not None:
-            if self._audio is not None:
-                self._audio.close()
+            previous = self._audio or self._audio_last  # fichiers ouverts repris
+            self._audio = self._audio_last = None
             try:
-                self._audio = self._ensure_engine().audio_output(self._spec)
+                self._audio = self._ensure_engine().audio_output(self._spec, previous)
             except Exception as exc:
                 log.warning("sortie son indisponible : %s", exc)
                 self._audio = None
+            finally:
+                if previous is not None:
+                    previous.close()
             self._audio_stale = False
             if self._audio is not None:
                 self._audio.set_volume(self._volume)

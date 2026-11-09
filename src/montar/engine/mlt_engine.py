@@ -282,14 +282,51 @@ def _luma_file(kind: str, canvas: Canvas) -> str:
     return str(path)
 
 
+class _ProducerPool:
+    """Fichiers (vidéos, sons) ouverts par MLT, gardés d'une reconstruction de la timeline à
+    la suivante : ouvrir un fichier coûte ~16 ms, presque tout le temps de construction
+    (plusieurs secondes pour quelques centaines de clips). Chaque clip en prend une
+    découpe ; deux clips qui jouent en même temps (transition, son détaché, même vidéo sur
+    deux pistes) ont chacun leur fichier ouvert, pour ne pas faire sauter la lecture d'une
+    position à l'autre à chaque image."""
+
+    def __init__(self, profile, canvas: Canvas, previous: _ProducerPool | None = None) -> None:
+        self.profile, self.canvas = profile, canvas
+        self._free: dict[str, list] = {}
+        if previous is not None and previous.canvas == canvas:
+            self.profile = previous.profile  # les producteurs gardent leur profil
+            self._free = {k: [p for p, _spans in v] for k, v in previous._items.items()}
+        self._items: dict[str, list[tuple[object, list[tuple[int, int]]]]] = {}
+        self.opened = 0  # fichiers ouverts pour cette construction (essais)
+
+    def take(self, resource: str, start: int, end: int):
+        """Producteur de `resource` libre de `start` à `end` (images de la timeline)."""
+        for producer, spans in self._items.get(resource, ()):
+            if all(end <= a or b <= start for a, b in spans):
+                spans.append((start, end))
+                return producer
+        free = self._free.get(resource)
+        if free:
+            producer = free.pop(0)
+        else:
+            producer = mlt.Producer(self.profile, resource)
+            if producer is None or not producer.is_valid():
+                return None
+            self.opened += 1
+        self._items.setdefault(resource, []).append((producer, [(start, end)]))
+        return producer
+
+
 class _TimelineGraph:
     """Tracteur MLT : fond noir, pistes vidéo puis texte composées de bas en haut, son de
-    toutes les pistes mixé. Chaque clip a son propre producteur, qui porte ses filtres (ils
-    s'appliquent ainsi aussi pendant les transitions). Les objets MLT doivent rester
-    référencés tant que le tracteur est utilisé."""
+    toutes les pistes mixé. Chaque clip a sa propre découpe d'un fichier ouvert (voir
+    _ProducerPool), qui porte ses filtres (ils s'appliquent ainsi aussi pendant les
+    transitions). Les objets MLT doivent rester référencés tant que le tracteur est
+    utilisé."""
 
-    def __init__(self, spec: TimelineSpec) -> None:
-        self.profile = _profile(spec.canvas)
+    def __init__(self, spec: TimelineSpec, previous: _ProducerPool | None = None) -> None:
+        self.pool = _ProducerPool(_profile(spec.canvas), spec.canvas, previous)
+        self.profile = self.pool.profile
         self.canvas = spec.canvas
         self.length = spec.length
         self.spec = spec
@@ -454,17 +491,28 @@ class _TimelineGraph:
             self._attach_clip_filters(producer, clip, span, track_kind, key)
             self._keep.append(producer)
             return producer, 0
-        if clip.kind in ("video", "audio") and clip.reverse and clip.media_length:
-            # timewarp négatif : l'image j montre l'image L-1-j·k du média
-            k = abs(clip.speed)
-            producer = mlt.Producer(self.profile, f"timewarp:{-k:g}:{clip.path}")
-            cut_in = max(0, round((clip.media_length - clip.source_in - clip.duration * k) / k))
-        elif clip.kind in ("video", "audio") and clip.speed != 1.0:
-            producer = mlt.Producer(self.profile, f"timewarp:{clip.speed:g}:{clip.path}")
-            cut_in = round(clip.source_in / clip.speed)
-        else:
-            producer = mlt.Producer(self.profile, clip.path)
-            cut_in = clip.source_in if clip.kind in ("video", "audio") else 0
+        if clip.kind in ("video", "audio"):  # fichier gardé ouvert, découpe propre au clip
+            if clip.reverse and clip.media_length:
+                # timewarp négatif : l'image j montre l'image L-1-j·k du média
+                k = abs(clip.speed)
+                resource = f"timewarp:{-k:g}:{clip.path}"
+                cut_in = max(0, round((clip.media_length - clip.source_in
+                                       - clip.duration * k) / k))
+            elif clip.speed != 1.0:
+                resource = f"timewarp:{clip.speed:g}:{clip.path}"
+                cut_in = round(clip.source_in / clip.speed)
+            else:
+                resource, cut_in = clip.path, clip.source_in
+            parent = self.pool.take(resource, clip.start, clip.start + clip.duration)
+            if parent is None:
+                raise SourceError(f"MLT ne sait pas ouvrir {clip.path}")
+            producer = parent.cut(cut_in, cut_in + clip.duration - 1)
+            span = (cut_in, cut_in + clip.duration - 1)
+            self._attach_clip_filters(producer, clip, span, track_kind, key)
+            self._keep.append(producer)
+            return producer, cut_in
+        producer = mlt.Producer(self.profile, clip.path)
+        cut_in = 0
         if producer is None or not producer.is_valid():
             raise SourceError(f"MLT ne sait pas ouvrir {clip.path}")
         if clip.kind in ("image", "text"):
@@ -658,9 +706,11 @@ class _TimelineGraph:
 
 
 class MltSource(Source):
-    def __init__(self, spec: TimelineSpec) -> None:
+    def __init__(self, spec: TimelineSpec, previous: MltSource | None = None) -> None:
+        pool = previous.pool if previous is not None else None
         with ENGINE_LOCK:
-            self._graph = _TimelineGraph(spec)
+            self._graph = _TimelineGraph(spec, pool)
+        self.pool = self._graph.pool  # fichiers ouverts, repris par la reconstruction suivante
 
     @property
     def length(self) -> int:
@@ -785,12 +835,13 @@ def _magenta_box(data: bytes, w: int, h: int, k: float) -> list[int] | None:
 class MltAudioOutput(AudioOutput):
     """Son joué par le consommateur MLT « sdl2_audio » sur une copie de la timeline."""
 
-    def __init__(self, spec: TimelineSpec) -> None:
+    def __init__(self, spec: TimelineSpec, previous: MltAudioOutput | None = None) -> None:
         with ENGINE_LOCK:
-            self._setup(spec)
+            self._setup(spec, previous.pool if previous is not None else None)
 
-    def _setup(self, spec: TimelineSpec) -> None:
-        self._graph = _TimelineGraph(spec)
+    def _setup(self, spec: TimelineSpec, pool: _ProducerPool | None) -> None:
+        self._graph = _TimelineGraph(spec, pool)
+        self.pool = self._graph.pool
         consumer = mlt.Consumer(self._graph.profile, "sdl2_audio")
         if consumer is None or not consumer.is_valid():
             raise SourceError("sortie son SDL indisponible")
@@ -950,17 +1001,19 @@ class MltEngine(Engine):
     def version(self) -> str:
         return mlt.mlt_version_get_string()
 
-    def build(self, spec: TimelineSpec) -> Source:
-        return MltSource(spec)
+    def build(self, spec: TimelineSpec, previous: Source | None = None) -> Source:
+        return MltSource(spec, previous if isinstance(previous, MltSource) else None)
 
     def export(self, spec: TimelineSpec, settings) -> ExportJob:
         return MltExport(spec, settings)
 
-    def audio_output(self, spec: TimelineSpec) -> AudioOutput | None:
+    def audio_output(self, spec: TimelineSpec,
+                     previous: AudioOutput | None = None) -> AudioOutput | None:
         if spec.length == 0:
             return None
         try:
-            return MltAudioOutput(spec)
+            return MltAudioOutput(spec, previous if isinstance(previous, MltAudioOutput)
+                                  else None)
         except SourceError as exc:
             log.warning("pas de son : %s", exc)
             return None
