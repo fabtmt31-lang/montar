@@ -1221,8 +1221,9 @@ class TimelineView(QAbstractScrollArea):
             self.controller.select(clip_id)
             menu.addAction(_("Couper à la tête de lecture"), lambda: self.controller.edit(
                 _("Couper"), lambda t: t.split_at(self.playhead, clip_id)))
+            linked = [c.id for c in self.controller.timeline.group_of(hit[0])]
             menu.addAction(_("Dupliquer"), lambda: self.controller.edit(
-                _("Dupliquer"), lambda t: t.duplicate(clip_id)))
+                _("Dupliquer"), lambda t: t.duplicate_many(linked)))
             found = self.valid_range()
             if found is not None and found[0].id == clip_id:
                 menu.addAction(_("Isoler la sélection (couper aux deux bornes)"),
@@ -1250,12 +1251,10 @@ class TimelineView(QAbstractScrollArea):
                 lambda: self.applyRequested.emit(clip_id))
             set_icon_action(apply, "sparkles")
             menu.addSeparator()
-            linked = [c.id for c in timeline.group_of(hit[0])]
             menu.addAction(_("Supprimer"), lambda: self.controller.edit(
-                _("Supprimer"), lambda t: [t.delete(c) for c in linked]))
+                _("Supprimer"), lambda t: t.delete_many(linked)))
             menu.addAction(_("Supprimer et refermer l'espace"), lambda: self.controller.edit(
-                _("Supprimer et refermer l'espace"),
-                lambda t: [t.delete(c, ripple=True) for c in linked]))
+                _("Supprimer et refermer l'espace"), lambda t: t.delete_many(linked, ripple=True)))
         menu.exec(event.globalPos())
 
     def _webcam_actions(self, menu: QMenu, clip: Clip, found) -> None:

@@ -182,17 +182,13 @@ class TimelinePanel(QFrame):
             return
         label = _("Supprimer et refermer l'espace") if ripple else _("Supprimer")
 
-        def operation(t):
-            for clip_id in reversed(ids):  # de la fin vers le début (refermer l'espace)
-                t.delete(clip_id, ripple=ripple)
-        self.controller.edit(label, operation)
+        self.controller.edit(label, lambda t: t.delete_many(ids, ripple=ripple))
 
     def duplicate(self) -> None:
         ids = [c.id for c in self.controller.selected_clips()]
         if not ids:
             return
-        copies = self.controller.edit(_("Dupliquer"),
-                                      lambda t: [t.duplicate(clip_id) for clip_id in ids])
+        copies = self.controller.edit(_("Dupliquer"), lambda t: t.duplicate_many(ids))
         if copies:
             self.controller.select_many([c.id for c in copies])
 

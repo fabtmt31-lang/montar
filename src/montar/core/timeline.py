@@ -399,8 +399,25 @@ class Timeline:
             c.start += delta
         return clips
 
+    def _aligned(self, clip: Clip, edge: str) -> list[Clip]:
+        """Clips liés à `clip` dont le bord `edge` est au même endroit (l'écran et sa webcam :
+        on les rogne ensemble)."""
+        if not clip.group:
+            return []
+        at = clip.start if edge == "start" else clip.end
+        return [c for c in self.group_of(clip) if c.id != clip.id
+                and (c.start if edge == "start" else c.end) == at]
+
     def trim_bounds(self, clip_id: str, edge: str) -> tuple[int, int]:
-        """Positions possibles du bord `edge` ("start" ou "end") du clip."""
+        """Positions possibles du bord `edge` ("start" ou "end") du clip (et des clips liés
+        rognés avec lui)."""
+        low, high = self._trim_bounds_one(clip_id, edge)
+        for mate in self._aligned(self.clip(clip_id), edge):
+            mate_low, mate_high = self._trim_bounds_one(mate.id, edge)
+            low, high = max(low, mate_low), min(high, mate_high)
+        return low, max(low, high)
+
+    def _trim_bounds_one(self, clip_id: str, edge: str) -> tuple[int, int]:
         clip = self.clip(clip_id)
         if self.timing_locked(clip):
             return (clip.start, clip.start) if edge == "start" else (clip.end, clip.end)
@@ -424,9 +441,17 @@ class Timeline:
         return clip.start + 1 + reserved, min(limits) if limits else 1 << 30
 
     def trim(self, clip_id: str, edge: str, frame: int) -> Clip:
+        """Rogne le clip ; un clip lié dont le bord est au même endroit est rogné pareil."""
         clip = self.clip(clip_id)
+        if edge not in ("start", "end"):
+            raise TimelineError(f"bord inconnu : {edge}")
         low, high = self.trim_bounds(clip_id, edge)
         frame = max(low, min(high, frame))
+        for mate in self._aligned(clip, edge):
+            self._trim_one(mate, edge, frame)
+        return self._trim_one(clip, edge, frame)
+
+    def _trim_one(self, clip: Clip, edge: str, frame: int) -> Clip:
         if edge == "start":
             delta = frame - clip.start
             clip.start, clip.duration = frame, clip.duration - delta
@@ -508,18 +533,70 @@ class Timeline:
         if ripple:  # referme l'espace laissé sur la piste
             self._shift_from(clip.track_id, clip.end - overlap, -(clip.duration - overlap))
 
+    def delete_many(self, clip_ids: list[str], ripple: bool = False) -> None:
+        """Supprime des clips ; avec `ripple`, chaque piste referme son espace et les clips
+        liés aux clips décalés (webcam d'un enregistrement, sur une autre piste) suivent."""
+        clips = [self.clip(cid) for cid in dict.fromkeys(clip_ids)]
+        if not ripple:
+            for c in clips:
+                self.delete(c.id)
+            return
+        tracks = {c.track_id for c in clips}
+        shifted: dict[str, int] = {}
+        for track_id in tracks:
+            for c in sorted((c for c in clips if c.track_id == track_id),
+                            key=lambda c: c.start, reverse=True):
+                before = {x.id: x.start for x in self.clips_on(track_id)}
+                self.delete(c.id, ripple=True)
+                for x in self.clips_on(track_id):
+                    if x.start != before.get(x.id, x.start):
+                        shifted[x.id] = shifted.get(x.id, 0) + x.start - before[x.id]
+        moved: set[str] = set(shifted)
+        for cid, delta in shifted.items():
+            for mate in self.group_of(self.clip(cid)):
+                if mate.id not in moved and mate.track_id not in tracks:
+                    mate.start = max(0, mate.start + delta)
+                    moved.add(mate.id)
+
+    def duplicate_many(self, clip_ids: list[str]) -> list[Clip]:
+        """Duplique des clips ; les copies de clips liés forment leur propre groupe."""
+        groups: dict[str, str] = {}
+        copies = []
+        for cid in dict.fromkeys(clip_ids):
+            original = self.clip(cid)
+            copy_ = self.duplicate(cid)
+            if original.group:
+                copy_.group = groups.setdefault(original.group, new_id())
+            copies.append(copy_)
+        return copies
+
     def duplicate(self, clip_id: str) -> Clip:
+        """Copie du clip, posée juste après lui ; elle n'est liée à aucun autre clip."""
         clip = self.clip(clip_id)
         copy_ = copy.deepcopy(clip)
         copy_.id = new_id()
+        copy_.group = ""
         end = max(clip.end, self.neighbour(clip_id, "right").end
                   if self.transition_after(clip_id) else clip.end)
         copy_.start = self.free_start(clip.track_id, end, clip.duration)
         self.project.clips.append(copy_)
         return copy_
 
+    def _synced(self, clip: Clip) -> list[Clip]:
+        """Clips liés qui jouent exactement en même temps que `clip` (même début, même
+        durée) : l'écran et sa webcam changent de vitesse ou de sens ensemble."""
+        return [c for c in self.group_of(clip) if c.id != clip.id
+                and c.start == clip.start and c.duration == clip.duration]
+
     def set_speed(self, clip_id: str, speed: float) -> Clip:
-        """Change la vitesse ; la durée suit et les clips suivants de la piste se décalent."""
+        """Change la vitesse ; la durée suit et les clips suivants de la piste se décalent.
+        Un clip lié qui joue en même temps (webcam d'un enregistrement) suit."""
+        clip = self.clip(clip_id)
+        for mate in self._synced(clip):
+            self._set_speed_one(mate.id, speed)
+        return self._set_speed_one(clip_id, speed)
+
+    def _set_speed_one(self, clip_id: str, speed: float) -> Clip:
         clip = self.clip(clip_id)
         if self.media_of(clip) is None or self.media_of(clip).kind == "image":
             raise TimelineError("la vitesse ne s'applique qu'aux vidéos et aux sons")
@@ -540,6 +617,11 @@ class Timeline:
 
     def set_reverse(self, clip_id: str, reverse: bool) -> Clip:
         clip = self.clip(clip_id)
+        for mate in self._synced(clip):
+            self._set_reverse_one(mate, reverse)
+        return self._set_reverse_one(clip, reverse)
+
+    def _set_reverse_one(self, clip: Clip, reverse: bool) -> Clip:
         media = self.media_of(clip)
         if media is None or media.kind == "image":
             raise TimelineError("la lecture inversée ne s'applique qu'aux vidéos et aux sons")

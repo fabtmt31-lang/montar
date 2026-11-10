@@ -146,3 +146,58 @@ def test_removing_the_recording_removes_its_webcam():
     tl.remove_media("screen")
     assert [m.id for m in p.media] == ["other"] and not p.clips
     assert [m.id for m in recording_project().visible_media()] == ["screen", "other"]
+
+
+def _pair(p):
+    screen = next(c for c in p.clips if c.media_id == "screen")
+    cam = next(c for c in p.clips if c.media_id == "cam")
+    return screen, cam
+
+
+def test_trim_speed_reverse_keep_screen_and_webcam_together():
+    p = recording_project()
+    tl = Timeline(p)
+    tl.add_clip(p.find_media("screen"))
+    screen, cam = _pair(p)
+    tl.trim(screen.id, "start", 50)
+    assert (cam.start, cam.duration) == (screen.start, screen.duration) == (50, 440)
+    assert cam.source_in == 100 and screen.source_in == 60  # la même image de chacun
+    tl.trim(cam.id, "end", 300)
+    assert screen.end == cam.end == 300
+    tl.set_speed(screen.id, 2.0)
+    assert cam.speed == screen.speed == 2.0 and cam.duration == screen.duration
+    tl.set_reverse(cam.id, True)
+    assert screen.reverse and cam.reverse
+
+
+def test_ripple_delete_moves_the_webcam_too():
+    p = recording_project()
+    tl = Timeline(p)
+    other = tl.add_clip(p.find_media("other"))
+    tl.add_clip(p.find_media("screen"))
+    screen, cam = _pair(p)
+    assert screen.start == cam.start == other.end
+    tl.delete_many([other.id], ripple=True)
+    assert screen.start == cam.start == 0
+    # le couple lui-même, refermé : rien ne bouge deux fois
+    after = tl.add_clip(p.find_media("other"), screen.track_id)
+    tl.delete_many([screen.id, cam.id], ripple=True)
+    assert after.start == 0
+
+
+def test_duplicate_gives_copies_their_own_link():
+    p = recording_project()
+    tl = Timeline(p)
+    tl.add_clip(p.find_media("screen"))
+    screen, cam = _pair(p)
+    copies = tl.duplicate_many([screen.id, cam.id])
+    assert len(copies) == 2 and copies[0].group == copies[1].group != screen.group
+    assert copies[0].start == copies[1].start == screen.end
+    assert tl.duplicate(screen.id).group == ""  # copie d'un seul clip : indépendante
+
+
+def test_export_at_project_size():
+    from montar.engine.export import PROJECT_SIZE, export_size
+
+    assert export_size((1366, 768), PROJECT_SIZE) == (1366, 768)
+    assert export_size((1366, 768), "1080p") == (1920, 1080)

@@ -2734,3 +2734,14 @@ def test_crash_report_dialog(app, tmp_path):
     dialog.copy()
     assert QGuiApplication.clipboard().text() == "trace du plantage"
     assert dialog.view.toPlainText() == "trace du plantage"
+
+
+def test_export_dialog_offers_project_size_for_free_format(window, tmp_path):
+    from montar.ui.dialogs.export import ExportDialog
+
+    editor = window.create_project(NewProjectParams("Libre", "custom", "1080p", 25,
+                                                    width=1366, height=768))
+    dialog = ExportDialog(editor.project, 50, None, tmp_path, parent=editor)
+    assert dialog.resolutions.current() == "project"
+    settings = dialog.settings()
+    assert (settings.width, settings.height) == (1366, 768)

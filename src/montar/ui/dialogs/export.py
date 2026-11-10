@@ -36,6 +36,7 @@ from montar.engine.export import (
     CODEC_LABELS,
     FORMAT_LABELS,
     IMAGE_FORMATS,
+    PROJECT_SIZE,
     QUALITIES,
     QUALITY_LABELS,
     RECOMMENDED_QUALITY,
@@ -59,8 +60,13 @@ def _safe_filename(name: str) -> str:
 
 
 def _resolution_for(project: Project) -> str:
+    """Résolution proposée : celle du projet ; « taille du projet » quand la toile n'a pas
+    une taille standard (format libre : 1366 × 768 sortait en 1280 × 720)."""
     short = min(project.canvas_size)
-    return min(RESOLUTIONS, key=lambda k: abs(RESOLUTIONS[k] - short))
+    standard = min(RESOLUTIONS, key=lambda k: abs(RESOLUTIONS[k] - short))
+    if export_size(project.canvas_size, standard) != project.canvas_size:
+        return PROJECT_SIZE
+    return standard
 
 
 class _Chips(QWidget):
@@ -234,7 +240,10 @@ class ExportDialog(QDialog):
         vl.setContentsMargins(0, 0, 0, 0)
         vl.setSpacing(8)
         vl.addWidget(label(_("Résolution")))
-        self.resolutions = _Chips([(k, k) for k in RESOLUTIONS], _resolution_for(project))
+        w, h = project.canvas_size
+        self.resolutions = _Chips(
+            [(PROJECT_SIZE, _("Projet · {w} × {h}").format(w=w, h=h)),
+             *((k, k) for k in RESOLUTIONS)], _resolution_for(project))
         self.resolutions.group.buttonClicked.connect(self._update)
         vl.addWidget(self.resolutions)
         ml.addWidget(self.video_box)
@@ -566,7 +575,7 @@ class ExportDialog(QDialog):
         if s.audio_only:
             output = self._label(s.format)
         else:
-            output = f"{self._label(s.format)} · {self.resolutions.current()}"
+            output = f"{self._label(s.format)} · {s.width} × {s.height}"
         self.summary_output.setText(output)
         start, end = self._range()
         frames = (end - start) if end else self.frames

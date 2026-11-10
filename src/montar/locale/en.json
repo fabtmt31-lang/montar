@@ -700,6 +700,7 @@
  "Position verticale": "Vertical position",
  "Prendre aussi sa fréquence : {fps} i/s (projet : {now} i/s)": "Also use its frame rate: {fps} fps (project: {now} fps)",
  "Projet": "Project",
+ "Projet · {w} × {h}": "Project · {w} × {h}",
  "Projets & sauvegarde": "Projects & saving",
  "Projets récents": "Recent projects",
  "Proxys pour les vidéos 4K": "Proxies for 4K videos",

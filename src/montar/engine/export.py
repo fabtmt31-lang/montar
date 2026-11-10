@@ -24,6 +24,7 @@ FORMAT_LABELS = {"mp4": "MP4", "mov": "MOV", "webm": "WebM", "gif": "GIF",
                  "mp3": "MP3", "wav": "WAV", "aac": "AAC", "png": "PNG", "jpg": "JPEG"}
 CODEC_LABELS = {"h264": "H.264", "h265": "H.265 (HEVC)", "vp9": "VP9", "gif": "GIF"}
 RESOLUTIONS = {"480p": 480, "720p": 720, "1080p": 1080, "4K": 2160}  # petit côté
+PROJECT_SIZE = "project"  # résolution « taille du projet » : la toile telle quelle
 QUALITIES = ("light", "balanced", "max")
 QUALITY_LABELS = {"light": "Légère", "balanced": "Équilibrée", "max": "Maximale"}
 RECOMMENDED_QUALITY = "balanced"
@@ -70,8 +71,11 @@ class ExportSettings:
 
 
 def export_size(canvas: tuple[int, int], resolution: str) -> tuple[int, int]:
-    """Taille de sortie au format de la toile, `resolution` étant le petit côté."""
+    """Taille de sortie au format de la toile, `resolution` étant le petit côté (ou
+    PROJECT_SIZE : la taille de la toile, utile pour un format libre comme 1366 × 768)."""
     w, h = canvas
+    if resolution == PROJECT_SIZE:
+        return _even(w), _even(h)
     short = RESOLUTIONS[resolution]
     if w >= h:
         return _even(short * w / h), short
