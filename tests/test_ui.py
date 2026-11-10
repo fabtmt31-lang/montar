@@ -2785,12 +2785,13 @@ def test_timeline_bar_labels_follow_width_and_clip_tooltip(window, media_dir):
     editor = imported_editor(window, media_dir, ["red.mp4"])
     editor.add_to_timeline(editor.project.media[0])
     panel = editor.timeline
-    panel.resize(1900, 300)
-    QApplication.processEvents()
+    # (la page impose sa largeur au panneau : on donne la largeur directement)
+    panel.fit_labels(1900)
     assert panel.split_button.text() == "Couper"
-    panel.resize(700, 300)
-    QApplication.processEvents()
+    panel.fit_labels(700)
     assert panel.split_button.text() == "" and panel.split_button.toolTip()
+    panel.fit_labels(1900)
+    assert panel.add_track_button.text() == "Piste"
     tip = panel.view.clip_tooltip(editor.project.clips[0])
     assert "red.mp4" in tip and "V1" in tip
 

@@ -150,11 +150,15 @@ class TimelinePanel(QFrame):
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
+        self.fit_labels(self.width())
+
+    def fit_labels(self, width: int) -> None:
+        """Libellés si la barre complète tient dans `width`, icônes seules sinon."""
         if not self._full_width:
             if not self._labelled:
                 self._show_labels(True)
             self._full_width = self._bar.sizeHint().width()
-        wide = self.width() >= self._full_width
+        wide = width >= self._full_width
         if wide != self._labelled:
             self._show_labels(wide)
 
