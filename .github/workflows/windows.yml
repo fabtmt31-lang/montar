@@ -69,6 +69,8 @@ jobs:
       - name: Dossier autonome (Python, Qt, MLT, FFmpeg et DLL)
         run: |
           bash scripts/windows/bundle.sh build/windows/montar
+      - name: Débogueur (pile native en cas de blocage)
+        run: pacman -S --noconfirm --needed mingw-w64-ucrt-x86_64-gdb || true
       - name: Essai du dossier autonome, sans MSYS2
         timeout-minutes: 25
         run: |
@@ -77,9 +79,15 @@ jobs:
           export PATH=/c/Windows/System32:/c/Windows:/c/Windows/System32/Wbem
           unset MLT_REPOSITORY MLT_DATA MLT_PROFILES_PATH FREI0R_PATH
           echo "::group::--version"; $T 60 "$B/bin/python.exe" -X utf8 -I -m montar --version; echo "::endgroup::"
-          # chaque module de MLT chargé seul : lequel bloque l'initialisation ?
-          echo "::group::modules MLT un par un"
-          $T 900 "$B/bin/python.exe" -X utf8 -I -u scripts/windows/probe_modules.py "$B/lib/mlt" 30 || true
+          # initialisation de MLT seule, pile native (gdb) au bout de 40 s si elle se bloque
+          echo "::group::pile native de l'initialisation de MLT"
+          "$B/bin/python.exe" -X utf8 -I -u -c "from montar.platform import windows; windows.prepare(); import mlt7; print('init', mlt7.Factory().init() is not None)" &
+          PID=$!
+          for i in $(seq 40); do kill -0 $PID 2>/dev/null || break; /usr/bin/sleep 1; done
+          if kill -0 $PID 2>/dev/null; then
+            /ucrt64/bin/gdb.exe -p "$(cat /proc/$PID/winpid)" -batch -ex "thread apply all bt 25" 2>&1 | /usr/bin/head -150 || true
+            kill -9 $PID || true
+          fi
           echo "::endgroup::"
           # sortie non tamponnée, et pile Python affichée si le diagnostic se bloque
           echo "::group::--diagnostic"
