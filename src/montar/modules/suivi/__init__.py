@@ -97,7 +97,7 @@ class TrackTool(Tool):
         fps = editor.fps
         start_rel = min(max(0, editor.playhead - clip.start), clip.duration - 1)
         seconds = (clip.source_in + start_rel * clip.speed) / fps
-        with tempfile.TemporaryDirectory(prefix="montar-suivi-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="montar-suivi-", ignore_cleanup_errors=True) as tmp:
             try:
                 still = extract_frame(media.path, seconds, Path(tmp) / "image.png")
             except FrameError as exc:

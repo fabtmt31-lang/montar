@@ -214,7 +214,7 @@ def transcribe_clip(source: str, source_in: int, frames: int, speed: float, fps:
     engine = backend()
     if engine is None:
         raise TranscriptionError(f"aucun moteur Whisper : {INSTALL_HINT}")
-    with tempfile.TemporaryDirectory(prefix="montar-whisper-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="montar-whisper-", ignore_cleanup_errors=True) as tmp:
         wav = Path(tmp) / "voix.wav"
         extract_audio(source, source_in / fps, frames * speed / fps, wav)
         progress(0.05)

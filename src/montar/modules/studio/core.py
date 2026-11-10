@@ -87,7 +87,7 @@ def stabilize(source: str, target: Path, strength: float, duration: float,
     smoothing = round(8 + 40 * strength)
     source = str(Path(source).resolve())
     target = target.resolve()
-    with tempfile.TemporaryDirectory(prefix="montar-stab-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="montar-stab-", ignore_cleanup_errors=True) as tmp:
         # fichier d'analyse nommé sans chemin (ffmpeg lancé dans le dossier temporaire) : un
         # chemin Windows (« C:\… ») casserait la syntaxe des filtres
         trf = "transforms.trf"
