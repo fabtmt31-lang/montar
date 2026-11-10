@@ -70,13 +70,15 @@ jobs:
         run: |
           bash scripts/windows/bundle.sh build/windows/montar
       - name: Essai du dossier autonome, sans MSYS2
+        timeout-minutes: 10
         run: |
           B=build/windows/montar
+          T=/usr/bin/timeout  # chaque commande bornée : un blocage dit où il est
           export PATH=/c/Windows/System32:/c/Windows:/c/Windows/System32/Wbem
           unset MLT_REPOSITORY MLT_DATA MLT_PROFILES_PATH FREI0R_PATH
-          "$B/bin/python.exe" -X utf8 -I -m montar --version
-          "$B/bin/python.exe" -X utf8 -I -m montar --diagnostic
-          MONTAR_PROTOTYPE_INSTALLED=1 "$B/bin/python.exe" -X utf8 -I scripts/windows/prototype.py \
+          echo "::group::--version"; $T 60 "$B/bin/python.exe" -X utf8 -I -m montar --version; echo "::endgroup::"
+          echo "::group::--diagnostic"; $T 120 "$B/bin/python.exe" -X utf8 -I -m montar --diagnostic; echo "::endgroup::"
+          MONTAR_PROTOTYPE_INSTALLED=1 $T 300 "$B/bin/python.exe" -X utf8 -I -u scripts/windows/prototype.py \
             prototype-windows/dossier-autonome
       - name: Installateur (Inno Setup)
         shell: pwsh

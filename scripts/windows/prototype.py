@@ -46,6 +46,7 @@ class Report:
         self.steps: list[dict] = []
 
     def step(self, name: str, fn):
+        print(f"[...] {name}", flush=True)  # en cas de blocage : l'étape en cours
         start = time.monotonic()
         entry = {"étape": name}
         try:
