@@ -70,13 +70,17 @@ jobs:
         run: |
           bash scripts/windows/bundle.sh build/windows/montar
       - name: Essai du dossier autonome, sans MSYS2
-        timeout-minutes: 10
+        timeout-minutes: 25
         run: |
           B=build/windows/montar
           T=/usr/bin/timeout  # chaque commande bornée : un blocage dit où il est
           export PATH=/c/Windows/System32:/c/Windows:/c/Windows/System32/Wbem
           unset MLT_REPOSITORY MLT_DATA MLT_PROFILES_PATH FREI0R_PATH
           echo "::group::--version"; $T 60 "$B/bin/python.exe" -X utf8 -I -m montar --version; echo "::endgroup::"
+          # chaque module de MLT chargé seul : lequel bloque l'initialisation ?
+          echo "::group::modules MLT un par un"
+          $T 900 "$B/bin/python.exe" -X utf8 -I -u scripts/windows/probe_modules.py "$B/lib/mlt" 30 || true
+          echo "::endgroup::"
           # sortie non tamponnée, et pile Python affichée si le diagnostic se bloque
           echo "::group::--diagnostic"
           $T 150 "$B/bin/python.exe" -X utf8 -I -u -c "import faulthandler, sys; faulthandler.dump_traceback_later(90, exit=True); from montar.app import main; sys.exit(main(['--diagnostic']))"
