@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
+import copy
+
 import pytest
 
 from montar.core.history import History
@@ -540,3 +542,35 @@ def test_replace_with_media(tl):
     assert tl.project.transitions == [out] and out.left_id == merged.id
     tl.sanitize()  # toujours valide : le clip unifié couvre la même durée
     assert tl.project.transitions == [out]
+
+
+def test_paste_keeps_spacing_and_finds_room():
+    p = Project("Coller", fps=25)
+    p.media = [MediaItem("/a.mp4", "video", duration=4.0, width=1920, height=1080, fps=25,
+                         id="a")]
+    tl = Timeline(p)
+    one = tl.add_clip(p.media[0])
+    two = tl.add_clip(p.media[0])
+    two.start = one.end + 25  # un écart d'une seconde
+    clipboard = [copy.deepcopy(one), copy.deepcopy(two)]
+    pasted = tl.paste(clipboard, 500)
+    assert [c.start for c in pasted] == [500, 625] and pasted[0].track_id == one.track_id
+    # la place est prise : nouvelle piste vidéo, mêmes écarts
+    again = tl.paste(clipboard, 500)
+    assert again[0].track_id != one.track_id and again[1].start - again[0].start == 125
+    assert {c.id for c in again}.isdisjoint({c.id for c in pasted})
+
+
+def test_paste_settings_copies_look_and_sound_only():
+    p = Project("Réglages", fps=25)
+    p.media = [MediaItem("/a.mp4", "video", duration=4.0, fps=25, id="a")]
+    tl = Timeline(p)
+    source = tl.add_clip(p.media[0])
+    target = tl.add_clip(p.media[0])
+    source.color.brightness = 0.4
+    source.preset = "sepia"
+    source.volume = 0.3
+    source.transform.scale = 2.0
+    tl.paste_settings(copy.deepcopy(source), [target.id])
+    assert target.color.brightness == 0.4 and target.preset == "sepia"
+    assert target.volume == 0.3 and target.transform.scale == 1.0

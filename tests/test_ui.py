@@ -2745,3 +2745,34 @@ def test_export_dialog_offers_project_size_for_free_format(window, tmp_path):
     assert dialog.resolutions.current() == "project"
     settings = dialog.settings()
     assert (settings.width, settings.height) == (1366, 768)
+
+
+@needs_ffmpeg
+def test_copy_paste_and_alt_drag(window, media_dir):
+    editor = imported_editor(window, media_dir, ["red.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    view = editor.timeline.view
+    view.snap = False
+    clip = editor.project.clips[0]
+    editor.controller.select(clip.id)
+    clip.color.brightness = 0.25
+    QTest.keyClick(window, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+    view.set_playhead(clip.end + 10)
+    QTest.keyClick(window, Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
+    assert len(editor.project.clips) == 2
+    pasted = editor.controller.selected_clip()
+    assert pasted.start == clip.end + 10 and pasted.id != clip.id
+    # coller les réglages sur un clip neutre
+    pasted.color.brightness = 0.0
+    QTest.keyClick(window, Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier
+                   | Qt.KeyboardModifier.ShiftModifier)
+    assert pasted.color.brightness == 0.25
+    # Alt + glisser : une copie, l'original ne bouge pas
+    rect = view.clip_rect(clip)
+    start = QPoint(int(rect.center().x()), int(rect.center().y()))
+    target = start + QPoint(int((editor.project.clips[1].end + 5 - clip.start) * view.ppf), 0)
+    drag(view.viewport(), start, target, Qt.KeyboardModifier.AltModifier)
+    assert len(editor.project.clips) == 3 and clip.start == 0
+    # Ctrl+X : retiré, puis recollé
+    QTest.keyClick(window, Qt.Key.Key_X, Qt.KeyboardModifier.ControlModifier)
+    assert len(editor.project.clips) == 2

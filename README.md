@@ -264,6 +264,9 @@ l'aperçu, effets **VHS** et **bande dessinée** refaits (option « Trait vivant
 - ajout d'un média par glisser-déposer depuis « Médias du projet » ou double-clic ;
 - déplacer un clip (y compris vers une autre piste), rogner ses bords, couper (S),
   supprimer (Suppr), supprimer en refermant l'espace (Maj+Suppr), dupliquer (Ctrl+D) ;
+- copier, couper, coller à la tête de lecture (Ctrl+C, Ctrl+X, Ctrl+V), Alt + glisser
+  pour déposer une copie, coller les réglages d'un clip sur d'autres (Ctrl+Maj+V :
+  couleur, filtres, effets, son) ;
 - aimantation aux bords des clips et à la tête de lecture, zoom (Ctrl + molette) ;
 - annuler / rétablir (Ctrl+Z, Ctrl+Maj+Z) ;
 - couper le son d'une piste, masquer une piste vidéo ;

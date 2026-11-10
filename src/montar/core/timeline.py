@@ -582,6 +582,69 @@ class Timeline:
         self.project.clips.append(copy_)
         return copy_
 
+    def _fits(self, track_id: str, spans: list[tuple[int, int]]) -> bool:
+        clips = self.clips_on(track_id)
+        return all(c.end <= start or c.start >= end for start, end in spans for c in clips)
+
+    def paste(self, clips: list[Clip], frame: int) -> list[Clip]:
+        """Colle des copies de clips (presse-papiers) : le plus tôt démarre à `frame`, les
+        écarts entre eux sont gardés. Chaque piste d'origine va sur elle-même si la place
+        est libre, sinon sur une autre piste du même type, sinon sur une nouvelle piste.
+        Les clips liés copiés ensemble restent liés entre eux."""
+        known = {t.id: t for t in self.project.tracks}
+        clips = [c for c in clips if c.is_text or self.project.find_media(c.media_id)]
+        if not clips:
+            return []
+        first = min(c.start for c in clips)
+        by_track: dict[str, list[Clip]] = {}
+        for c in clips:
+            by_track.setdefault(c.track_id, []).append(c)
+        order = {t.id: i for i, t in enumerate(self.project.tracks)}
+        # du bas vers le haut : une nouvelle piste vidéo se pose au-dessus de la précédente
+        sources = sorted(by_track, key=lambda tid: -order.get(tid, -1))
+        groups: dict[str, str] = {}
+        pasted: list[Clip] = []
+        used: set[str] = set()
+        for source in sources:
+            items = by_track[source]
+            kind = known[source].kind if source in known else (
+                "text" if items[0].is_text else
+                "audio" if self.project.find_media(items[0].media_id).kind == "audio"
+                else "video")
+            spans = [(frame + c.start - first, frame + c.start - first + c.duration)
+                     for c in items]
+            candidates = [source] if source in known else []
+            candidates += [t.id for t in self.project.tracks
+                           if t.kind == kind and t.id != source]
+            target = next((tid for tid in candidates if tid not in used
+                           and not self.track(tid).locked and self._fits(tid, spans)), None)
+            if target is None:
+                target = self.add_track(kind).id
+            used.add(target)
+            for c, (start, _end) in zip(items, spans, strict=True):
+                copy_ = copy.deepcopy(c)
+                copy_.id = new_id()
+                copy_.track_id = target
+                copy_.start = start
+                copy_.group = groups.setdefault(c.group, new_id()) if c.group else ""
+                self.project.clips.append(copy_)
+                pasted.append(copy_)
+        return pasted
+
+    SETTINGS = ("color", "preset", "preset_amount", "effects", "grade", "volume", "audio")
+
+    def paste_settings(self, source: Clip, clip_ids: list[str]) -> list[Clip]:
+        """Applique l'étalonnage, les filtres, les effets et le son de `source` aux clips."""
+        changed = []
+        for cid in dict.fromkeys(clip_ids):
+            clip = self.clip(cid)
+            if clip.id == source.id or self.track(clip.track_id).locked:
+                continue
+            for name in self.SETTINGS:
+                setattr(clip, name, copy.deepcopy(getattr(source, name)))
+            changed.append(clip)
+        return changed
+
     def _synced(self, clip: Clip) -> list[Clip]:
         """Clips liés qui jouent exactement en même temps que `clip` (même début, même
         durée) : l'écran et sa webcam changent de vitesse ou de sens ensemble."""

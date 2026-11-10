@@ -7,6 +7,7 @@ Ctrl + molette = zoom ; dépôt d'un média depuis le panneau Médias = nouveau 
 """
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -71,6 +72,7 @@ class _Drag:
     group: tuple[str, ...] = ()  # autres clips sélectionnés, déplacés avec celui-ci
     base: tuple[str, ...] = ()  # sélection de départ (rectangle avec Ctrl : on y ajoute)
     current: QPoint | None = None  # coin courant du rectangle de sélection
+    copy: bool = False  # Alt enfoncé : on dépose une copie, l'original reste en place
 
 
 def set_icon_action(action, name: str) -> None:
@@ -276,7 +278,8 @@ class TimelineView(QAbstractScrollArea):
             painter.fillRect(QRect(HEADER_W, r.bottom(), w, 1), QColor(p.border))
         dragged = self._drag.clip_id if self._drag and self._drag.mode in (
             "move", "start", "end") and self._drag.moved else None
-        hidden = {dragged, *self._drag.group} if dragged else set()
+        hidden = {dragged, *self._drag.group} if dragged and not (
+            self._drag.copy and self._drag.mode == "move") else set()
         for clip in sorted(self.controller.project.clips, key=lambda c: c.start):
             if clip.id in hidden:
                 continue
@@ -977,6 +980,10 @@ class TimelineView(QAbstractScrollArea):
         if not d.moved and (pos - d.press).manhattanLength() < 3:
             return
         d.moved = True
+        if d.mode == "move":
+            d.copy = bool(event.modifiers() & Qt.KeyboardModifier.AltModifier)
+            self.viewport().setCursor(Qt.CursorShape.DragCopyCursor if d.copy
+                                      else Qt.CursorShape.ClosedHandCursor)
         if d.mode == "box":
             d.current = pos
             self._select_in_box(d)
@@ -1054,7 +1061,9 @@ class TimelineView(QAbstractScrollArea):
             self.viewport().update()
             return
         clip_id = d.clip_id
-        if d.mode == "move" and d.group:
+        if d.mode == "move" and (d.copy or event.modifiers() & Qt.KeyboardModifier.AltModifier):
+            self._drop_copy(d)
+        elif d.mode == "move" and d.group:
             clip = self._find_clip(clip_id)
             delta = d.start - clip.start if clip is not None else 0
             ids = [clip_id, *d.group]
@@ -1072,6 +1081,48 @@ class TimelineView(QAbstractScrollArea):
             self.controller.edit(_("Rogner le clip"),
                                  lambda t: t.trim(clip_id, "end", d.start + d.duration))
         self.viewport().update()
+
+    def _drop_copy(self, d: _Drag) -> None:
+        """Alt + glisser : copie des clips déplacés, posée là où on les lâche."""
+        clip = self._find_clip(d.clip_id)
+        if clip is None:
+            return
+        timeline = self.controller.timeline
+        originals = [clip, *filter(None, map(self._find_clip, d.group))]
+        seen = {c.id for c in originals}
+        for c in list(originals):
+            for mate in timeline.group_of(c):
+                if mate.id not in seen:
+                    originals.append(mate)
+                    seen.add(mate.id)
+        copies = [copy.deepcopy(c) for c in originals]
+        if not d.group and d.insert_at is None and d.track_id:
+            copies[0].track_id = d.track_id  # un seul clip : la piste visée d'abord
+        at = min(c.start for c in originals) + d.start - clip.start
+        pasted = self.controller.edit(_("Dupliquer"), lambda t: t.paste(copies, at))
+        if pasted:
+            self.controller.select_many([c.id for c in pasted])
+
+    def _clipboard_actions(self, menu: QMenu, frame: int, clip: Clip | None) -> None:
+        controller = self.controller
+        if clip is not None:
+            menu.addAction(_("Copier (Ctrl+C)"), controller.copy_selection)
+            menu.addAction(_("Couper (Ctrl+X)"), lambda: controller.copy_selection() and
+                           controller.edit(_("Couper les clips"), lambda t: t.delete_many(
+                               [c.id for c in controller.clipboard])))
+        if controller.clipboard:
+            clips = controller.clipboard
+
+            def paste() -> None:
+                pasted = controller.edit(_("Coller"), lambda t: t.paste(clips, frame))
+                if pasted:
+                    controller.select_many([c.id for c in pasted])
+            menu.addAction(_("Coller ici (Ctrl+V)"), paste)
+        source = controller.settings_source
+        if clip is not None and source is not None and source.id != clip.id:
+            ids = [c.id for c in controller.selected_clips()]
+            menu.addAction(_("Coller les réglages (Ctrl+Maj+V)"), lambda: controller.edit(
+                _("Coller les réglages"), lambda t: t.paste_settings(source, ids)))
 
     def _select_in_box(self, d: _Drag) -> None:
         """Sélectionne les clips touchés par le rectangle (en plus de `d.base`)."""
@@ -1216,14 +1267,20 @@ class TimelineView(QAbstractScrollArea):
         else:
             hit = self.hit_test(pos)
             if hit is None:
+                if not self.controller.clipboard:
+                    return
+                self._clipboard_actions(menu, self.x_to_frame(pos.x()), None)
+                menu.exec(event.globalPos())
                 return
             clip_id = hit[0].id
-            self.controller.select(clip_id)
+            if not self.controller.is_selected(clip_id):
+                self.controller.select(clip_id)
             menu.addAction(_("Couper à la tête de lecture"), lambda: self.controller.edit(
                 _("Couper"), lambda t: t.split_at(self.playhead, clip_id)))
             linked = [c.id for c in self.controller.timeline.group_of(hit[0])]
             menu.addAction(_("Dupliquer"), lambda: self.controller.edit(
                 _("Dupliquer"), lambda t: t.duplicate_many(linked)))
+            self._clipboard_actions(menu, self.x_to_frame(pos.x()), hit[0])
             found = self.valid_range()
             if found is not None and found[0].id == clip_id:
                 menu.addAction(_("Isoler la sélection (couper aux deux bornes)"),

@@ -2,6 +2,7 @@
 """Point unique de modification du projet ouvert : historique, sélection, notifications."""
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable
 from typing import TypeVar
 
@@ -33,6 +34,9 @@ class EditorController(QObject):
         # tous les clips sélectionnés (Ctrl + clic, rectangle), le principal compris
         self.selection: list[str] = []
         self.selected_transition: str | None = None
+        # presse-papiers de la timeline (copies figées) et clip dont on colle les réglages
+        self.clipboard: list[Clip] = []
+        self.settings_source: Clip | None = None
         self.live = False
         self.live_preview = False
         self._live_pending = False
@@ -153,6 +157,21 @@ class EditorController(QObject):
         chosen = set(self.selection)
         return sorted((c for c in self.project.clips if c.id in chosen),
                       key=lambda c: (c.start, c.track_id))
+
+    def copy_selection(self) -> bool:
+        """Copie les clips sélectionnés (et ceux qui leur sont liés) ; le clip principal
+        devient la source de « Coller les réglages »."""
+        clips = self.selected_clips()
+        if not clips:
+            return False
+        ids = {c.id for c in clips}
+        for c in list(clips):
+            clips += [m for m in self.timeline.group_of(c) if m.id not in ids]
+            ids |= {m.id for m in self.timeline.group_of(c)}
+        self.clipboard = [copy.deepcopy(c) for c in clips]
+        main = self.selected_clip() or clips[0]
+        self.settings_source = copy.deepcopy(main)
+        return True
 
     def select_transition(self, transition_id: str | None) -> None:
         if transition_id is not None:

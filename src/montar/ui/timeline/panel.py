@@ -192,6 +192,32 @@ class TimelinePanel(QFrame):
         if copies:
             self.controller.select_many([c.id for c in copies])
 
+    def copy(self) -> None:
+        self.controller.copy_selection()
+
+    def cut(self) -> None:
+        if self.controller.copy_selection():
+            ids = [c.id for c in self.controller.clipboard]
+            self.controller.edit(_("Couper les clips"),
+                                 lambda t: t.delete_many(ids))
+
+    def paste(self, frame: int | None = None) -> None:
+        clips = self.controller.clipboard
+        if not clips:
+            return
+        at = self.view.playhead if frame is None else frame
+        pasted = self.controller.edit(_("Coller"), lambda t: t.paste(clips, at))
+        if pasted:
+            self.controller.select_many([c.id for c in pasted])
+
+    def paste_settings(self) -> None:
+        source = self.controller.settings_source
+        ids = [c.id for c in self.controller.selected_clips()]
+        if source is None or not ids:
+            return
+        self.controller.edit(_("Coller les réglages"),
+                             lambda t: t.paste_settings(source, ids))
+
     def merge(self) -> None:
         if len(self.controller.selection) > 1:
             self.mergeRequested.emit()
