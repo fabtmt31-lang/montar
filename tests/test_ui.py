@@ -2776,3 +2776,18 @@ def test_copy_paste_and_alt_drag(window, media_dir):
     # Ctrl+X : retiré, puis recollé
     QTest.keyClick(window, Qt.Key.Key_X, Qt.KeyboardModifier.ControlModifier)
     assert len(editor.project.clips) == 2
+
+
+@needs_ffmpeg
+def test_timeline_bar_labels_follow_width_and_clip_tooltip(window, media_dir):
+    editor = imported_editor(window, media_dir, ["red.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    panel = editor.timeline
+    panel.resize(1900, 300)
+    QApplication.processEvents()
+    assert panel.split_button.text() == "Couper"
+    panel.resize(700, 300)
+    QApplication.processEvents()
+    assert panel.split_button.text() == "" and panel.split_button.toolTip()
+    tip = panel.view.clip_tooltip(editor.project.clips[0])
+    assert "red.mp4" in tip and "V1" in tip

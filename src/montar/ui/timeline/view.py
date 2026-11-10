@@ -8,6 +8,7 @@ Ctrl + molette = zoom ; dépôt d'un média depuis le panneau Médias = nouveau 
 from __future__ import annotations
 
 import copy
+import html
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -30,6 +31,7 @@ from PyQt6.QtWidgets import QAbstractScrollArea, QApplication, QInputDialog, QMe
 
 from montar.core import keyframes
 from montar.core.project import Clip, Marker, MediaItem, Track
+from montar.core.timecode import seconds_to_short
 from montar.i18n import _
 from montar.media.waveform import PEAKS_PER_SECOND
 from montar.ui.editor.controller import EditorController
@@ -75,6 +77,9 @@ class _Drag:
     copy: bool = False  # Alt enfoncé : on dépose une copie, l'original reste en place
 
 
+LINK_GOLD = "#D4A23A"  # trait des clips liés, lisible sur les deux thèmes
+
+
 def set_icon_action(action, name: str) -> None:
     action.setIcon(theme().icon(name, theme().palette.forest))
 
@@ -99,6 +104,8 @@ class TimelineView(QAbstractScrollArea):
         self.playhead = 0
         self.snap = True
         self._drag: _Drag | None = None
+        self._hover_clip: str | None = None  # clip dont l'info-bulle est montrée
+        self._fitted = False  # zoom « tout voir » fait à la première mise en page
         self._drop: tuple[str | None, int, int, str] | None = None  # piste, début, durée, type
         self._junction: tuple[Clip, Clip] | None = None  # jonction visée par une transition
         # Plage marquée avec I / O sur un clip : (clip, début, fin) en images de timeline
@@ -192,6 +199,11 @@ class TimelineView(QAbstractScrollArea):
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
+        if not self._fitted and self.viewport().width() > HEADER_W + 200:
+            # ouverture d'un projet : tout le montage d'un coup d'œil
+            self._fitted = True
+            if self.controller.project.clips:
+                self.zoom_to_fit()
         self._update_scrollbars()
 
     def scrollContentsBy(self, dx: int, dy: int) -> None:  # noqa: N802
@@ -286,6 +298,7 @@ class TimelineView(QAbstractScrollArea):
             rect = self.clip_rect(clip)
             if rect is not None and rect.right() >= HEADER_W and rect.left() <= w:
                 self._paint_clip(painter, clip, rect, self.controller.is_selected(clip.id))
+        self._paint_links(painter, hidden)
         for transition in self.controller.project.transitions:
             self._paint_transition(painter, transition)
         hatch = QColor(p.ink)
@@ -366,6 +379,49 @@ class TimelineView(QAbstractScrollArea):
             first = self.controller.timeline.first_track("audio")
             return p.pistachio if first is not None and first.id == track.id else p.voiceover
         return p.mint
+
+    def _paint_links(self, painter: QPainter, hidden: set) -> None:
+        """Trait doré entre les clips liés (écran et webcam d'un enregistrement), à leur
+        bord gauche commun : on voit qu'ils bougent ensemble."""
+        groups: dict[str, list[QRectF]] = {}
+        for clip in self.controller.project.clips:
+            if clip.group and clip.id not in hidden:
+                rect = self.clip_rect(clip)
+                if rect is not None:
+                    groups.setdefault(clip.group, []).append(rect)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        gold = QColor(LINK_GOLD)
+        for rects in groups.values():
+            if len(rects) < 2:
+                continue
+            rects.sort(key=lambda r: r.top())
+            x = max(r.left() for r in rects) + 7
+            painter.setPen(QPen(gold, 2))
+            for upper, lower in zip(rects, rects[1:], strict=False):
+                painter.drawLine(QPointF(x, upper.bottom() - 4), QPointF(x, lower.top() + 4))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(gold)
+            for r in rects:
+                painter.drawEllipse(QPointF(x, r.bottom() - 4 if r is rects[0]
+                                            else r.top() + 4), 3, 3)
+        painter.restore()
+
+    def clip_tooltip(self, clip: Clip) -> str:
+        """Nom, durée et piste du clip survolé."""
+        media = self.controller.project.find_media(clip.media_id)
+        if clip.is_text:
+            name = clip.text.content.replace("\n", " ")[:40] or _("Texte")
+        else:
+            name = media.name if media is not None else _("Clip")
+        track = self.controller.timeline.track_labels().get(clip.track_id, "")
+        lines = [f"<b>{html.escape(name)}</b>",
+                 f"{seconds_to_short(clip.duration / self.fps)} · {track}"]
+        if clip.speed != 1.0:
+            lines[1] += f" · ×{clip.speed:g}"
+        if clip.group:
+            lines.append(_("Lié à la webcam de l'enregistrement"))
+        return "<br>".join(lines)
 
     def _paint_clip(self, painter: QPainter, clip: Clip, rect: QRectF, selected: bool,
                     ghost: bool = False) -> None:
@@ -1196,6 +1252,14 @@ class TimelineView(QAbstractScrollArea):
             self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
         else:
             self.viewport().setCursor(Qt.CursorShape.SizeHorCursor)
+        if hit is None:
+            if self._hover_clip is not None:
+                self._hover_clip = None
+                QToolTip.hideText()
+        elif hit[0].id != self._hover_clip:
+            self._hover_clip = hit[0].id
+            QToolTip.showText(self.viewport().mapToGlobal(pos), self.clip_tooltip(hit[0]),
+                              self.viewport())
 
     def _toggle_track(self, track: Track, key: str) -> None:
         track_id = track.id

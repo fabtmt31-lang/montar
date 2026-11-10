@@ -16,6 +16,13 @@ from montar.ui.widgets import button, set_icon
 _SLIDER_STEPS = 1000
 
 
+def _separator() -> QFrame:
+    line = QFrame()
+    line.setObjectName("Separator")
+    line.setFixedSize(1, 20)
+    return line
+
+
 class TimelinePanel(QFrame):
     voiceOverRequested = pyqtSignal()
     mergeRequested = pyqtSignal()  # unifier les clips sélectionnés (rendu par la page)
@@ -37,6 +44,8 @@ class TimelinePanel(QFrame):
         bl = QHBoxLayout(bar)
         bl.setContentsMargins(12, 6, 16, 6)
         bl.setSpacing(4)
+        # trois groupes : actions sur les clips | repères | ajouter ; libellés affichés
+        # seulement quand la largeur le permet (sinon icônes seules, info-bulles gardées)
         self.split_button = button("", "ghost", "scissors", tooltip=_("Couper (S)"))
         self.delete_button = button("", "ghost", "trash-2", tooltip=_("Supprimer (Suppr)"))
         self.duplicate_button = button("", "ghost", "copy", tooltip=_("Dupliquer (Ctrl+D)"))
@@ -47,41 +56,54 @@ class TimelinePanel(QFrame):
         self.delete_button.clicked.connect(lambda: self.delete(ripple=False))
         self.duplicate_button.clicked.connect(self.duplicate)
         self.merge_button.clicked.connect(self.merge)
-        for b in (self.split_button, self.delete_button, self.duplicate_button,
-                  self.merge_button):
-            bl.addWidget(b)
-        bl.addSpacing(8)
         self.range_button = button("", "ghost", "brackets", tooltip=_(
             "Sélectionner une partie d'un clip en glissant (ou Maj + glisser, ou I / O)"))
         self.range_button.setCheckable(True)
         self.range_button.setProperty("variant", "toggle")
         self.range_button.toggled.connect(self._set_range_tool)
-        self.isolate_button = button(_("Isoler"), "ghost", "square-split-horizontal",
+        self.isolate_button = button("", "ghost", "square-split-horizontal",
                                      tooltip=_("Couper le clip aux bornes de la sélection"))
-        bl.addWidget(self.range_button)
-        bl.addWidget(self.isolate_button)
-        bl.addSpacing(8)
-        self.magnet = button("", "ghost", "magnet", tooltip=_("Magnétisme"))
-        self.magnet.setCheckable(True)
-        self.magnet.setChecked(True)
-        self.magnet.setProperty("variant", "toggle")
-        self.magnet.toggled.connect(self._set_snap)
-        bl.addWidget(self.magnet)
         self.marker_button = button("", "ghost", "bookmark",
                                     tooltip=_("Ajouter / retirer un marqueur (M) — Ctrl+← / "
                                               "Ctrl+→ : marqueur précédent / suivant"))
         self.marker_button.clicked.connect(self.toggle_marker)
         self.voice_button = button("", "ghost", "mic", tooltip=_("Enregistrer une voix off"))
         self.voice_button.clicked.connect(self.voiceOverRequested)
-        bl.addWidget(self.marker_button)
-        bl.addWidget(self.voice_button)
-        add_track = button(_("Piste"), "ghost", "list-plus", tooltip=_("Ajouter une piste"))
+        add_track = button("", "ghost", "list-plus", tooltip=_("Ajouter une piste"))
         menu = QMenu(add_track)
         menu.addAction(_("Piste vidéo"), lambda: self._add_track("video"))
         menu.addAction(_("Piste audio"), lambda: self._add_track("audio"))
         add_track.setMenu(menu)
-        bl.addWidget(add_track)
+        self.add_track_button = add_track
+        self._labels = [
+            (self.split_button, _("Couper")), (self.delete_button, _("Supprimer")),
+            (self.duplicate_button, _("Dupliquer")), (self.merge_button, _("Unifier")),
+            (self.range_button, _("Plage")), (self.isolate_button, _("Isoler")),
+            (self.marker_button, _("Marqueur")), (self.voice_button, _("Voix off")),
+            (add_track, _("Piste")),
+        ]
+        groups = ((self.split_button, self.delete_button, self.duplicate_button,
+                   self.merge_button),
+                  (self.range_button, self.isolate_button, self.marker_button),
+                  (self.voice_button, add_track))
+        for i, group in enumerate(groups):
+            if i:
+                bl.addSpacing(6)
+                bl.addWidget(_separator())
+                bl.addSpacing(6)
+            for b in group:
+                bl.addWidget(b)
+        self._labelled = True
+        self._full_width = 0  # largeur de la barre avec les libellés
+        self._bar = bar
         bl.addStretch()
+        self.magnet = button("", "ghost", "magnet", tooltip=_("Magnétisme"))
+        self.magnet.setCheckable(True)
+        self.magnet.setChecked(True)
+        self.magnet.setProperty("variant", "toggle")
+        self.magnet.toggled.connect(self._set_snap)
+        bl.addWidget(self.magnet)
+        bl.addSpacing(4)
         zoom_out = button("", "ghost", "zoom-out", tooltip=_("Dézoomer (Ctrl + molette)"))
         zoom_in = button("", "ghost", "zoom-in", tooltip=_("Zoomer (Ctrl + molette)"))
         fit = button("", "ghost", "move-horizontal", tooltip=_("Ajuster à la fenêtre"))
@@ -118,6 +140,23 @@ class TimelinePanel(QFrame):
         controller.changed.connect(self._update_buttons)
         self._sync_slider(self.view.pps)
         self._update_buttons()
+        self._show_labels(True)
+
+    def _show_labels(self, on: bool) -> None:
+        self._labelled = on
+        for b, text in self._labels:
+            b.setText(text if on else "")
+            b.setProperty("labelled", on)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if not self._full_width:
+            if not self._labelled:
+                self._show_labels(True)
+            self._full_width = self._bar.sizeHint().width()
+        wide = self.width() >= self._full_width
+        if wide != self._labelled:
+            self._show_labels(wide)
 
     def _maximize_toggled(self, on: bool) -> None:
         set_icon(self.maximize_button, "minimize" if on else "maximize", "ink", 20)
