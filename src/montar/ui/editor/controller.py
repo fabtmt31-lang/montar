@@ -23,6 +23,8 @@ class EditorController(QObject):
     selectionChanged = pyqtSignal(object)  # identifiant du clip sélectionné ou None
     transitionSelected = pyqtSignal(object)  # identifiant de la transition ou None
     historyChanged = pyqtSignal()
+    undone = pyqtSignal(str)  # libellé de l'action annulée
+    redone = pyqtSignal(str)
     error = pyqtSignal(str)
 
     def __init__(self, project: Project, parent: QObject | None = None) -> None:
@@ -79,12 +81,16 @@ class EditorController(QObject):
         self.edit(label, lambda t: change(t.clip(clip_id)), merge)
 
     def undo(self) -> None:
-        if self.history.undo(self.project) is not None:
+        label = self.history.undo(self.project)
+        if label is not None:
             self._after_change()
+            self.undone.emit(label)
 
     def redo(self) -> None:
-        if self.history.redo(self.project) is not None:
+        label = self.history.redo(self.project)
+        if label is not None:
             self._after_change()
+            self.redone.emit(label)
 
     def _after_change(self) -> None:
         ids = {c.id for c in self.project.clips}

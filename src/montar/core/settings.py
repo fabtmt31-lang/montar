@@ -39,6 +39,7 @@ class Settings:
     catalog_url: str = ""  # vide : adresse par défaut (montar.core.catalog.DEFAULT_URL)
     side_width: int = 320  # largeur du volet de gauche de l'éditeur (réglée à la souris)
     inspector_width: int = 360  # largeur de l'inspecteur
+    tour_done: bool = False  # visite guidée de l'écran de montage déjà faite ou passée
 
     @property
     def projects_path(self) -> Path:

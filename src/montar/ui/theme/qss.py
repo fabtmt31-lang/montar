@@ -30,6 +30,10 @@ QLabel[role="section"] {{ color: {text_muted}; font-size: 12px; font-weight: 700
                          letter-spacing: 1px; }}
 QLabel[role="mono"], QLineEdit[role="mono"] {{ font-family: "{mono}"; }}
 QLabel[role="logo"] {{ font-size: 22px; font-weight: 800; }}
+QLabel[role="kbd"] {{ background: {mist}; font-family: "{mono}"; font-size: 12px;
+                     border-radius: 6px; padding: 2px 8px; }}
+QLabel[role="pill"] {{ font-size: 12px; font-weight: 600; border-radius: 10px;
+                      padding: 2px 10px; }}
 QLabel[role="badge"] {{ background: {badge_bg}; color: #FFFFFF; font-family: "{mono}";
                        font-size: 11px; border-radius: 4px; padding: 1px 5px; }}
 

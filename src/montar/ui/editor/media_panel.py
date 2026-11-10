@@ -171,7 +171,7 @@ class MediaPanel(QFrame):
         self.missing_box.setVisible(False)
         layout.addWidget(self.missing_box)
 
-        imp = button(_("Importer des fichiers"), "dashed", "plus")
+        self.import_button = imp = button(_("Importer des fichiers"), "dashed", "plus")
         imp.clicked.connect(self.importRequested)
         layout.addWidget(imp)
         lib = button(_("Médiathèque…"), "ghost", "library",

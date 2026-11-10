@@ -42,6 +42,7 @@ ACTIONS: tuple[tuple[str, str], ...] = (
     ("marker", N_("Marqueur")),
     ("previous_marker", N_("Marqueur précédent")),
     ("next_marker", N_("Marqueur suivant")),
+    ("shortcuts_help", N_("Fiche des raccourcis")),
 )
 # touches par défaut (appel à dict : ces noms de touches ne sont pas à traduire)
 DEFAULT_KEYS: dict[str, str] = dict(
@@ -77,6 +78,7 @@ DEFAULT_KEYS: dict[str, str] = dict(
     marker="M",
     previous_marker="Ctrl+Left",
     next_marker="Ctrl+Right",
+    shortcuts_help="?",
 )
 # variantes gardées tant que l'action n'est pas personnalisée
 ALIASES: dict[str, tuple[str, ...]] = dict(
@@ -84,6 +86,7 @@ ALIASES: dict[str, tuple[str, ...]] = dict(
     delete=("Backspace",),
     redo=("Ctrl+Y",),
     zoom_in=("Ctrl+=",),
+    shortcuts_help=("Shift+?", "F1"),
 )
 IDS = tuple(a[0] for a in ACTIONS)
 

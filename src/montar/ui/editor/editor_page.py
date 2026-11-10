@@ -87,6 +87,7 @@ from montar.ui.editor.busy import BusyOverlay, remaining_text
 from montar.ui.editor.controller import EditorController
 from montar.ui.editor.finition import FinitionDialog
 from montar.ui.editor.graphics_panel import ElementsPanel
+from montar.ui.editor.guidance import TOUR_STEPS, ShortcutsSheet, Toast, Tour
 from montar.ui.editor.importer import MediaImporter
 from montar.ui.editor.inspector import INSPECTOR_MIN_WIDTH, INSPECTOR_WIDTH, Inspector
 from montar.ui.editor.media_panel import MediaPanel
@@ -109,7 +110,7 @@ from montar.ui.text_render import image_path as text_image_path
 from montar.ui.text_render import preset_style, text_bounds, typing_sequence
 from montar.ui.timeline.panel import TimelinePanel
 from montar.ui.timeline.window import TimelineWindow
-from montar.ui.widgets import LogoMark, button, label, set_icon
+from montar.ui.widgets import button, label, set_icon
 
 log = logging.getLogger(__name__)
 
@@ -178,6 +179,7 @@ def media_file_filter() -> str:
 
 class EditorPage(QWidget):
     backRequested = pyqtSignal()
+    tourFinished = pyqtSignal()  # visite guidée terminée ou passée
     panesResized = pyqtSignal(int, int)  # largeurs du volet de gauche et de l'inspecteur
     saved = pyqtSignal(object)  # Path
     exportFinished = pyqtSignal(str)  # erreur (vide si réussite)
@@ -347,6 +349,12 @@ class EditorPage(QWidget):
         self.preview.canvas.drag_images = self._drag_images
         self._drag_origin: tuple | None = None
         self.controller.historyChanged.connect(self._update_history_buttons)
+        self.toast = Toast(self)
+        self._tour: Tour | None = None
+        self.controller.undone.connect(
+            lambda name: self.toast.show_message(_("Annulé : {action}").format(action=name)))
+        self.controller.redone.connect(
+            lambda name: self.toast.show_message(_("Rétabli : {action}").format(action=name)))
         self.controller.error.connect(
             lambda msg: QMessageBox.information(self, _("Action impossible"), _(msg)))
         self.timeline.view.seekRequested.connect(self.player.seek)
@@ -426,18 +434,12 @@ class EditorPage(QWidget):
         layout.setContentsMargins(16, 0, 16, 0)
         layout.setSpacing(8)
 
-        home = QToolButton()
-        home.setProperty("variant", "ghost")
-        home.setToolTip(_("Retour à l'accueil"))
-        home.setCursor(Qt.CursorShape.PointingHandCursor)
-        home.setFixedSize(40, 40)
-        hl = QHBoxLayout(home)
-        hl.setContentsMargins(3, 3, 3, 3)
-        mark = LogoMark(34)
-        mark.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        hl.addWidget(mark)
+        home = button(_("Projets"), "ghost", "arrow-left", tooltip=_("Retour à l'accueil"))
+        home.setMinimumHeight(40)
         home.clicked.connect(self.backRequested)
+        self.home_button = home
         layout.addWidget(home)
+        layout.addSpacing(4)
 
         titles = QVBoxLayout()
         titles.setSpacing(0)
@@ -450,6 +452,9 @@ class EditorPage(QWidget):
         titles.addWidget(self.title_edit)
         titles.addWidget(self.status_label)
         layout.addLayout(titles)
+        self.save_pill = label("", "pill")
+        self.save_pill.setToolTip(_("Le projet s'enregistre à chaque modification"))
+        layout.addWidget(self.save_pill, 0, Qt.AlignmentFlag.AlignVCenter)
         self.jobs_box = QWidget()
         jl = QHBoxLayout(self.jobs_box)
         jl.setContentsMargins(12, 0, 0, 0)
@@ -489,6 +494,9 @@ class EditorPage(QWidget):
         menu.addAction(_("Enregistrer sous…"), self.save_as)
         menu.addAction(_("Enregistrer comme modèle…"), self.save_as_template)
         menu.addAction(_("Ouvrir le dossier du projet"), self._open_project_folder)
+        menu.addSeparator()
+        menu.addAction(_("Raccourcis clavier (?)"), self.show_shortcuts)
+        menu.addAction(_("Revoir la visite guidée"), self.start_tour)
         self.project_button.setMenu(menu)
         layout.addWidget(self.project_button)
         layout.addStretch(1)
@@ -565,6 +573,7 @@ class EditorPage(QWidget):
             "marker": tl.toggle_marker,
             "previous_marker": lambda: tl.go_to_marker(-1),
             "next_marker": lambda: tl.go_to_marker(1),
+            "shortcuts_help": self.show_shortcuts,
         }
 
     def apply_shortcuts(self, overrides: dict[str, str]) -> None:
@@ -761,8 +770,47 @@ class EditorPage(QWidget):
     def _refresh_header(self) -> None:
         w, h = self.project.canvas_size
         self.title_edit.setText(self.project.name)
-        self.status_label.setText(_("Enregistré · {w}×{h} · {fps} i/s").format(
+        self.status_label.setText(_("{w}×{h} · {fps} i/s").format(
             w=w, h=h, fps=self.project.fps))
+        self._set_pill("saved")
+
+    def _set_pill(self, state: str) -> None:
+        """Pastille d'état : enregistré (vert), en cours d'écriture ou modifié (orange)."""
+        text, color = {
+            "saved": (_("● Enregistré"), "#2F7A56"),
+            "saving": (_("● Enregistrement…"), "#D9822B"),
+            "dirty": (_("● Modifié — Ctrl+S"), "#D9822B"),
+        }[state]
+        self.save_pill.setText(text)
+        self.save_pill.setStyleSheet(f"QLabel {{ color: {color}; }}")
+        self.save_pill.setProperty("state", state)
+
+    def show_shortcuts(self) -> None:
+        ShortcutsSheet(getattr(self, "_shortcut_overrides", {}), self).exec()
+
+    def start_tour(self) -> Tour:
+        """Visite guidée : importer, glisser sur la timeline, exporter."""
+        if self._tour is not None:
+            self._tour.close_tour()
+        targets = (lambda: self.media_panel.import_button,
+                   lambda: self.timeline.view,
+                   lambda: self.export_button)
+        steps = [(t, title, text)
+                 for t, (title, text) in zip(targets, TOUR_STEPS, strict=True)]
+        self.show_side("media")
+        self._tour = Tour(self, steps)
+        self._tour.finished.connect(self._tour_finished)
+        self._tour.start()
+        return self._tour
+
+    def _tour_finished(self) -> None:
+        self._tour = None
+        self.tourFinished.emit()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if self._tour is not None:
+            self._tour.reposition()
 
     def _update_history_buttons(self) -> None:
         history = self.controller.history
@@ -783,11 +831,10 @@ class EditorPage(QWidget):
             self.title_edit.setText(self.project.name)
 
     def mark_dirty(self) -> None:
-        self.status_label.setText(self.status_label.text().replace(
-            _("Enregistré"), _("Modifié"), 1))
         self._dirty = True
         if self.autosave:
             self._save_timer.start()
+        self._set_pill("saving" if self.autosave else "dirty")
 
     def save_as(self) -> None:
         name, ok = QInputDialog.getText(self, _("Enregistrer sous"),

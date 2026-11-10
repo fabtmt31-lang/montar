@@ -43,7 +43,7 @@ def window(app, isolated_home, monkeypatch):
 
     for name in ("warning", "information"):
         monkeypatch.setattr(QMessageBox, name, staticmethod(lambda *a, **k: None))
-    w = MainWindow(Settings(), isolated_home / ".config/montar/settings.json")
+    w = MainWindow(Settings(tour_done=True), isolated_home / ".config/montar/settings.json")
     w.show()
     yield w
     w.close()
@@ -1352,7 +1352,8 @@ def test_english_interface(app, isolated_home, monkeypatch):
         monkeypatch.setattr(QMessageBox, name, staticmethod(lambda *a, **k: None))
     i18n.set_language("en")
     try:
-        w = MainWindow(Settings(language="en"), isolated_home / ".config/montar/settings.json")
+        w = MainWindow(Settings(language="en", tour_done=True),
+                       isolated_home / ".config/montar/settings.json")
         w.show()
         editor = w.create_project(NewProjectParams("Movie", "16:9", "720p", 25))
         assert editor.export_button.text() == "Export"
@@ -2392,7 +2393,8 @@ def test_occitan_interface(app, isolated_home, monkeypatch):
     assert i18n.LANGUAGES["oc"] == "Occitan"
     i18n.set_language("oc")
     try:
-        w = MainWindow(Settings(language="oc"), isolated_home / ".config/montar/settings.json")
+        w = MainWindow(Settings(language="oc", tour_done=True),
+                       isolated_home / ".config/montar/settings.json")
         w.show()
         editor = w.create_project(NewProjectParams("Filme", "16:9", "720p", 25))
         assert editor.export_button.text() == "Exportar"
@@ -2791,3 +2793,40 @@ def test_timeline_bar_labels_follow_width_and_clip_tooltip(window, media_dir):
     assert panel.split_button.text() == "" and panel.split_button.toolTip()
     tip = panel.view.clip_tooltip(editor.project.clips[0])
     assert "red.mp4" in tip and "V1" in tip
+
+
+def test_guided_tour_shortcuts_sheet_undo_toast_and_save_pill(app, isolated_home,
+                                                               monkeypatch):
+    from montar.ui.editor.guidance import ShortcutsSheet
+    from montar.ui.main_window import MainWindow
+
+    settings_file = isolated_home / ".config/montar/settings.json"
+    w = MainWindow(Settings(), settings_file)
+    w.show()
+    try:
+        editor = w.create_project(NewProjectParams("Visite", "16:9", "720p", 25))
+        assert wait_until(lambda: editor._tour is not None)
+        tour = editor._tour
+        assert tour.bubble.isVisible() and tour.bubble.next.text() == "Suivant"
+        tour.advance()
+        tour.advance()
+        assert tour.bubble.next.text() == "C'est parti"
+        tour.advance()
+        assert editor._tour is None and w.settings.tour_done
+        assert Settings.load(settings_file).tour_done
+        # fiche des raccourcis : touches personnalisées reprises
+        sheet = ShortcutsSheet({"split": "X"}, editor)
+        assert sheet.rows["split"].text() == "X" and sheet.rows["paste"].text() == "Ctrl+V"
+        assert sheet.rows["ripple_delete"].text() == "Maj+Suppr"
+        sheet.deleteLater()
+        # « ← Projets », pastille et toast d'annulation
+        assert editor.home_button.text() == "Projets"
+        assert editor.save_pill.property("state") == "saved"
+        editor.controller.edit("Ajouter une piste", lambda t: t.add_track("video"))
+        assert editor.save_pill.property("state") in ("saving", "saved")
+        editor.controller.undo()
+        assert editor.toast.isVisible() and editor.toast.text() == "Annulé : Ajouter une piste"
+    finally:
+        w.close()
+        w.deleteLater()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)

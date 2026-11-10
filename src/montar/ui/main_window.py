@@ -256,7 +256,18 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(editor)
         self.stack.setCurrentWidget(editor)
         self.setWindowTitle(f"{project.name} — montar")
+        editor.tourFinished.connect(self._tour_done)
+        if not self.settings.tour_done:  # première ouverture de l'écran de montage
+            QTimer.singleShot(500, lambda: self.editor is editor and editor.start_tour())
         return editor
+
+    def _tour_done(self) -> None:
+        if not self.settings.tour_done:
+            self.settings.tour_done = True
+            try:
+                self.settings.save(self._settings_file)
+            except OSError as exc:
+                log.warning("préférences non enregistrées : %s", exc)
 
     def save_project_as(self, name: str) -> EditorPage | None:
         """Copie complète du projet ouvert sous un autre nom, puis ouverture de la copie."""
