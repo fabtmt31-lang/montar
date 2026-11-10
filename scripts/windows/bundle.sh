@@ -72,6 +72,9 @@ done
 cp -r "$P/share/mlt" "$out/share/"
 [ -d "$P/lib/frei0r-1" ] && cp -r "$P/lib/frei0r-1" "$out/lib/"
 cp "$P"/bin/ffmpeg.exe "$P"/bin/ffprobe.exe "$out/bin/"
+# SDL2.dll de MSYS2 est « sdl2-compat » : il charge SDL3.dll à la volée (invisible pour la
+# recherche des dépendances) et, sans elle, ouvre une boîte d'erreur qui fige MLT au démarrage
+[ -e "$P/bin/SDL3.dll" ] && cp "$P/bin/SDL3.dll" "$out/bin/"
 [ -d "$P/etc/fonts" ] && mkdir -p "$out/etc" && cp -r "$P/etc/fonts" "$out/etc/"
 
 echo "== Lanceur montar.exe (Python chargé dans le processus de montar)"
