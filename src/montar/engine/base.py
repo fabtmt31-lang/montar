@@ -318,6 +318,11 @@ class AudioOutput(ABC):
     def set_volume(self, volume: float) -> None:  # noqa: B027
         """Niveau d'écoute (0 = muet, 1 = normal) ; n'affecte pas l'export."""
 
+    def levels(self) -> tuple[float, float]:
+        """Niveaux gauche et droite du son mixé qui vient d'être lu (échelle IEC, 0 à 1),
+        avant le volume d'écoute."""
+        return 0.0, 0.0
+
     def close(self) -> None:  # noqa: B027
         pass
 

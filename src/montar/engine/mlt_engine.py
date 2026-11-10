@@ -850,6 +850,13 @@ class MltAudioOutput(AudioOutput):
         consumer.set("frequency", AUDIO_FREQUENCY)
         consumer.set("channels", AUDIO_CHANNELS)
         consumer.set("real_time", 1)
+        # vu-mètre : le filtre garde sur lui les niveaux du dernier son produit
+        self._meter = mlt.Filter(self._graph.profile, "audiolevel")
+        if self._meter is not None and self._meter.is_valid():
+            self._meter.set("iec_scale", 1)
+            self._graph.tractor.attach(self._meter)
+        else:
+            self._meter = None
         consumer.connect(self._graph.tractor)
         self._consumer = consumer
 
@@ -878,10 +885,19 @@ class MltAudioOutput(AudioOutput):
     def set_volume(self, volume: float) -> None:
         self._consumer.set("volume", max(0.0, min(1.0, volume)))
 
+    def levels(self) -> tuple[float, float]:
+        meter = self._meter
+        if meter is None:
+            return 0.0, 0.0
+        left = meter.get_double("_audio_level.0")
+        right = meter.get_double("_audio_level.1") if meter.get("_audio_level.1") else left
+        return left, right
+
     def close(self) -> None:
         with ENGINE_LOCK:
             self.stop()
             self._consumer = None
+            self._meter = None
             self._graph = None
 
 

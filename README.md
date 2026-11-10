@@ -27,6 +27,14 @@ projet.
 - la finition peut être **vue et écoutée dans l'aperçu** de l'éditeur ; les préréglages
   personnels sont enregistrés dans `~/.config/montar/finition.json`.
 
+**Version 1.13** (1.13.0) : montage plus confortable. L'écran et la webcam d'un
+enregistrement se rognent, changent de vitesse et se décalent ensemble ; copier, couper,
+coller (Ctrl+C / X / V), Alt + glisser pour dupliquer, coller les réglages d'un clip
+(Ctrl+Maj+V) ; barre de la timeline regroupée, info-bulle des clips ; fiche des
+raccourcis (touche ?), visite guidée à la première ouverture, annulation nommée,
+pastille d'enregistrement ; vu-mètre à côté de l'aperçu ; export à la taille d'un
+projet en format libre.
+
 **Version 1.12** (1.12.0) : aperçu instantané après chaque modification, même sur un
 gros projet (300 médias : 0,04 s au lieu de 6 s) ; seule la première ouverture du projet
 ouvre tous les fichiers.

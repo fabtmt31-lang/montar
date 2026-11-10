@@ -2830,3 +2830,20 @@ def test_guided_tour_shortcuts_sheet_undo_toast_and_save_pill(app, isolated_home
         w.close()
         w.deleteLater()
         QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+
+
+def test_vu_meter_rises_falls_and_folds(app):
+    from montar.ui.editor.vumeter import FOLDED, WIDE, VuMeter
+
+    meter = VuMeter()
+    meter.set_levels(0.95, 0.5)
+    meter._step()
+    assert meter.levels == [0.95, 0.5] and meter.peaks[0] == 0.95
+    meter.set_levels(0.0, 0.0)
+    for _ in range(200):
+        meter._step()
+    assert meter.levels == [0.0, 0.0] and not meter._timer.isActive()
+    QTest.mouseClick(meter, Qt.MouseButton.LeftButton)
+    assert not meter.expanded and meter.width() == FOLDED
+    QTest.mouseClick(meter, Qt.MouseButton.LeftButton)
+    assert meter.expanded and meter.width() == WIDE

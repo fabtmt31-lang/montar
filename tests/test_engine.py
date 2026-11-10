@@ -106,9 +106,11 @@ def test_audio_output_follows_time(engine, media_dir, monkeypatch):
     out.start(10)
     time.sleep(0.8)
     position = out.position()
+    left, right = out.levels()  # vu-mètre : la sinusoïde se mesure des deux côtés
     out.stop()
     out.close()
     assert 20 <= position <= 40
+    assert 0.3 < left <= 1.0 and 0.3 < right <= 1.0
 
 
 def test_qt5_is_never_loaded(engine, media_dir):

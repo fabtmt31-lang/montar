@@ -31,6 +31,7 @@ def shuttle(speed: int, playing: bool, direction: int) -> int:
 
 class PlaybackWorker(QObject):
     frameReady = pyqtSignal(QImage, int)
+    levels = pyqtSignal(float, float)  # vu-mètre : gauche, droite (0 à 1)
     loaded = pyqtSignal(int, float)  # nombre d'images, i/s
     failed = pyqtSignal(str)
     playingChanged = pyqtSignal(bool)
@@ -247,6 +248,7 @@ class PlaybackWorker(QObject):
                 self._timer.stop()
             if self._audio is not None:
                 self._audio.stop()
+            self.levels.emit(0.0, 0.0)
             self.playingChanged.emit(False)
         if self._speed != 1:
             self._speed = 1
@@ -287,6 +289,8 @@ class PlaybackWorker(QObject):
         if target > self._position:
             self._position = target  # les images en retard sont sautées
             self._render(target)
+            if self._audio is not None and self._speed == 1:
+                self.levels.emit(*self._audio.levels())
 
     def _render(self, frame: int) -> None:
         if self._source is None or self._spec is None:
@@ -314,6 +318,7 @@ class Player(QObject):
     """Façade côté interface ; toutes les commandes sont transmises au fil de lecture."""
 
     frameReady = pyqtSignal(QImage, int)
+    levels = pyqtSignal(float, float)
     loaded = pyqtSignal(int, float)
     failed = pyqtSignal(str)
     playingChanged = pyqtSignal(bool)
@@ -344,6 +349,7 @@ class Player(QObject):
         self._volume.connect(self._worker.set_volume)
         self._size.connect(self._worker.set_render_size)
         self._worker.frameReady.connect(self._on_frame)
+        self._worker.levels.connect(self.levels)
         self._worker.loaded.connect(self._on_loaded)
         self._worker.failed.connect(self.failed)
         self._worker.playingChanged.connect(self._on_playing)

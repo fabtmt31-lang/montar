@@ -33,6 +33,7 @@ from montar.core.settings import PREVIEW_QUALITIES
 from montar.core.timecode import frames_to_timecode
 from montar.i18n import _
 from montar.ui.editor.player import Player
+from montar.ui.editor.vumeter import VuMeter
 from montar.ui.theme import theme
 from montar.ui.widgets import button, label, set_icon
 
@@ -650,11 +651,15 @@ class PreviewPanel(QFrame):
 
         frame = QFrame()
         frame.setObjectName("PreviewFrame")
-        fl = QVBoxLayout(frame)
-        fl.setContentsMargins(16, 16, 16, 16)
+        fl = QHBoxLayout(frame)
+        fl.setContentsMargins(16, 16, 10, 16)
+        fl.setSpacing(8)
         self.canvas = PreviewCanvas()
         self.canvas.set_message(_(EMPTY_MESSAGE))
-        fl.addWidget(self.canvas)
+        fl.addWidget(self.canvas, 1)
+        self.meter = VuMeter()
+        fl.addWidget(self.meter)
+        player.levels.connect(self.meter.set_levels)
         layout.addWidget(frame, 1)
 
         transport = QGridLayout()
