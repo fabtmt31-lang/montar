@@ -83,9 +83,9 @@ jobs:
           echo "::group::pile native de l'initialisation de MLT"
           "$B/bin/python.exe" -X utf8 -I -u -c "from montar.platform import windows; windows.prepare(); import mlt7; print('init', mlt7.Factory().init() is not None)" &
           PID=$!
-          for i in $(seq 40); do kill -0 $PID 2>/dev/null || break; /usr/bin/sleep 1; done
+          for i in $(/usr/bin/seq 40); do kill -0 $PID 2>/dev/null || break; /usr/bin/sleep 1; done
           if kill -0 $PID 2>/dev/null; then
-            /ucrt64/bin/gdb.exe -p "$(cat /proc/$PID/winpid)" -batch -ex "thread apply all bt 25" 2>&1 | /usr/bin/head -150 || true
+            /ucrt64/bin/gdb.exe -p "$(/usr/bin/cat /proc/$PID/winpid)" -batch -ex "thread apply all bt 25" 2>&1 | /usr/bin/head -150 || true
             kill -9 $PID || true
           fi
           echo "::endgroup::"
