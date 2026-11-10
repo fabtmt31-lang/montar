@@ -35,7 +35,24 @@ def prepare() -> None:
         os.environ.setdefault("MLT_REPOSITORY", str(root / "lib" / "mlt"))
     if (root / "lib" / "frei0r-1").is_dir():
         os.environ.setdefault("FREI0R_PATH", str(root / "lib" / "frei0r-1"))
+    _no_error_boxes()
     _hide_consoles()
+
+
+def _no_error_boxes() -> None:
+    """Un module de MLT dont une DLL manque ouvrirait une boîte « DLL introuvable » qui
+    attend un clic : MLT (et donc montar) restait bloqué au démarrage, sans fenêtre visible
+    sur une machine sans écran. Sans ces boîtes, le module est simplement ignoré."""
+    try:
+        import ctypes
+
+        sem_failcriticalerrors, sem_noopenfileerrorbox = 0x0001, 0x8000
+        kernel32 = ctypes.WinDLL("kernel32")
+        kernel32.SetErrorMode(sem_failcriticalerrors | sem_noopenfileerrorbox)
+        if hasattr(kernel32, "SetThreadErrorMode"):
+            kernel32.SetThreadErrorMode(sem_failcriticalerrors | sem_noopenfileerrorbox, None)
+    except (OSError, AttributeError):
+        pass
 
 
 def _hide_consoles() -> None:
