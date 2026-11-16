@@ -4,6 +4,7 @@ codecs, qualité, taille estimée et conversion de la timeline vers une autre fr
 from __future__ import annotations
 
 import dataclasses
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -187,14 +188,42 @@ def hardware_encoder(codec: str) -> str | None:
     return None
 
 
+# valeur animée de MLT : « 0=1;24=0.5;~49=0 » (image=valeur, image éventuellement précédée
+# d'un mode d'interpolation « ~ », « | », « $ »…, ou négative depuis la fin)
+_ANIMATED = re.compile(r"(^|;)([~|$!<>(\-]*)(-?\d+)(?==)")
+
+
+def _retime_value(value: object, conv) -> object:
+    """Images d'une valeur animée de MLT converties ; les autres valeurs inchangées."""
+    if isinstance(value, str) and "=" in value and _ANIMATED.search(value):
+        return _ANIMATED.sub(lambda m: f"{m.group(1)}{m.group(2)}{conv(int(m.group(3)))}",
+                             value)
+    return value
+
+
+def _retime_filters(filters, conv) -> tuple:
+    """Filtres des modules : partie du clip (« in », « out ») et valeurs animées."""
+    result = []
+    for name, props in filters:
+        props = {k: (conv(int(v)) if k in ("in", "out") and isinstance(v, (int, float))
+                     else _retime_value(v, conv)) for k, v in props.items()}
+        result.append((name, props))
+    return tuple(result)
+
+
 def retime(spec: TimelineSpec, fps: int) -> TimelineSpec:
-    """Même timeline à une autre fréquence d'images (positions et durées converties)."""
+    """Même timeline à une autre fréquence d'images : positions et durées, mais aussi tout ce
+    qui se compte en images (fondus, filtres des modules et leurs valeurs animées, images
+    clés, séquences animées, atténuation sous la voix, animations des textes)."""
     old = spec.canvas.fps
     if fps == old:
         return spec
 
     def conv(frames: int) -> int:
         return round(frames * fps / old)
+
+    def convf(frames: float) -> float:
+        return frames * fps / old
 
     tracks = []
     for track in spec.tracks:
@@ -204,9 +233,19 @@ def retime(spec: TimelineSpec, fps: int) -> TimelineSpec:
             clips.append(dataclasses.replace(
                 c, start=start, duration=max(1, end - start), source_in=conv(c.source_in),
                 media_length=conv(c.media_length),
-                fade_in=conv(c.fade_in), fade_out=conv(c.fade_out)))
-        transitions = tuple(dataclasses.replace(t, duration=max(1, conv(t.duration)))
-                            for t in track.transitions)
+                fade_in=conv(c.fade_in), fade_out=conv(c.fade_out),
+                extra_filters=_retime_filters(c.extra_filters, conv),
+                audio_filters=_retime_filters(c.audio_filters, conv),
+                keyframes=tuple((name, tuple((convf(f), v) for f, v in points))
+                                for name, points in c.keyframes),
+                sequence=tuple((path, max(1, conv(n))) for path, n in c.sequence),
+                duck=tuple((conv(f), db) for f, db in c.duck),
+                animation_in_frames=conv(c.animation_in_frames),
+                animation_out_frames=conv(c.animation_out_frames)))
+        transitions = tuple(dataclasses.replace(
+            t, duration=max(1, conv(t.duration)),
+            properties=tuple((k, _retime_value(v, conv)) for k, v in t.properties))
+            for t in track.transitions)
         tracks.append(dataclasses.replace(track, clips=tuple(clips), transitions=transitions))
     canvas = dataclasses.replace(spec.canvas, fps=fps)
     return dataclasses.replace(spec, canvas=canvas, tracks=tuple(tracks))

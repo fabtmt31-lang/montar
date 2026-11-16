@@ -65,6 +65,33 @@ def test_retime_converts_positions():
     assert retime(spec, 25) is spec
 
 
+def test_retime_converts_module_filters_and_animations():
+    """Projet à 25 i/s exporté à 50 i/s : le fondu d'un module sur une partie du clip, ses
+    valeurs animées, les images clés et les animations restent calés au même instant."""
+    clip = ClipSpec(
+        "a.mp4", "video", 0, 100,
+        extra_filters=(("brightness", {"in": 75, "out": 99, "alpha": "0=1;~24=0"}),
+                       ("montar.zoom", {"start": 1.0, "end": 1.2, "seconds": 2})),
+        audio_filters=(("volume", {"level": "0=0;-1=-12"}),),
+        keyframes=(("scale", ((0.0, 1.0), (50.0, 2.0))),),
+        sequence=(("t1.png", 10), ("t2.png", 90)),
+        duck=((20, 0.0), (30, -12.0)),
+        animation_in_frames=12)
+    spec = TimelineSpec(Canvas(64, 36, 25), (TrackSpec(
+        "video", False, False, (clip,),
+        transitions=(TransitionSpec(0, "x", 10, "luma", (("softness", "0=0;10=1"),)),)),))
+    out = retime(spec, 50).tracks[0]
+    c = out.clips[0]
+    fade, zoom = c.extra_filters
+    assert fade[1] == {"in": 150, "out": 198, "alpha": "0=1;~48=0"}
+    assert zoom[1]["seconds"] == 2  # déjà en secondes
+    assert c.audio_filters[0][1]["level"] == "0=0;-2=-12"
+    assert c.keyframes == (("scale", ((0.0, 1.0), (100.0, 2.0))),)
+    assert c.sequence == (("t1.png", 20), ("t2.png", 180))
+    assert c.duck == ((40, 0.0), (60, -12.0)) and c.animation_in_frames == 24
+    assert out.transitions[0].properties == (("softness", "0=0;20=1"),)
+
+
 @pytest.fixture(scope="module")
 def engine():
     pytest.importorskip("mlt7")
