@@ -4,7 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QEvent, QMimeData, QObject, QRunnable, Qt, QThreadPool, pyqtSignal
+from PyQt6.QtCore import (
+    QEvent,
+    QMimeData,
+    QObject,
+    QRunnable,
+    Qt,
+    QThreadPool,
+    QTimer,
+    pyqtSignal,
+)
 from PyQt6.QtGui import QDrag, QKeySequence, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -136,7 +145,9 @@ class _MediaGrid(ThumbGrid):
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 - API Qt
         if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and self.selected_medias():
-            self.deleteRequested.emit()
+            # après l'événement : les vignettes retirées ne doivent pas disparaître pendant
+            # que la grille traite encore la touche
+            QTimer.singleShot(0, self.deleteRequested.emit)
             return
         super().keyPressEvent(event)
 
@@ -281,9 +292,12 @@ class MediaPanel(QFrame):
         if kept == ids and all(self._items[m.id].data(ROLE_PAYLOAD) is m for m in media):
             for media_id in set(current) - set(ids):  # médias retirés
                 item = self._items.pop(media_id)
+                if self.grid._hovered is item:
+                    self.grid._hovered = None
                 self.grid.takeItem(self.grid.row(item))
             self._update_count()
             return
+        self.grid._hovered = None
         self.grid.clear()
         self._items.clear()
         for m in media:

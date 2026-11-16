@@ -2905,6 +2905,7 @@ def test_media_panel_multi_selection(window, media_dir, monkeypatch):
     grid.selectAll()  # (choisir un clip dans la timeline vide la sélection des médias)
     grid.setFocus()
     QTest.keyClick(grid, Qt.Key.Key_Delete)
-    assert editor.project.media == [] and editor.project.clips == []
+    assert wait_until(lambda: editor.project.media == [], 5)
+    assert editor.project.clips == []
     editor.controller.undo()  # une seule étape d'annulation
     assert len(editor.project.media) == 3 and len(editor.project.clips) == 3
