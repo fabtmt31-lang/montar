@@ -105,8 +105,11 @@ class TimelineView(QAbstractScrollArea):
         self.snap = True
         self._drag: _Drag | None = None
         self._hover_clip: str | None = None  # clip dont l'info-bulle est montrée
+        # espace vide choisi d'un clic (piste, début, fin) : Suppr ou double-clic le referme
+        self.selected_gap: tuple[str, int, int] | None = None
         self._fitted = False  # zoom « tout voir » fait à la première mise en page
-        self._drop: tuple[str | None, int, int, str] | None = None  # piste, début, durée, type
+        # dépôt de médias : piste, début, durée, type, insertion (les suivants se décalent)
+        self._drop: tuple[str | None, int, int, str, bool] | None = None
         self._junction: tuple[Clip, Clip] | None = None  # jonction visée par une transition
         # Plage marquée avec I / O sur un clip : (clip, début, fin) en images de timeline
         self.selection_range: tuple[str, int, int] | None = None
@@ -309,6 +312,7 @@ class TimelineView(QAbstractScrollArea):
                                        self._row_rect(row).height()),
                                  QBrush(hatch, Qt.BrushStyle.BDiagPattern))
         self._paint_range(painter)
+        self._paint_gap(painter)
         if dragged:
             d = self._drag
             clip = self._find_clip(dragged)
@@ -343,8 +347,8 @@ class TimelineView(QAbstractScrollArea):
         if self._junction is not None:
             self._paint_junction(painter, self._junction)
         if self._drop is not None:
-            track_id, start, duration, kind = self._drop
-            self._paint_drop(painter, track_id, start, duration, kind, rows)
+            track_id, start, duration, kind, insert = self._drop
+            self._paint_drop(painter, track_id, start, duration, kind, rows, insert)
         painter.restore()
 
         self._paint_ruler(painter, w)
@@ -379,6 +383,54 @@ class TimelineView(QAbstractScrollArea):
             first = self.controller.timeline.first_track("audio")
             return p.pistachio if first is not None and first.id == track.id else p.voiceover
         return p.mint
+
+    def gap_at(self, pos: QPoint) -> tuple[str, int, int] | None:
+        """Espace vide (suivi d'un clip) sous le pointeur : (piste, début, fin)."""
+        if pos.x() < HEADER_W or pos.y() < RULER_H:
+            return None
+        row = self.row_at(pos.y())
+        if row is None or row.track.locked:
+            return None
+        gap = self.controller.timeline.gap_at(row.track.id, self.x_to_frame(pos.x()))
+        return (row.track.id, *gap) if gap is not None else None
+
+    def close_gap(self, track_id: str, frame: int) -> None:
+        self.selected_gap = None
+        self.controller.edit(_("Refermer le vide"), lambda t: t.close_gap(track_id, frame))
+        self.viewport().update()
+
+    def close_all_gaps(self, track_id: str) -> None:
+        self.selected_gap = None
+        self.controller.edit(_("Refermer tous les vides"),
+                             lambda t: t.close_all_gaps(track_id))
+        self.viewport().update()
+
+    def _paint_gap(self, painter: QPainter) -> None:
+        gap = self.selected_gap
+        if gap is None:
+            return
+        track_id, start, end = gap
+        row = next((r for r in self.rows() if r.track.id == track_id), None)
+        if row is None or self.controller.timeline.gap_at(track_id, start) != (start, end):
+            self.selected_gap = None  # le montage a changé : plus de vide à cet endroit
+            return
+        p = theme().palette
+        r = self._row_rect(row)
+        rect = QRectF(self.frame_to_x(start), r.top() + 4, (end - start) * self.ppf,
+                      r.height() - 8)
+        fill = QColor(p.forest)
+        fill.setAlpha(28)
+        painter.setBrush(QBrush(fill))
+        painter.setPen(QPen(QColor(p.forest), 1.5, Qt.PenStyle.DashLine))
+        painter.drawRoundedRect(rect, 8, 8)
+        if rect.width() > 70:
+            f = ui_font()
+            f.setPixelSize(11)
+            painter.setFont(f)
+            painter.setPen(QColor(p.forest))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter,
+                             _("Suppr : refermer") if rect.width() < 150
+                             else _("Suppr ou double-clic : refermer le vide"))
 
     def _paint_links(self, painter: QPainter, hidden: set) -> None:
         """Trait doré entre les clips liés (écran et webcam d'un enregistrement), à leur
@@ -729,7 +781,7 @@ class TimelineView(QAbstractScrollArea):
             x += 2
 
     def _paint_drop(self, painter: QPainter, track_id: str | None, start: int, duration: int,
-                    kind: str, rows: list[_Row]) -> None:
+                    kind: str, rows: list[_Row], insert: bool = False) -> None:
         p = theme().palette
         if track_id is None:  # nouvelle piste
             last = rows[-1] if rows else None
@@ -748,6 +800,19 @@ class TimelineView(QAbstractScrollArea):
         pen = QPen(QColor(p.forest), 1.5, Qt.PenStyle.DashLine)
         painter.setPen(pen)
         painter.drawRoundedRect(rect, 8, 8)
+        if insert:  # point d'insertion : trait plein, les clips suivants vont se décaler
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(p.forest))
+            x = rect.left()
+            painter.drawRoundedRect(QRectF(x - 2, rect.top() - 6, 4, rect.height() + 12), 2, 2)
+            f = ui_font()
+            f.setPixelSize(11)
+            f.setBold(True)
+            painter.setFont(f)
+            painter.setPen(QColor(p.forest))
+            painter.drawText(QRectF(x + 8, rect.top(), max(120.0, rect.width()), rect.height()),
+                             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                             _("Insérer ici →"))
 
     def _tick_step(self) -> int:
         for step in _TICK_STEPS:
@@ -939,6 +1004,7 @@ class TimelineView(QAbstractScrollArea):
         pos = event.position().toPoint()
         if event.button() != Qt.MouseButton.LeftButton:
             return super().mousePressEvent(event)
+        self.selected_gap = None  # un clic ailleurs que dans le vide le désélectionne
         if pos.x() < HEADER_W:
             hit = self._header_hit(pos)
             if hit is not None:
@@ -1104,6 +1170,7 @@ class TimelineView(QAbstractScrollArea):
             self.viewport().update()
             return
         if d is not None and d.mode == "box":
+            self.selected_gap = None if d.moved else self.gap_at(d.press)
             self.viewport().update()
             return
         if d is not None and d.mode == "move" and d.group and not d.moved:
@@ -1220,10 +1287,16 @@ class TimelineView(QAbstractScrollArea):
         return min(range(low, high + 1), key=lambda i: abs(y - self._boundary_y(rows, i)))
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        marker = self.marker_at(event.position().toPoint())
+        pos = event.position().toPoint()
+        marker = self.marker_at(pos)
         if marker is not None:
             self._drag = None
             self.rename_marker(marker.id)
+            return
+        gap = self.gap_at(pos) if self.hit_test(pos) is None else None
+        if gap is not None:
+            self._drag = None
+            self.close_gap(gap[0], gap[1])
             return
         super().mouseDoubleClickEvent(event)
 
@@ -1326,15 +1399,31 @@ class TimelineView(QAbstractScrollArea):
                 voice.toggled.connect(lambda on: self.controller.edit(
                     _("Piste de voix"), lambda t: setattr(t.track(track_id), "voice", on)))
                 menu.addSeparator()
+            if self.controller.timeline.clips_on(track_id) and not row.track.locked:
+                menu.addAction(_("Refermer tous les vides de la piste"),
+                               lambda: self.close_all_gaps(track_id))
+                menu.addSeparator()
             menu.addAction(_("Supprimer la piste"), lambda: self.controller.edit(
                 _("Supprimer la piste"), lambda t: t.remove_track(track_id)))
         else:
             hit = self.hit_test(pos)
             if hit is None:
-                if not self.controller.clipboard:
-                    return
-                self._clipboard_actions(menu, self.x_to_frame(pos.x()), None)
-                menu.exec(event.globalPos())
+                gap = self.gap_at(pos)
+                row = self.row_at(pos.y())
+                if gap is not None:
+                    track_id, start, _end = gap
+                    menu.addAction(_("Refermer ce vide"),
+                                   lambda: self.close_gap(track_id, start))
+                if row is not None and not row.track.locked and \
+                        self.controller.timeline.clips_on(row.track.id):
+                    tid = row.track.id
+                    menu.addAction(_("Refermer tous les vides de la piste"),
+                                   lambda: self.close_all_gaps(tid))
+                if self.controller.clipboard:
+                    menu.addSeparator()
+                    self._clipboard_actions(menu, self.x_to_frame(pos.x()), None)
+                if not menu.isEmpty():
+                    menu.exec(event.globalPos())
                 return
             clip_id = hit[0].id
             if not self.controller.is_selected(clip_id):
@@ -1430,30 +1519,41 @@ class TimelineView(QAbstractScrollArea):
 
     # --- dépôt de médias ---------------------------------------------------------------
 
-    def _drop_target(self, pos: QPoint, media: MediaItem) -> tuple[str | None, int, int]:
-        """(piste, début, durée) du clip qui serait créé ; piste None = nouvelle piste."""
+    def _drop_target(self, pos: QPoint, medias: list[MediaItem]
+                     ) -> tuple[str | None, int, int, bool]:
+        """(piste, début, durée, insertion) des clips qui seraient créés ; piste None =
+        nouvelle piste. Lâchés sur un clip, ils s'insèrent avant ou après lui (selon la
+        moitié visée) et les clips suivants se décalent pour faire la place."""
         timeline = self.controller.timeline
-        duration = timeline.default_duration(media)
+        media = medias[0]
+        duration = sum(timeline.clip_duration(m) for m in medias)
         frame = self.x_to_frame(pos.x())
         row = self.row_at(pos.y())
         if row is not None and timeline.accepts(row.track, media):
             track_id = row.track.id
+            under = next((c for c in timeline.clips_on(track_id)
+                          if c.start <= frame < c.end), None)
+            if under is not None and not row.track.locked:
+                edge = under.start if frame < (under.start + under.end) / 2 else under.end
+                return track_id, edge, duration, True
         elif row is None and pos.y() > RULER_H:
-            return None, self._snap(frame, None, (duration,)), duration
+            return None, self._snap(frame, None, (duration,)), duration, False
         else:
             kind = "audio" if media.kind == "audio" else "video"
             track = timeline.first_track(kind)
             if track is None:
-                return None, frame, duration
+                return None, frame, duration, False
             track_id = track.id
         start = self._snap(frame, None, (duration,))
-        return track_id, timeline.free_start(track_id, start, duration), duration
+        return track_id, timeline.free_start(track_id, start, duration), duration, False
 
-    def _dragged_media(self, event) -> MediaItem | None:
+    def _dragged_medias(self, event) -> list[MediaItem]:
+        """Médias glissés depuis le panneau (un ou plusieurs, dans l'ordre du panneau)."""
         if not event.mimeData().hasFormat(MEDIA_MIME):
-            return None
-        media_id = bytes(event.mimeData().data(MEDIA_MIME)).decode()
-        return self.controller.project.find_media(media_id)
+            return []
+        ids = bytes(event.mimeData().data(MEDIA_MIME)).decode().split("\n")
+        project = self.controller.project
+        return [m for m in map(project.find_media, ids) if m is not None]
 
     # --- dépôt de transitions sur une jonction --------------------------------------------
 
@@ -1495,7 +1595,7 @@ class TimelineView(QAbstractScrollArea):
                            icon_pixmap("blend", p.forest, 16))
 
     def dragEnterEvent(self, event) -> None:  # noqa: N802
-        if self._dragged_media(event) is not None or self._dragged_transition(event):
+        if self._dragged_medias(event) or self._dragged_transition(event):
             event.acceptProposedAction()
 
     def dragMoveEvent(self, event) -> None:  # noqa: N802
@@ -1507,11 +1607,12 @@ class TimelineView(QAbstractScrollArea):
             else:
                 event.ignore()
             return
-        media = self._dragged_media(event)
-        if media is None:
+        medias = self._dragged_medias(event)
+        if not medias:
             return
-        track_id, start, duration = self._drop_target(event.position().toPoint(), media)
-        self._drop = (track_id, start, duration, media.kind)
+        track_id, start, duration, insert = self._drop_target(event.position().toPoint(),
+                                                              medias)
+        self._drop = (track_id, start, duration, medias[0].kind, insert)
         self.viewport().update()
         event.acceptProposedAction()
 
@@ -1530,12 +1631,13 @@ class TimelineView(QAbstractScrollArea):
                 self.add_transition(pair[0].id, pair[1].id, kind)
                 event.acceptProposedAction()
             return
-        media = self._dragged_media(event)
+        medias = self._dragged_medias(event)
         self._drop = None
-        if media is None:
+        if not medias:
             return
-        track_id, start, duration = self._drop_target(event.position().toPoint(), media)
-        self.add_media(media, track_id, start)
+        track_id, start, _duration, insert = self._drop_target(event.position().toPoint(),
+                                                               medias)
+        self.add_medias(medias, track_id, start, insert)
         event.acceptProposedAction()
 
     def add_transition(self, left_id: str, right_id: str, kind: str) -> None:
@@ -1545,15 +1647,24 @@ class TimelineView(QAbstractScrollArea):
             self.controller.select_transition(transition.id)
 
     def add_media(self, media: MediaItem, track_id: str | None, start: int | None) -> None:
+        self.add_medias([media], track_id, start)
+
+    def add_medias(self, medias: list[MediaItem], track_id: str | None, start: int | None,
+                   insert: bool = False) -> None:
+        """Pose les médias à la suite (insertion : les clips suivants font la place)."""
+        if not medias:
+            return
+
         def operation(t):
             tid = track_id
             if tid is None:
-                tid = t.add_track("audio" if media.kind == "audio" else "video").id
-            return t.add_clip(media, tid, start)
+                tid = t.add_track("audio" if medias[0].kind == "audio" else "video").id
+            return t.add_clips(medias, tid, start, insert=insert)
 
-        clip = self.controller.edit(_("Ajouter à la timeline"), operation)
-        if clip is not None:
-            self.controller.select(clip.id)
+        label = _("Insérer dans la timeline") if insert else _("Ajouter à la timeline")
+        clips = self.controller.edit(label, operation)
+        if clips:
+            self.controller.select_many([c.id for c in clips])
 
     def clear_caches(self) -> None:
         self._thumb_cache.clear()

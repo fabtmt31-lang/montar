@@ -326,7 +326,9 @@ class EditorPage(QWidget):
         self.media_panel.importRequested.connect(self.choose_files)
         self.media_panel.mediaSelected.connect(self._on_media_selected)
         self.media_panel.removeRequested.connect(self.remove_media)
+        self.media_panel.removeManyRequested.connect(self.remove_medias)
         self.media_panel.addToTimelineRequested.connect(self.add_to_timeline)
+        self.media_panel.addManyRequested.connect(self.add_many_to_timeline)
         self.media_panel.editRequested.connect(self.edit_media)
         self.media_panel.fitCanvasRequested.connect(self.confirm_fit_canvas)
         QApplication.instance().applicationStateChanged.connect(self._app_state_changed)
@@ -2380,6 +2382,38 @@ class EditorPage(QWidget):
                 return
         self.controller.edit(_("Retirer {name}").format(name=media.name),
                              lambda t: t.remove_media(media.id))
+
+    def remove_medias(self, medias: list[MediaItem]) -> None:
+        """Retire plusieurs médias d'un coup (une question, une étape d'annulation)."""
+        if len(medias) == 1:
+            self.remove_media(medias[0])
+            return
+        if not medias:
+            return
+        ids = {m.id for m in medias}
+        used = sum(1 for c in self.project.clips if c.media_id in ids)
+        text = _("Retirer {n} médias du projet ?").format(n=len(medias))
+        if used:
+            text += " " + _("{n} clip(s) de la timeline les utilisent et seront aussi "
+                            "supprimés.").format(n=used)
+        answer = QMessageBox.question(self, _("Retirer du projet"), text)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        def operation(t):
+            for media_id in ids:
+                if t.project.find_media(media_id) is not None:  # webcam déjà retirée
+                    t.remove_media(media_id)
+        self.controller.edit(_("Retirer {n} médias").format(n=len(medias)), operation)
+
+    def add_many_to_timeline(self, medias: list[MediaItem]) -> None:
+        """Pose les médias à la suite : vidéos et images sur la piste vidéo, sons sur la
+        piste audio."""
+        visual = [m for m in medias if m.kind != "audio"]
+        sounds = [m for m in medias if m.kind == "audio"]
+        for group in (visual, sounds):
+            if group:
+                self.timeline.view.add_medias(group, self._default_track(group[0]), None)
 
     def add_to_timeline(self, media: MediaItem) -> None:
         """Ajoute le média à la suite des clips de la première piste compatible."""

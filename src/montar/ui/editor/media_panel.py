@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QMimeData, QObject, QRunnable, Qt, QThreadPool, pyqtSignal
-from PyQt6.QtGui import QDrag, QPixmap
+from PyQt6.QtCore import QEvent, QMimeData, QObject, QRunnable, Qt, QThreadPool, pyqtSignal
+from PyQt6.QtGui import QDrag, QKeySequence, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -61,7 +61,10 @@ class _FilmstripTask(QRunnable):
 
 class _MediaGrid(ThumbGrid):
     """Grille dont les vignettes se glissent vers la timeline ; au survol d'une vidéo, la
-    vignette défile dans la vidéo selon la position du pointeur (F-MED-03)."""
+    vignette défile dans la vidéo selon la position du pointeur (F-MED-03). Plusieurs
+    médias se sélectionnent (Ctrl / Maj + clic, Ctrl+A) et se glissent ensemble."""
+
+    deleteRequested = pyqtSignal()  # touche Suppr sur la sélection
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -115,13 +118,37 @@ class _MediaGrid(ThumbGrid):
         self._restore_hovered()
         super().leaveEvent(event)
 
+    def selected_medias(self) -> list[MediaItem]:
+        """Médias sélectionnés (Ctrl / Maj + clic, Ctrl+A), dans l'ordre du panneau."""
+        items = sorted(self.selectedItems(), key=self.row)
+        if not items and self.currentItem() is not None:
+            items = [self.currentItem()]
+        return [i.data(ROLE_PAYLOAD) for i in items if not i.isHidden()]
+
+    def event(self, event) -> bool:  # noqa: A003 - API Qt
+        # le panneau a la main : Suppr et Ctrl+A agissent sur les médias, pas sur la timeline
+        if event.type() == QEvent.Type.ShortcutOverride and (
+                event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace)
+                or event.matches(QKeySequence.StandardKey.SelectAll)):
+            event.accept()
+            return True
+        return super().event(event)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - API Qt
+        if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and self.selected_medias():
+            self.deleteRequested.emit()
+            return
+        super().keyPressEvent(event)
+
     def startDrag(self, actions) -> None:  # noqa: N802 - API Qt
         item = self.currentItem()
         if item is None:
             return
-        media = item.data(ROLE_PAYLOAD)
+        medias = self.selected_medias()
+        if item.data(ROLE_PAYLOAD) not in medias:
+            medias = [item.data(ROLE_PAYLOAD)]
         mime = QMimeData()
-        mime.setData(MEDIA_MIME, media.id.encode())
+        mime.setData(MEDIA_MIME, "\n".join(m.id for m in medias).encode())
         drag = QDrag(self)
         drag.setMimeData(mime)
         pm = item.data(Qt.ItemDataRole.DecorationRole)
@@ -135,7 +162,9 @@ class MediaPanel(QFrame):
     importRequested = pyqtSignal()
     mediaSelected = pyqtSignal(object)  # MediaItem ou None
     removeRequested = pyqtSignal(object)  # MediaItem
+    removeManyRequested = pyqtSignal(object)  # list[MediaItem]
     addToTimelineRequested = pyqtSignal(object)  # MediaItem
+    addManyRequested = pyqtSignal(object)  # list[MediaItem], posés à la suite
     editRequested = pyqtSignal(object)  # MediaItem
     fitCanvasRequested = pyqtSignal(object)  # MediaItem : toile du projet à sa taille
     relinkRequested = pyqtSignal(object)  # MediaItem introuvable
@@ -216,6 +245,9 @@ class MediaPanel(QFrame):
                                with_subtitle=False)
         self.grid.setDragEnabled(True)
         self.grid.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+        self.grid.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.grid.deleteRequested.connect(
+            lambda: self.removeManyRequested.emit(self.grid.selected_medias()))
         self.grid.setToolTip("")
         self.grid.itemDoubleClicked.connect(
             lambda item: self.addToTimelineRequested.emit(item.data(ROLE_PAYLOAD)))
@@ -349,9 +381,18 @@ class MediaPanel(QFrame):
         if item is None:
             return
         menu = QMenu(self)
+        media = item.data(ROLE_PAYLOAD)
+        chosen = self.grid.selected_medias()
+        if len(chosen) > 1 and media in chosen:  # clic droit dans une sélection multiple
+            n = len(chosen)
+            menu.addAction(_("Ajouter les {n} médias à la timeline").format(n=n),
+                           lambda: self.addManyRequested.emit(chosen))
+            menu.addAction(_("Retirer les {n} médias du projet").format(n=n),
+                           lambda: self.removeManyRequested.emit(chosen))
+            menu.exec(self.grid.viewport().mapToGlobal(pos))
+            return
         menu.addAction(_("Ajouter à la timeline"),
                        lambda: self.addToTimelineRequested.emit(item.data(ROLE_PAYLOAD)))
-        media = item.data(ROLE_PAYLOAD)
         if media.exists:
             menu.addAction(_("Modifier le média…"), lambda: self.editRequested.emit(media))
             if media.kind in ("video", "image") and media.width and media.height:

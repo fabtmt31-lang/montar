@@ -239,6 +239,92 @@ class Timeline:
             self._add_webcam(clip, media)
         return clip
 
+    def clip_duration(self, media: MediaItem) -> int:
+        """Durée du clip que créerait `add_clip` pour ce média."""
+        lead = round(media.webcam.get("screen_in", 0.0) * self.fps) if media.webcam else 0
+        return max(1, self.default_duration(media) - lead)
+
+    def _ripple_from(self, track_id: str, frame: int, delta: int) -> None:
+        """Décale de `delta` les clips de la piste qui commencent à `frame` ou après, et
+        les clips qui leur sont liés sur d'autres pistes (webcam d'un enregistrement)."""
+        movers = [c for c in self.clips_on(track_id) if c.start >= frame]
+        moved = {c.id for c in movers}
+        for c in list(movers):
+            movers += [m for m in self.group_of(c) if m.id not in moved]
+            moved |= {m.id for m in self.group_of(c)}
+        for c in movers:
+            c.start = max(0, c.start + delta)
+
+    def add_clips(self, medias: list[MediaItem], track_id: str | None, frame: int | None,
+                  insert: bool = False) -> list[Clip]:
+        """Pose plusieurs médias à la suite à partir de `frame` (None : à la fin de la piste).
+        Avec `insert`, les clips qui suivent sur la piste (et ceux qui leur sont liés) se
+        décalent pour faire la place : rien n'est recouvert."""
+        if not medias:
+            return []
+        if track_id is None:
+            kind = "audio" if medias[0].kind == "audio" else "video"
+            track_id = (self.first_track(kind) or self.add_track(kind)).id
+        if frame is None:
+            frame = max((c.end for c in self.clips_on(track_id)), default=0)
+        track = self.track(track_id)
+        medias = [m for m in medias if self.accepts(track, m)]
+        if not medias:
+            raise TimelineError("ces médias ne peuvent pas être placés sur cette piste")
+        if insert:
+            room = sum(self.clip_duration(m) for m in medias)
+            # transition à cheval sur le point d'insertion : elle n'a plus lieu d'être
+            for t in list(self.project.transitions):
+                if t.track_id == track_id:
+                    left, right = self.clip(t.left_id), self.clip(t.right_id)
+                    if left.start < frame <= right.start:
+                        self.project.transitions.remove(t)
+            self._ripple_from(track_id, frame, room)
+        clips = []
+        cursor = frame
+        for media in medias:
+            clip = self.add_clip(media, track_id, cursor)
+            clips.append(clip)
+            cursor = clip.end
+        return clips
+
+    def gap_at(self, track_id: str, frame: int) -> tuple[int, int] | None:
+        """Espace vide de la piste contenant `frame`, suivi d'un clip : (début, fin)."""
+        cursor = 0
+        for c in self.clips_on(track_id):
+            if cursor <= frame < c.start:
+                return cursor, c.start
+            cursor = max(cursor, c.end)
+        return None
+
+    def close_gap(self, track_id: str, frame: int) -> int:
+        """Referme l'espace vide de la piste à `frame` : les clips suivants (et ceux qui
+        leur sont liés) reculent. Renvoie le nombre d'images supprimées."""
+        gap = self.gap_at(track_id, frame)
+        if gap is None:
+            return 0
+        start, end = gap
+        self._ripple_from(track_id, end, start - end)
+        return end - start
+
+    def close_all_gaps(self, track_id: str) -> int:
+        """Referme tous les espaces vides de la piste, début compris."""
+        total = 0
+        while (gap := self._first_gap(track_id)) is not None:
+            closed = self.close_gap(track_id, gap[0])
+            if not closed:
+                break
+            total += closed
+        return total
+
+    def _first_gap(self, track_id: str) -> tuple[int, int] | None:
+        cursor = 0
+        for c in self.clips_on(track_id):
+            if c.start > cursor:
+                return cursor, c.start
+            cursor = max(cursor, c.end)
+        return None
+
     # --- enregistrements avec webcam ----------------------------------------------------
 
     def _add_webcam(self, screen: Clip, media: MediaItem) -> Clip:

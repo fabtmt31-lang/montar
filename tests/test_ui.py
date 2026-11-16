@@ -2848,3 +2848,63 @@ def test_vu_meter_rises_falls_and_folds(app):
     assert not meter.expanded and meter.width() == FOLDED
     QTest.mouseClick(meter, Qt.MouseButton.LeftButton)
     assert meter.expanded and meter.width() == WIDE
+
+
+@needs_ffmpeg
+def test_drop_inserts_between_clips_and_gaps_close(window, media_dir, monkeypatch):
+    from PyQt6.QtCore import QMimeData
+    from PyQt6.QtGui import QDropEvent
+
+    from montar.ui.editor.media_panel import MEDIA_MIME
+
+    editor = imported_editor(window, media_dir, ["red.mp4", "blue.mp4"])
+    red, blue = editor.project.media
+    view = editor.timeline.view
+    view.snap = False
+    editor.add_to_timeline(red)
+    editor.add_to_timeline(blue)
+    first, second = sorted(editor.project.clips, key=lambda c: c.start)
+    d = first.duration
+    QApplication.processEvents()
+    # deux médias glissés ensemble, lâchés sur la 2e moitié du premier clip : insérés
+    mime = QMimeData()
+    mime.setData(MEDIA_MIME, f"{blue.id}\n{red.id}".encode())
+    rect = view.clip_rect(first)
+    at = QPointF(rect.right() - 3, rect.center().y())
+    for kind in (QEvent.Type.DragMove, QEvent.Type.Drop):
+        event = QDropEvent(at, Qt.DropAction.CopyAction, mime, Qt.MouseButton.LeftButton,
+                           Qt.KeyboardModifier.NoModifier, kind)
+        (view.dragMoveEvent if kind == QEvent.Type.DragMove else view.dropEvent)(event)
+    clips = sorted(editor.project.clips, key=lambda c: c.start)
+    assert [c.media_id for c in clips] == [red.id, blue.id, red.id, blue.id]
+    assert [c.start for c in clips] == [0, d, 2 * d, 3 * d] and second.start == 3 * d
+    # un vide : clic pour le choisir, Suppr pour le refermer
+    editor.controller.edit("vide", lambda t: t.move_clip(second.id, second.track_id,
+                                                         4 * d + 20))
+    x = view.frame_to_x(4 * d + 10)
+    point = QPoint(int(x), int(view.clip_rect(second).center().y()))
+    QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+                     point)
+    assert view.selected_gap == (second.track_id, 3 * d, 4 * d + 20)
+    editor.timeline.delete()
+    assert second.start == 3 * d and view.selected_gap is None
+
+
+@needs_ffmpeg
+def test_media_panel_multi_selection(window, media_dir, monkeypatch):
+    editor = imported_editor(window, media_dir, ["red.mp4", "blue.mp4", "son.wav"])
+    grid = editor.media_panel.grid
+    grid.selectAll()
+    assert len(grid.selected_medias()) == 3
+    editor.add_many_to_timeline(grid.selected_medias())
+    kinds = sorted(editor.controller.timeline.track(c.track_id).kind
+                   for c in editor.project.clips)
+    assert kinds == ["audio", "video", "video"]
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    grid.selectAll()  # (choisir un clip dans la timeline vide la sélection des médias)
+    grid.setFocus()
+    QTest.keyClick(grid, Qt.Key.Key_Delete)
+    assert editor.project.media == [] and editor.project.clips == []
+    editor.controller.undo()  # une seule étape d'annulation
+    assert len(editor.project.media) == 3 and len(editor.project.clips) == 3

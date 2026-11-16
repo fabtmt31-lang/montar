@@ -574,3 +574,38 @@ def test_paste_settings_copies_look_and_sound_only():
     tl.paste_settings(copy.deepcopy(source), [target.id])
     assert target.color.brightness == 0.4 and target.preset == "sepia"
     assert target.volume == 0.3 and target.transform.scale == 1.0
+
+
+def _three(tl):
+    media = MediaItem("/a.mp4", "video", duration=2.0, fps=25, id="m")
+    tl.project.media.append(media)
+    v = tl.first_track("video").id
+    a = tl.add_clip(media, v, 0)        # 0–50
+    b = tl.add_clip(media, v, 80)       # 80–130
+    c = tl.add_clip(media, v, 200)      # 200–250
+    return media, v, a, b, c
+
+
+def test_insert_between_two_clips_makes_room():
+    p = Project("Insérer", fps=25)
+    tl = Timeline(p)
+    media, v, a, b, c = _three(tl)
+    new = tl.add_clips([media, media], v, b.start, insert=True)
+    assert [x.start for x in new] == [80, 130]
+    assert (a.start, b.start, c.start) == (0, 180, 300)  # décalés de 2 × 50
+    # sans insertion : posés à la suite, rien ne bouge
+    tl.add_clips([media], v, None)
+    assert c.start == 300
+
+
+def test_close_one_gap_and_all_gaps():
+    p = Project("Vides", fps=25)
+    tl = Timeline(p)
+    _media, v, a, b, c = _three(tl)
+    assert tl.gap_at(v, 60) == (50, 80) and tl.gap_at(v, 20) is None
+    assert tl.close_gap(v, 60) == 30
+    assert (b.start, c.start) == (50, 170)
+    c.start = 200  # de nouveau un vide, et un au début de la piste
+    tl.delete(a.id)
+    assert tl.close_all_gaps(v) == 50 + 100
+    assert (b.start, c.start) == (0, 50)

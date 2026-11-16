@@ -1,3 +1,18 @@
+montar (1.14.0) unstable; urgency=medium
+
+  * Export à une autre fréquence d'images que le projet : les filtres des
+    modules (partie du clip, valeurs animées), les images clés, les textes
+    animés et l'atténuation sous la voix restent calés (un fondu tombait au
+    milieu du clip).
+  * Un média lâché sur un clip s'insère avant ou après lui : les clips
+    suivants (et leur webcam liée) se décalent pour faire la place.
+  * Panneau Médias : sélection multiple (Ctrl / Maj + clic, Ctrl+A), glisser,
+    ajouter ou retirer plusieurs médias d'un coup (touche Suppr).
+  * Espaces vides : un clic le sélectionne, Suppr ou un double-clic le
+    referme ; « Refermer tous les vides de la piste » (menu de la piste).
+
+ -- Fabien <admin@appsdoc.fr>  Mon, 16 Nov 2026 12:00:00 +0100
+
 montar (1.13.0) unstable; urgency=medium
 
   * Clips liés (écran et webcam d'un enregistrement) : rogner, changer la

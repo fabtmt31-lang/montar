@@ -27,6 +27,13 @@ projet.
 - la finition peut être **vue et écoutée dans l'aperçu** de l'éditeur ; les préréglages
   personnels sont enregistrés dans `~/.config/montar/finition.json`.
 
+**Version 1.14** (1.14.0) : un média lâché sur un clip s'insère avant ou après lui et
+les clips suivants font la place ; plusieurs médias se sélectionnent (Ctrl / Maj + clic,
+Ctrl+A) pour être glissés, ajoutés ou retirés ensemble ; un clic dans un espace vide le
+sélectionne (Suppr ou double-clic le referme), « Refermer tous les vides de la piste »
+dans le menu de la piste ; l'export à une autre fréquence d'images garde les effets des
+modules calés.
+
 **Version 1.13** (1.13.0) : montage plus confortable. L'écran et la webcam d'un
 enregistrement se rognent, changent de vitesse et se décalent ensemble ; copier, couper,
 coller (Ctrl+C / X / V), Alt + glisser pour dupliquer, coller les réglages d'un clip
@@ -272,6 +279,10 @@ l'aperçu, effets **VHS** et **bande dessinée** refaits (option « Trait vivant
 - ajout d'un média par glisser-déposer depuis « Médias du projet » ou double-clic ;
 - déplacer un clip (y compris vers une autre piste), rogner ses bords, couper (S),
   supprimer (Suppr), supprimer en refermant l'espace (Maj+Suppr), dupliquer (Ctrl+D) ;
+- glisser un média sur un clip : insertion avant ou après lui, les clips suivants se
+  décalent ; plusieurs médias glissés ensemble se posent à la suite ;
+- refermer un espace vide (clic puis Suppr, ou double-clic) ou tous les vides d'une
+  piste (menu de la piste) ;
 - copier, couper, coller à la tête de lecture (Ctrl+C, Ctrl+X, Ctrl+V), Alt + glisser
   pour déposer une copie, coller les réglages d'un clip sur d'autres (Ctrl+Maj+V :
   couleur, filtres, effets, son) ;

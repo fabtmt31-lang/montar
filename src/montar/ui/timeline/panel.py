@@ -220,6 +220,10 @@ class TimelinePanel(QFrame):
         self.controller.edit(_("Couper"), lambda t: t.split_at(playhead, target))
 
     def delete(self, ripple: bool = False) -> None:
+        gap = self.view.selected_gap
+        if gap is not None and not self.controller.selection:
+            self.view.close_gap(gap[0], gap[1])
+            return
         ids = [c.id for c in self.controller.selected_clips()]
         if not ids:
             return
