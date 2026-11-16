@@ -165,15 +165,98 @@ def test_whole_track_with_images_timelapses_and_mixed(core):
     assert kinds == {"mixed", "timelapse", "image"}
     before = sum(c.duration for c in track)
     created = core.apply(t, [c.id for c in track], core.Settings(seed=9, probability=1.0))
-    assert sum(c.duration for c in created) == before
+    assert sum(c.duration for c in created) == before - 25  # image de 6 s ramenée à 5 s
     lapse = [c for c in created if "timelapse" in c.modules]
     assert len(lapse) == 1 and lapse[0].duration == 200  # gardé entier
-    assert all(c.volume == 0 for c in created)
+    assert lapse[0].volume == 1.0  # son du timelapse gardé (il n'est pas détaché)
+    assert all(c.volume == 0 for c in created if c not in lapse)
     stills = [c for c in created if c.media_id == "img"]
-    assert len(stills) > 1 and sum(c.duration for c in stills) == 150
+    assert [c.duration for c in stills] == [125]  # image fixe d'un seul tenant
     assert len({core.group_of(c)["group"] for c in created}) == 1  # un seul nouveau mélange
     audio = [c for c in p.clips if t.track(c.track_id).kind == "audio"]
     assert len(audio) == 1  # son de a détaché une fois ; pas celui du timelapse
+    restored = core.restore(t, created[0].id)
+    assert next(c for c in restored if c.media_id == "img").duration == 150  # durée d'origine
+
+
+def test_still_images_short_or_cut(core):
+    p, t, (a,) = project(12.0)
+    photo = MediaItem("/logo.jpg", "image", width=800, height=800, id="img")
+    p.media.append(photo)
+    short = t.add_clip(photo)
+    short.duration = 75  # 3 s : plus court que le maximum, gardé tel quel
+    created = core.apply(t, [a.id, short.id], core.Settings(seed=2, sound="remove"))
+    assert [c.duration for c in created if c.media_id == "img"] == [75]
+    assert sum(c.duration for c in created) == 300 + 75
+    p, t, (a,) = project(12.0)
+    p.media.append(photo)
+    long = t.add_clip(photo)
+    long.duration = 250
+    cut = core.apply(t, [a.id, long.id], core.Settings(seed=2, still_images="cut",
+                                                       sound="remove"))
+    stills = [c.duration for c in cut if c.media_id == "img"]
+    assert len(stills) > 1 and sum(stills) == 250  # comportement de la version 1.3
+
+
+def test_detached_sounds_share_one_track(core):
+    p, t, clips = project(10.0, 10.0, 10.0, 10.0)
+    music = MediaItem("/music.mp3", "audio", duration=120, has_audio=True, id="mu")
+    p.media.append(music)
+    t.add_clip(music, t.first_track("audio").id)
+    core.apply(t, [c.id for c in clips], core.Settings(seed=1))
+    audio_tracks = [k for k in p.tracks if k.kind == "audio"]
+    assert len(audio_tracks) == 2  # la musique, puis une seule piste pour les sons détachés
+    detached = [c for c in p.clips if c.track_id == audio_tracks[1].id]
+    assert sorted(c.media_id for c in detached) == ["m0", "m1", "m2", "m3"]
+
+
+def test_partial_remix_dissolves_previous_group(core):
+    p, t, (a,) = project(10.0)
+    first = core.apply(t, [a.id], core.Settings(seed=1, transition="none", sound="remove"))
+    half = first[:len(first) // 2]
+    core.apply(t, [c.id for c in half], core.Settings(seed=2, transition="none",
+                                                      sound="remove"))
+    rest = [t.clip(c.id) for c in first[len(first) // 2:]]
+    assert all(core.group_of(c) is None for c in rest)  # plus de « Défaire » sur le reste
+    assert all(c.modules[core.MODULE_ID]["length"] == c.duration for c in rest)  # fondus gardés
+    assert sum(c.duration for c in p.clips) == 250  # rien en double
+
+
+def test_originals_stored_once_per_source(core):
+    import json
+
+    p, t, clips = project(*[20.0] * 10)
+    before = len(json.dumps(p.to_dict()))
+    created = core.apply(t, [c.id for c in clips], core.Settings(seed=1, sound="remove"))
+    assert len(created) > 50
+    assert len(json.dumps(p.to_dict())) < before + 1700 * len(created)  # 926 Ko en 1.3
+    restored = core.restore(t, created[0].id)
+    assert [c.media_id for c in restored] == [f"m{i}" for i in range(10)]
+
+
+def test_deleted_media_is_skipped(core):
+    p, t, (a, b) = project(10.0, 10.0)
+    created = core.apply(t, [a.id, b.id], core.Settings(seed=1, sound="remove"))
+    t.remove_media("m0")
+    left = next(c for c in p.clips if core.group_of(c))
+    assert [c.media_id for c in core.originals_of(t, left)] == ["m1"]
+    assert [c.media_id for c in core.restore(t, left.id)] == ["m1"]
+    assert created
+
+
+def test_restore_reads_groups_of_version_1_3(core):
+    from dataclasses import asdict
+
+    p, t, (a, b) = project(10.0, 8.0)
+    created = core.apply(t, [a.id, b.id], core.Settings(seed=1, sound="remove"))
+    old = [asdict(core._build(core.Clip, core.group_of(c)["original"]))
+           for c in sorted(created, key=lambda c: core.group_of(c)["source"])]
+    old = [o for i, o in enumerate(old) if o not in old[:i]]
+    for c in created:  # ancien format : la liste complète sur chaque extrait
+        data = core.group_of(c)
+        data.pop("original"), data.pop("source")
+        data["originals"] = old
+    assert [c.media_id for c in core.restore(t, created[0].id)] == ["m0", "m1"]
 
 
 def test_remix_does_not_detach_twice(core):
@@ -203,21 +286,21 @@ def test_effect_filters(loaded):
               "fade_in": 2, "fade_in_color": "black"}
     (white, props), (black, dark) = effect.filters({**values, "fade_in_color": "white",
                                                      "color": "black"})
-    assert white == "lift_gamma_gain" and props["lift_r"] == "0=1;2=0"
-    assert black == "brightness" and dark["level"] == "95=1;99=0"
-    assert (props["in"], props["out"]) == (0, 99)
+    assert white == "lift_gamma_gain" and props["lift_r"] == "0=1.000;2=0.000"
+    assert black == "brightness" and dark["level"] == "-5=1.000;-1=0.000"  # depuis la fin
+    assert (props["in"], props["out"]) == (0, 10_000_000)  # tout le clip, même recoupé
     (_name, same), = effect.filters(values | {"fade_in_color": "white"})
-    assert same["lift_g"] == "0=1;2=0;95=0;99=1"
+    assert same["lift_g"] == "0=1.000;2=0.000;-5=0.000;-1=1.000"
     full = effect.filters({**effect.defaults(), "full": True, "color": "white"})
     assert full == [("avfilter.lutrgb", {"av.r": "maxval", "av.g": "maxval",
                                          "av.b": "maxval"})]
     assert effect.filters(effect.defaults()) == []
     (name, light), = effect.filters({**effect.defaults(), "length": 50, "burst_out": 2,
                                      "burst_in": 4})
-    assert name == "lift_gamma_gain" and (light["in"], light["out"]) == (0, 49)
+    assert name == "lift_gamma_gain"
     assert light["lift_r"] == ("0=1.000;1=0.562;2=0.250;3=0.062;4=0.000;"
-                               "47=0.000;48=0.250;49=1.000")
-    assert light["gain_b"].startswith("0=1.600;") and light["gain_b"].endswith("49=1.600")
+                               "-3=0.000;-2=0.250;-1=1.000")
+    assert light["gain_b"].startswith("0=1.600;") and light["gain_b"].endswith("-1=1.600")
     assert {t.id for t in api.tools} == {"fab.mixflash.apply", "fab.mixflash.remix",
                                          "fab.mixflash.restore"}
 
@@ -267,10 +350,10 @@ def test_fades_and_bursts_render(loaded, media_dir):
     effect = next(e for e in api.effects if e.id == core.MODULE_ID)
     engine = get_engine()
 
-    def render(values, frame):
+    def render(values, frame, duration=50):
         filters = effect.filters({**effect.defaults(), **values})
-        clip = ClipSpec(str(media_dir / "clip.mp4"), "video", 0, 50, media_size=(640, 360),
-                        extra_filters=tuple(filters))
+        clip = ClipSpec(str(media_dir / "clip.mp4"), "video", 0, duration,
+                        media_size=(640, 360), extra_filters=tuple(filters))
         source = engine.build(TimelineSpec(Canvas(64, 36, 25),
                                            (TrackSpec("video", False, False, (clip,)),)))
         try:
@@ -299,3 +382,6 @@ def test_fades_and_bursts_render(loaded, media_dir):
     assert mean < levels[1] < levels[2] < levels[3]  # montée jusqu'à la coupe
     assert levels[3] >= 250 and levels[4] >= 250  # pic blanc de part et d'autre de la coupe
     assert levels[4] > levels[5] > levels[6] and abs(levels[6] - mean) < 2  # retombée
+    trimmed = {"color": "black", "fade_out": 10, "length": 50}  # extrait raccourci à la main
+    assert max(render(trimmed, 29, duration=30)) <= 5  # le fondu suit la nouvelle fin
+    assert render(trimmed, 10, duration=30) == render({}, 10, duration=30)

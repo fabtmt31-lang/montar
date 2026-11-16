@@ -12,25 +12,33 @@ from montar.i18n import _
 
 from . import core
 
+# Le filtre couvre tout le clip, quelle que soit sa durée : le moteur le limite à la fin du
+# clip. Les positions négatives des images clés comptent depuis cette fin (-1 : dernière
+# image), si bien qu'un extrait raccourci à la main garde son fondu de fin.
+WHOLE_CLIP = {"in": 0, "out": 10_000_000}
 
-def _ramp(color: str, points: list[tuple[int, float]], length: int) -> tuple[str, dict]:
+
+def _keys(points: list[tuple[int, float]], value) -> str:
+    """Images clés MLT, dans l'ordre du clip : positions depuis le début, puis depuis la fin."""
+    ordered = sorted(p for p in points if p[0] >= 0) + sorted(p for p in points if p[0] < 0)
+    return ";".join(f"{f}={value(a):.3f}" for f, a in ordered)
+
+
+def _ramp(color: str, points: list[tuple[int, float]]) -> tuple[str, dict]:
     """Filtre animé vers le blanc ou le noir ; `points` : (image, part de couleur de 0 à 1)."""
-    clip = {"in": 0, "out": length - 1}  # positions relatives au début du clip (API 1.4)
     if color == "white":  # relève les ombres jusqu'au blanc
-        lift = ";".join(f"{f}={a:g}" for f, a in points)
-        return "lift_gamma_gain", {"lift_r": lift, "lift_g": lift, "lift_b": lift, **clip}
-    level = ";".join(f"{f}={1 - a:g}" for f, a in points)
-    return "brightness", {"level": level, "alpha": -1, **clip}
+        lift = _keys(points, lambda a: a)
+        return "lift_gamma_gain", {"lift_r": lift, "lift_g": lift, "lift_b": lift,
+                                   **WHOLE_CLIP}
+    return "brightness", {"level": _keys(points, lambda a: 1 - a), "alpha": -1, **WHOLE_CLIP}
 
 
-def _burst(points: dict[int, float], length: int) -> tuple[str, dict]:
+def _burst(points: list[tuple[int, float]]) -> tuple[str, dict]:
     """Éclat lumineux : l'image se surexpose (gain) et blanchit (ombres relevées)."""
-    keys = sorted(points.items())
-    lift = ";".join(f"{f}={x:.3f}" for f, x in keys)
-    gain = ";".join(f"{f}={1 + 0.6 * x:.3f}" for f, x in keys)
+    lift = _keys(points, lambda x: x)
+    gain = _keys(points, lambda x: 1 + 0.6 * x)
     return "lift_gamma_gain", {"lift_r": lift, "lift_g": lift, "lift_b": lift,
-                               "gain_r": gain, "gain_g": gain, "gain_b": gain,
-                               "in": 0, "out": length - 1}
+                               "gain_r": gain, "gain_g": gain, "gain_b": gain, **WHOLE_CLIP}
 
 
 class Couleur(VideoEffect):
@@ -57,31 +65,25 @@ class Couleur(VideoEffect):
         if values.get("full"):
             expr = "maxval" if values["color"] == "white" else "minval"
             return [("avfilter.lutrgb", {"av.r": expr, "av.g": expr, "av.b": expr})]
+        m, n = max(0, int(values["fade_out"])), max(0, int(values["fade_in"]))
+        d, a = max(0, int(values["burst_in"])), max(0, int(values["burst_out"]))
         length = int(values["length"])
-        if length < 2:
-            return []
-        m = max(0, min(int(values["fade_out"]), length - 1))
-        n = max(0, min(int(values["fade_in"]), length - 1 - m))
+        if length:  # durée connue : début et fin ne se chevauchent pas
+            m, a = min(m, length - 1), min(a, length - 1)
+            n, d = min(n, max(0, length - 1 - m)), min(d, max(0, length - 1 - a))
         ramps: dict[str, list[tuple[int, float]]] = {}
         if n:  # première image : toute la couleur, l'image revient en n images
             ramps.setdefault(values["fade_in_color"], []).extend([(0, 1.0), (n, 0.0)])
         if m:  # dernière image : toute la couleur
-            ramps.setdefault(values["color"], []).extend(
-                [(length - 1 - m, 0.0), (length - 1, 1.0)])
-        result = []
-        for color, points in ramps.items():
-            merged = dict(sorted(points))  # une même image en fin de montée et début de descente
-            result.append(_ramp(color, sorted(merged.items()), length))
-        burst: dict[int, float] = {}
-        d = max(0, min(int(values["burst_in"]), length - 1))
-        for k in range(d + 1):  # retombée : toute la lumière à la première image
-            burst[k] = (1 - k / d) ** 2 if d else 0.0
-        a = max(0, min(int(values["burst_out"]), length - 1))
-        for k in range(a + 1):  # montée accélérée jusqu'à la dernière image
-            frame = length - 1 - a + k
-            burst[frame] = max(burst.get(frame, 0.0), (k / a) ** 2 if a else 0.0)
-        if d or a:
-            result.append(_burst(burst, length))
+            ramps.setdefault(values["color"], []).extend([(-1 - m, 0.0), (-1, 1.0)])
+        result = [_ramp(color, points) for color, points in ramps.items()]
+        burst: list[tuple[int, float]] = []
+        if d:  # retombée : toute la lumière à la première image
+            burst += [(k, (1 - k / d) ** 2) for k in range(d + 1)]
+        if a:  # montée accélérée jusqu'à la dernière image
+            burst += [(-1 - a + k, (k / a) ** 2) for k in range(a + 1)]
+        if burst:
+            result.append(_burst(burst))
         return result
 
 
@@ -136,11 +138,13 @@ class RemixTool(Tool):
 
     def run(self, editor, clip) -> None:
         data = core.group_of(clip)
-        originals = [core._build(core.Clip, d) for d in data.get("originals", [])]
+        originals = core.originals_of(editor.timeline, clip)
+        if not originals:
+            editor.error(_("Les médias de ce mélange ont été supprimés du projet."))
+            return
         settings = core.Settings.from_dict(data.get("settings", {}))
         settings.seed += 1
-        kinds = {c.id: "timelapse" if editor.timeline.timing_locked(c)
-                 else editor.timeline.media_of(c).kind for c in originals}
+        kinds = {c.id: core.kind_of(editor.timeline, c) for c in originals}
         result = _settings_dialog(editor, originals, {c.id for c in originals}, settings,
                                   remix=True, kinds=kinds)
         if result is None:

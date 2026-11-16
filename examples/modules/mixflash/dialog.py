@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 
 from PyQt6.QtCore import QRectF, Qt, QTimer
-from PyQt6.QtGui import QColor, QGuiApplication, QIcon, QLinearGradient, QPainter, QPen
+from PyQt6.QtGui import QBrush, QColor, QGuiApplication, QIcon, QLinearGradient, QPainter, QPen
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -27,7 +27,19 @@ from montar.i18n import _
 from montar.ui.theme import theme
 from montar.ui.widgets import Segmented, label
 
-from .core import BURST_MIN, COLORS, FADE_MIN, LIMITS, SOUND, TRANSITIONS, Settings, covers, plan
+from .core import (
+    BURST_MIN,
+    COLORS,
+    FADE_MIN,
+    LIMITS,
+    SOUND,
+    STILLS,
+    TRANSITIONS,
+    Settings,
+    covers,
+    plan,
+    source_lengths,
+)
 
 # une teinte par clip d'origine, dans l'aperçu
 SWATCHES = ("#5FA882", "#6FA7C9", "#C79A5B", "#A784C2", "#D07A7A", "#7FB8A4", "#B5B35C")
@@ -37,7 +49,8 @@ LIGHT = "#FFF4C2"  # éclat lumineux, dans l'aperçu
 class Strip(QWidget):
     """Bande proportionnelle : clips d'origine, ou extraits mélangés avec leurs transitions.
 
-    Chaque bloc : (images, teinte, [(bord "in" / "out", couleur, images), …])."""
+    Chaque bloc : (images, teinte, [(bord "in" / "out", couleur, images), …], image fixe) ;
+    les images fixes sont hachurées."""
 
     def __init__(self, height: int = 30) -> None:
         super().__init__()
@@ -62,11 +75,14 @@ class Strip(QWidget):
             return
         x = rect.left()
         painter.setPen(Qt.PenStyle.NoPen)
-        for frames, swatch, edges in self.blocks:
+        for frames, swatch, edges, *still in self.blocks:
             w = rect.width() * frames / total
             box = QRectF(x, rect.top(), max(1.0, w - 1), rect.height())
             painter.setBrush(QColor(swatch))
             painter.drawRect(box)
+            if still and still[0]:
+                painter.setBrush(QBrush(QColor(23, 38, 30, 90), Qt.BrushStyle.BDiagPattern))
+                painter.drawRect(box)
             for edge, color, count in edges:
                 if not count or not frames:
                     continue
@@ -92,7 +108,7 @@ def _hex(color: str) -> str:
 
 
 # libellé ajouté au nom des clips qui ne sont pas des vidéos ordinaires
-KIND_TAGS = {"image": "image", "timelapse": "timelapse, gardé entier",
+KIND_TAGS = {"image": "image fixe", "timelapse": "timelapse, gardé entier",
              "mixed": "déjà mélangé, redécoupé"}
 
 
@@ -104,6 +120,7 @@ class MixFlashDialog(QDialog):
         self.setMinimumWidth(560)
         self._clips, self._fps, self._seed = list(clips), fps, settings.seed
         self._kinds = dict(kinds or {})
+        self._names = names
         self._swatch = {c.id: SWATCHES[i % len(SWATCHES)] for i, c in enumerate(self._clips)}
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -120,7 +137,8 @@ class MixFlashDialog(QDialog):
         outer.addWidget(page, 1)
         layout.addWidget(label(_("Mix Flash"), "h2"))
         intro = label(_("Les clips cochés sont découpés en extraits mélangés au hasard. "
-                        "Aucune image n'est perdue ; les extraits n'ont pas de son."), "muted")
+                        "Aucune image vidéo n'est perdue ; les extraits n'ont pas de son."),
+                      "muted")
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
@@ -173,6 +191,21 @@ class MixFlashDialog(QDialog):
         grid.addWidget(self.max_s, 0, 3)
         grid.setColumnStretch(4, 1)
         layout.addLayout(grid)
+
+        self.stills_box = QFrame()  # n'apparaît que si des images fixes sont cochées
+        self.stills_box.setObjectName("InfoBox")
+        sl = QVBoxLayout(self.stills_box)
+        sl.setContentsMargins(14, 10, 14, 10)
+        sl.setSpacing(8)
+        self.stills_title = label("")
+        self.stills_text = label("", "small")
+        self.stills_text.setWordWrap(True)
+        sl.addWidget(self.stills_title)
+        sl.addWidget(self.stills_text)
+        self.stills = Segmented([(k, _(v)) for k, v in STILLS.items()], settings.still_images)
+        self.stills.changed.connect(lambda _k: self._update())
+        sl.addWidget(self.stills)
+        layout.addWidget(self.stills_box)
 
         layout.addWidget(label(_("Entre les extraits")))
         self.transition = Segmented([(k, _(v)) for k, v in TRANSITIONS.items()],
@@ -341,6 +374,7 @@ class MixFlashDialog(QDialog):
             "probability": self.probability.value() / 100, "fade_seconds": self.fade.value(),
             "burst_seconds": self.burst.value(),
             "sound": self.sound.current(), "no_adjacent": self.no_adjacent.isChecked(),
+            "still_images": self.stills.current(),
             "seed": self._seed})
 
     def _update(self, *_args) -> None:
@@ -357,6 +391,15 @@ class MixFlashDialog(QDialog):
         for widget in (self.burst_label, self.burst):
             widget.setEnabled(kind in ("burst", "mix"))
         chosen = [c for c in self._clips if self.boxes[c.id].isChecked()]
+        stills = [c for c in chosen if self._kinds.get(c.id) == "image"]
+        self.stills_box.setVisible(bool(stills))
+        keep = self.stills.current() == "whole"
+        self.stills_title.setText(_("{n} image(s) fixe(s) cochée(s)").format(n=len(stills)))
+        self.stills_text.setText(
+            _("Chacune reste d'un seul tenant et dure au plus {d} (la durée maximale des "
+              "extraits).").format(d=_decimal(self.max_s.value())) if keep else
+            _("Chacune est coupée en plusieurs extraits et revient plusieurs fois dans le "
+              "mélange."))
         self.whole.blockSignals(True)
         self.whole.setChecked(len(chosen) == len(self._clips))
         self.whole.blockSignals(False)
@@ -367,28 +410,42 @@ class MixFlashDialog(QDialog):
             self.summary.setText(_("Cochez au moins un clip."))
             return
         settings = self.settings()
-        lengths = [c.duration for c in chosen]
-        items = plan(lengths, self._fps, settings,
-                     [self._kinds.get(c.id) == "timelapse" for c in chosen])
-        self.before.set_blocks((c.duration, self._swatch[c.id], []) for c in chosen)
+        kinds = [self._kinds.get(c.id, "video") for c in chosen]
+        lengths, whole = source_lengths([c.duration for c in chosen], kinds, self._fps,
+                                        settings)
+        items = plan(lengths, self._fps, settings, whole)
+        self.before.set_blocks((c.duration, self._swatch[c.id], [], k == "image")
+                               for c, k in zip(chosen, kinds, strict=True))
         self.after.set_blocks(
             (i.length, self._swatch[chosen[i.piece.source].id],
              [("in", _hex(i.fade_in_color), i.fade_in), ("out", _hex(i.color), i.fade_out),
-              ("in", LIGHT, i.burst_in), ("out", LIGHT, i.burst_out)]) for i in items)
+              ("in", LIGHT, i.burst_in), ("out", LIGHT, i.burst_out)],
+             kinds[i.piece.source] == "image") for i in items)
         fades = sum(1 for i in items if i.after == "fade")
         bursts = sum(1 for i in items if i.after == "burst")
         shortest = min(i.length for i in items) / self._fps
         longest = max(i.length for i in items) / self._fps
+        before = sum(c.duration for c in chosen)
         total = sum(lengths)
+        moving = sum(n for n, k in zip(lengths, kinds, strict=True) if k != "image")
         ok = covers(lengths, items)
-        uncut = [c for c, n in zip(chosen, self._piece_counts(items, len(chosen)), strict=True)
-                 if n == 1 and self._kinds.get(c.id) != "timelapse"]
+        uncut = [c for c, n, w in zip(chosen, self._piece_counts(items, len(chosen)), whole,
+                                      strict=True) if n == 1 and not w]
+        duration = seconds_to_short(before / self._fps)
+        if total != before:
+            duration += " → " + seconds_to_short(total / self._fps)
         self.summary.setText(_(
             "{n} extraits de {a} à {b} · {f} fondus · {e} éclats · durée {d}\n{check}").format(
             n=len(items), a=_decimal(shortest), b=_decimal(longest), f=fades, e=bursts,
-            d=seconds_to_short(total / self._fps),
-            check=(_("✓ {t} images sur {t} replacées, sans trou ni doublon").format(t=total)
-                   if ok else _("Découpage incomplet : impossible d'appliquer"))))
+            d=duration,
+            check=(_("✓ {t} images vidéo sur {t} replacées, sans trou ni doublon").format(
+                t=moving) if ok else _("Découpage incomplet : impossible d'appliquer"))))
+        for c, n, k in zip(chosen, lengths, kinds, strict=True):
+            if k == "image" and n < c.duration:
+                self.summary.setText(self.summary.text() + "\n" + _(
+                    "{name} raccourcie de {a} à {b}").format(
+                    name=self._names(c), a=_decimal(c.duration / self._fps),
+                    b=_decimal(n / self._fps)))
         if uncut:
             self.summary.setText(self.summary.text() + "\n" + _(
                 "{n} clip(s) trop court(s) pour être coupé(s) (moins de deux fois la durée "

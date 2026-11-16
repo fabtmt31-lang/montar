@@ -12,7 +12,9 @@ Cible : Debian 12+, Ubuntu 24.04+ et Linux Mint 22+ (paquet `.deb`) dans un prem
 Préférences → Extensions) : clic droit sur un clip vidéo → **Mix Flash…**. Tous les clips de
 la piste sont cochés (case **Toute la piste**) : vidéos, images, extraits d'un mélange
 précédent, et timelapses (déplacés d'un bloc, jamais coupés) ; on décoche ceux à garder tels
-quels. Ils sont découpés en extraits de 0,5 à 5 s mélangés au hasard, sans perdre une
+quels. Les images fixes sont signalées et, par défaut, gardées d'un seul tenant et ramenées
+au plus à la durée maximale des extraits (une image de 6 s dure 5 s) ; elles peuvent aussi
+être découpées comme une vidéo. Ils sont découpés en extraits de 0,5 à 5 s mélangés au hasard, sans perdre une
 image (vérifié avant d'appliquer). Entre les extraits, posés par-dessus les images : **fondus**
 au noir, au blanc ou les deux (après les extraits d'au moins 1 s) et **éclats lumineux**
 (l'image s'illumine jusqu'au blanc à la coupe puis retombe, dès 0,5 s). Le son est détaché sur

@@ -8,8 +8,11 @@ transition est possible, posée par-dessus les images (la durée ne change pas) 
 noir ou au blanc après les extraits d'au moins 1 s, ou un éclat lumineux (l'image se
 surexpose jusqu'au blanc à la coupe, puis retombe) après les extraits d'au moins 0,5 s.
 
-Les réglages du groupe et les clips d'origine sont gardés dans `clip.modules["fab.mixflash"]`
-de chaque extrait, pour remélanger ou revenir aux clips d'origine."""
+Les images fixes sont gardées entières par défaut, et ramenées au plus à la durée maximale
+des extraits ; les timelapses sont toujours gardés entiers (leur rendu est pré-calculé).
+
+Chaque extrait garde dans `clip.modules["fab.mixflash"]` le numéro de son mélange, les
+réglages et le clip d'origine dont il vient, pour remélanger ou revenir aux clips d'origine."""
 from __future__ import annotations
 
 import copy
@@ -38,6 +41,8 @@ TRANSITIONS = {"none": "Aucune", "fade": "Fondus", "burst": "Éclats lumineux",
                "mix": "Fondus et éclats"}
 COLORS = {"black": "Noir", "white": "Blanc", "mix": "Noir et blanc"}
 SOUND = {"detach": "Détacher le son d'abord", "remove": "Supprimer le son"}
+STILLS = {"whole": "Garder entières", "cut": "Découper comme une vidéo"}
+GROUP_KEYS = ("group", "settings", "source", "original", "originals", "role")
 
 
 @dataclass
@@ -50,6 +55,7 @@ class Settings:
     fade_seconds: float = 0.4
     burst_seconds: float = 0.3
     sound: str = "detach"
+    still_images: str = "whole"  # images fixes : un seul extrait, au plus la durée maximale
     no_adjacent: bool = True  # deux extraits qui se suivaient ne restent pas côte à côte
     seed: int = 1
 
@@ -64,6 +70,7 @@ class Settings:
         s.transition = s.transition if s.transition in TRANSITIONS else "mix"
         s.fade_color = s.fade_color if s.fade_color in COLORS else "mix"
         s.sound = s.sound if s.sound in SOUND else "detach"
+        s.still_images = s.still_images if s.still_images in STILLS else "whole"
         s.probability = max(0.0, min(1.0, s.probability))
         s.fade_seconds = max(0.1, min(1.0, s.fade_seconds))
         s.burst_seconds = max(0.1, min(1.0, s.burst_seconds))
@@ -227,6 +234,22 @@ def plan(lengths: list[int], fps: int, settings: Settings,
     return items
 
 
+def source_lengths(durations: list[int], kinds: list[str], fps: int,
+                   settings: Settings) -> tuple[list[int], list[bool]]:
+    """Durées à mélanger et sources d'un seul tenant, selon la nature de chaque clip.
+
+    Une image fixe gardée entière dure au plus la durée maximale des extraits ; un
+    timelapse garde sa durée. Les autres clips sont découpés."""
+    low = max(1, round(settings.min_seconds * fps))
+    high = max(low, round(settings.max_seconds * fps))
+    lengths, whole = [], []
+    for duration, kind in zip(durations, kinds, strict=True):
+        still = kind == "image" and settings.still_images == "whole"
+        lengths.append(min(duration, high) if still else duration)
+        whole.append(still or kind == "timelapse")
+    return lengths, whole
+
+
 def covers(lengths: list[int], items: list[Item]) -> bool:
     """Chaque image de chaque source est dans exactement un extrait."""
     for source, total in enumerate(lengths):
@@ -270,12 +293,13 @@ def candidates(timeline, clip: Clip) -> list[Clip]:
 
 
 def kind_of(timeline, clip: Clip) -> str:
-    """Nature du clip, affichée dans la fenêtre : "video", "image", "timelapse", "mixed"."""
+    """Nature du clip : "video", "image" (image fixe), "timelapse" ou "mixed" (extrait)."""
     if kept_whole(timeline, clip):
         return "timelapse"
-    if group_of(clip) is not None:
-        return "mixed"
-    return timeline.media_of(clip).kind
+    media = timeline.media_of(clip)
+    if media is not None and media.kind == "image":
+        return "image"
+    return "mixed" if group_of(clip) is not None else "video"
 
 
 _NESTED = {"transform": Transform, "color": ColorAdjust, "effects": Effects,
@@ -292,27 +316,95 @@ def _build(cls, data: dict):
     return cls(**copy.deepcopy(values))
 
 
+def _compact(data: dict, default: dict) -> dict:
+    """Seulement ce qui diffère des valeurs par défaut (projet plus léger)."""
+    result = {}
+    for key, value in data.items():
+        base = default.get(key)
+        if isinstance(value, dict) and isinstance(base, dict):
+            value = _compact(value, base)
+            if value:
+                result[key] = value
+        elif value != base:
+            result[key] = value
+    return result
+
+
+def _record(clip: Clip) -> dict:
+    """Clip d'origine tel qu'il est gardé dans chaque extrait qui en vient."""
+    data = asdict(clip)
+    required = {k: data[k] for k in ("media_id", "track_id", "start", "duration")}
+    return required | _compact(data, asdict(Clip("", "", 0, 0)) | {"text": None})
+
+
+def originals_of(timeline, clip: Clip) -> list[Clip]:
+    """Clips d'origine du mélange de `clip`, dans l'ordre de la piste. Ceux dont le média a
+    été supprimé du projet, ou dont tous les extraits ont été supprimés, sont omis."""
+    data = group_of(clip)
+    if data is None:
+        return []
+    if "originals" in data:  # mélanges des versions 1.0 à 1.3 : liste complète sur chaque extrait
+        found = dict(enumerate(data["originals"]))
+    else:
+        found = {}
+        for member in members(timeline, clip):
+            record = group_of(member)
+            found.setdefault(int(record["source"]), record["original"])
+    result = [_build(Clip, found[k]) for k in sorted(found)]
+    return [c for c in result if timeline.project.find_media(c.media_id) is not None]
+
+
 def _source_in(clip: Clip, offset: int, length: int) -> int:
     if clip.reverse:  # la plage est lue à l'envers : la fin du clip est le début du média
         return clip.source_in + round((clip.duration - offset - length) * clip.speed)
     return clip.source_in + round(offset * clip.speed)
 
 
-def _piece_clip(src: Clip, item: Item, start: int, record: dict) -> Clip:
+def _piece_clip(src: Clip, item: Item, start: int, record: dict, keep_sound: bool) -> Clip:
     piece = item.piece
     clip = copy.deepcopy(src)
     clip.id = new_id()
     clip.start, clip.duration = start, item.length
     clip.source_in = _source_in(src, piece.offset, piece.length)
-    clip.volume, clip.fade_in, clip.fade_out = 0.0, 0, 0
+    clip.volume = src.volume if keep_sound else 0.0
+    clip.fade_in = clip.fade_out = 0
     clip.keyframes = {}
     clip.modules.pop(MODULE_ID, None)
-    clip.modules[MODULE_ID] = {**record, "role": "piece", "color": item.color or "black",
+    clip.modules[MODULE_ID] = {**record, "source": piece.source, "role": "piece",
+                               "color": item.color or "black",
                                "fade_in_color": item.fade_in_color or "black",
                                "fade_in": item.fade_in, "fade_out": item.fade_out,
                                "burst_in": item.burst_in, "burst_out": item.burst_out,
                                "length": item.length, "full": False}
     return clip
+
+
+def _detach_sounds(timeline, clips: list[Clip]) -> None:
+    """Place le son des clips sur une seule piste audio (libre sur toutes leurs plages)."""
+    todo = [c for c in clips if c.volume > 0 and not kept_whole(timeline, c)
+            and timeline.media_of(c).has_audio]
+    if not todo:
+        return
+    track = timeline.first_track("audio")
+    if track is None or any(o.start < c.end and c.start < o.end
+                            for c in todo for o in timeline.clips_on(track.id)):
+        track = timeline.add_track("audio")  # la première piste audio est occupée
+    for c in todo:
+        timeline.project.clips.append(Clip(
+            c.media_id, track.id, c.start, c.duration, source_in=c.source_in, speed=c.speed,
+            reverse=c.reverse, volume=c.volume, fade_in=c.fade_in, fade_out=c.fade_out,
+            audio=copy.deepcopy(c.audio)))
+        c.volume = 0.0
+
+
+def _dissolve(timeline, groups: set[str], taken: set[str]) -> None:
+    """Les extraits restants d'un mélange dont une partie est remélangée deviennent des
+    clips ordinaires (ils gardent leurs fondus et éclats, plus « Défaire »)."""
+    for clip in timeline.project.clips:
+        data = group_of(clip)
+        if data is not None and data["group"] in groups and clip.id not in taken:
+            for key in GROUP_KEYS:
+                data.pop(key, None)
 
 
 def apply(timeline, clip_ids: list[str], settings: Settings) -> list[Clip]:
@@ -324,17 +416,17 @@ def apply(timeline, clip_ids: list[str], settings: Settings) -> list[Clip]:
     for c in clips:
         if c.track_id != track_id or not eligible(timeline, c):
             raise TimelineError("les clips doivent être des vidéos de la même piste")
+    kinds = [kind_of(timeline, c) for c in clips]
+    previous = {group_of(c)["group"] for c in clips if group_of(c) is not None}
+    _dissolve(timeline, previous, {c.id for c in clips})
     if settings.sound == "detach":
-        for c in clips:
-            media = timeline.media_of(c)
-            # son déjà détaché : volume nul ; un timelapse garde son propre réglage du son
-            if media.has_audio and c.volume > 0 and not kept_whole(timeline, c):
-                timeline.detach_audio(c.id)
+        _detach_sounds(timeline, clips)
     sources = [copy.deepcopy(c) for c in clips]
     for source in sources:  # un extrait d'un mélange précédent redevient un clip ordinaire
         source.modules.pop(MODULE_ID, None)
-    lengths = [c.duration for c in sources]
-    items = plan(lengths, timeline.fps, settings, [kept_whole(timeline, c) for c in clips])
+    lengths, whole = source_lengths([c.duration for c in sources], kinds, timeline.fps,
+                                    settings)
+    items = plan(lengths, timeline.fps, settings, whole)
     if not covers(lengths, items):
         raise TimelineError("le découpage ne couvre pas toutes les images")
     anchor = clips[0].start
@@ -342,12 +434,16 @@ def apply(timeline, clip_ids: list[str], settings: Settings) -> list[Clip]:
         timeline.delete(c.id, ripple=True)
     total = sum(i.length for i in items)
     timeline.shift_after(track_id, anchor, total)
-    record = {"group": new_id(), "settings": asdict(settings),
-              "originals": [asdict(c) for c in sources]}
+    group = new_id()
+    originals = [_record(c) for c in sources]
     created: list[Clip] = []
     position = anchor
     for item in items:
-        clip = _piece_clip(sources[item.piece.source], item, position, record)
+        index = item.piece.source
+        record = {"group": group, "settings": asdict(settings),
+                  "original": originals[index]}  # son clip d'origine, pas tous ceux du mélange
+        keep = kinds[index] == "timelapse" and settings.sound == "detach"
+        clip = _piece_clip(sources[index], item, position, record, keep_sound=keep)
         timeline.project.clips.append(clip)
         created.append(clip)
         position += item.length
@@ -366,16 +462,15 @@ def members(timeline, clip: Clip) -> list[Clip]:
 def restore(timeline, clip_id: str) -> list[Clip]:
     """Retire les extraits du groupe et remet les clips d'origine à leur place."""
     clip = timeline.clip(clip_id)
-    data = group_of(clip)
-    if data is None:
+    if group_of(clip) is None:
         raise TimelineError("ce clip ne fait pas partie d'un Mix Flash")
+    originals = originals_of(timeline, clip)
     group = members(timeline, clip)
     track_id = group[0].track_id
     anchor = group[0].start
     end = max(c.end for c in group if c.track_id == track_id)
     for c in group:
         timeline.delete(c.id)
-    originals = [_build(Clip, d) for d in data.get("originals", [])]
     length = sum(c.duration for c in originals)
     timeline.shift_after(track_id, end, length - (end - anchor))
     position = anchor
@@ -391,4 +486,6 @@ def restore(timeline, clip_id: str) -> list[Clip]:
 def remix(timeline, clip_id: str, settings: Settings) -> list[Clip]:
     """Nouveau mélange du groupe, à partir des clips d'origine."""
     originals = restore(timeline, clip_id)
+    if not originals:
+        raise TimelineError("aucun clip d'origine à remélanger")
     return apply(timeline, [c.id for c in originals], settings)
