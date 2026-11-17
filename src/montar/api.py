@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-API_VERSION = (1, 4)
+API_VERSION = (1, 5)
 
 # Pseudo-filtre (1.3) qu'un `VideoEffect` peut renvoyer : zoom animé du cadre du clip autour
 # de son centre. Propriétés : start, end (facteurs, 1 = normal), seconds (0 = tout le clip),
@@ -39,7 +39,7 @@ class Param:
 
     key: str
     label: str
-    kind: str = "float"  # float | int | bool | choice | color (1.2, « #RRGGBB »)
+    kind: str = "float"  # float | int | bool | choice | color (1.2, « #RRGGBB ») | text (1.5)
     default: Any = 0.0
     minimum: float = 0.0
     maximum: float = 1.0
@@ -64,6 +64,11 @@ class Param:
     def color(cls, key: str, label: str, default: str = "#FFFFFF") -> Param:
         return cls(key, label, "color", default)
 
+    @classmethod
+    def text(cls, key: str, label: str, default: str = "", placeholder: str = "") -> Param:
+        """Texte libre sur une ligne (1.5) ; `placeholder` s'affiche quand il est vide."""
+        return cls(key, label, "text", default, unit=placeholder)
+
 
 class VideoEffect:
     """Effet vidéo d'un module. `filters` reçoit les valeurs des paramètres du clip."""
@@ -73,6 +78,9 @@ class VideoEffect:
     description: str = ""  # phrase affichée dans « Appliquer un effet ou un module » (1.1)
     icon: str = "sparkles"  # (1.1)
     params: Sequence[Param] = ()
+    # préréglages (1.5) : identifiant → (libellé, valeurs) ; l'inspecteur affiche un bouton
+    # par préréglage, qui règle d'un coup les paramètres donnés
+    presets: dict[str, tuple[str, dict[str, Any]]] = {}
 
     def defaults(self) -> dict[str, Any]:
         return {p.key: p.default for p in self.params}

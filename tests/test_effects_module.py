@@ -84,13 +84,26 @@ def test_every_effect_renders(effects, media_dir):
 def test_vhs_and_comic_options(effects):
     vhs = effects["effets.vhs"]
     names = [n for n, _p in vhs.filters(vhs.defaults())]
-    assert "avfilter.drawtext" in names and "frei0r.glitch0r" in names
-    plain = [n for n, _p in vhs.filters({**vhs.defaults(), "affichage": "aucun",
-                                         "defauts": False})]
-    assert "avfilter.drawtext" not in plain and "frei0r.glitch0r" not in plain
-    dated = [p for n, p in vhs.filters({**vhs.defaults(), "affichage": "lecture_date"})
-             if n == "avfilter.drawtext"]
-    assert len(dated) == 2 and dated[0]["av.text"] == "PLAY ▶"
+    assert "avfilter.drawtext" in names and "frei0r.distort0r" in names
+    # à zéro : image propre (seulement l'affichage demandé)
+    clean = vhs.filters({**vhs.defaults(), "couleur": 0, "grain": 0, "defauts": 0,
+                         "affichage": "aucun"})
+    assert clean == []
+    # décrochages réservés à une bande bien usée (préréglage « Vieille cassette »)
+    worn = {**vhs.defaults(), **vhs.presets["vieille"][1]}
+    assert "frei0r.glitch0r" in [n for n, _p in vhs.filters(worn)]
+    light = {**vhs.defaults(), **vhs.presets["leger"][1]}
+    assert "frei0r.glitch0r" not in [n for n, _p in vhs.filters(light)]
+    dated = [p for n, p in vhs.filters({**vhs.defaults(), "affichage": "lecture_date",
+                                        "date": "24 dec 1994"}) if n == "avfilter.drawtext"]
+    assert [d["av.text"] for d in dated] == ["PLAY ▶", "24 DEC 1994"]
+    rec = [p for n, p in vhs.filters({**vhs.defaults(), "affichage": "rec_date"})
+           if n == "avfilter.drawtext"]
+    assert [d["av.text"] for d in rec][:2] == ["●", "REC"] and "alpha" in str(rec[0])
+    assert rec[-1]["av.text"].startswith("%{pts:gmtime")  # compteur
+    # anciens réglages (intensité + case « défauts ») : relus sans socle fixe
+    old = vhs.filters({"intensite": 0.0, "defauts": True, "affichage": "aucun"})
+    assert old == []
     comic = effects["effets.bd"]
     calm = [n for n, _p in comic.filters(comic.defaults())]
     alive = [n for n, _p in comic.filters({**comic.defaults(), "vivant": True})]
@@ -116,3 +129,17 @@ def test_vhs_display_and_living_line_render(effects, media_dir):
     image = media_dir / "photo.png"
     assert _render(engine, image, alive, 3, "image", (320, 240)) != \
         _render(engine, image, alive, 4, "image", (320, 240))
+
+
+@needs_ffmpeg
+def test_vhs_rec_dot_blinks(effects, media_dir):
+    pytest.importorskip("mlt7")
+    from montar.engine import get_engine
+
+    engine = get_engine()
+    vhs = effects["effets.vhs"]
+    values = {**vhs.defaults(), "couleur": 0, "grain": 0, "defauts": 0, "affichage": "rec"}
+    clip = media_dir / "photo.png"
+    on = _render(engine, clip, vhs.filters(values), 5, "image", (640, 360))
+    off = _render(engine, clip, vhs.filters(values), 17, "image", (640, 360))
+    assert on != off  # le point rouge s'éteint une demi-seconde sur deux

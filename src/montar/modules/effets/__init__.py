@@ -26,64 +26,106 @@ def _vcr_text(text: str, x: str, y: str, size: str) -> tuple[str, dict]:
         "av.shadowy": 2})
 
 
+def _vhs_levels(values) -> tuple[float, float, float]:
+    """(couleur, grain, défauts) de 0 à 1. Les clips réglés avant la 1.15 n'avaient qu'une
+    intensité et une case « défauts » : ils gardent un rendu proche, sans socle fixe."""
+    if isinstance(values.get("defauts"), bool) or (
+            "intensite" in values and "couleur" not in values):
+        a = _amount(values)
+        return a, a * 0.8, a if values.get("defauts", True) else 0.0
+    return (_amount(values, "couleur"), _amount(values, "grain"),
+            _amount(values, "defauts"))
+
+
+def _vhs_date(values) -> str:
+    """Date du magnétoscope : celle saisie (« 24 DEC 1994 »), sinon celle du jour."""
+    text = str(values.get("date") or "").strip().upper()
+    if text:
+        return text
+    today = date.today()
+    return f"{MONTHS[today.month - 1]} {today.day:02d} {today.year}"
+
+
 class VHS(VideoEffect):
     id = "effets.vhs"
     name = "VHS"
-    description = ("Cassette vidéo des années 80-90 : image douce, couleurs baveuses et "
-                   "ternies, grain, défauts de bande, affichage « PLAY ».")
+    description = ("Cassette vidéo des années 80-90 : couleurs baveuses et ternies, grain, "
+                   "défauts de bande, affichage « PLAY » ou « REC ». À zéro, l'image reste "
+                   "propre.")
     icon = "monitor-play"
-    params = [Param.float("intensite", "Intensité", 0.0, 1.0, default=0.6),
-              Param.bool("defauts", "Défauts de bande (parasites, ondulation)", True),
-              Param.choice("affichage", "Affichage du magnétoscope",
+    params = [Param.float("couleur", "Couleur de cassette", 0.0, 1.0, default=0.5),
+              Param.float("grain", "Grain", 0.0, 1.0, default=0.3),
+              Param.float("defauts", "Défauts de bande", 0.0, 1.0, default=0.25),
+              Param.choice("affichage", "Affichage",
                            [("lecture", "PLAY ▶"), ("lecture_date", "PLAY ▶ et date"),
+                            ("rec", "● REC"), ("rec_date", "● REC, date et compteur"),
                             ("aucun", "Aucun")]),
+              Param.text("date", "Date affichée", placeholder="Date du jour (ex. 24 DEC 1994)"),
               Param.bool("lignes", "Lignes de balayage", False)]
+    presets = {"leger": ("Léger", {"couleur": 0.3, "grain": 0.12, "defauts": 0.0}),
+               "cassette": ("Cassette", {"couleur": 0.55, "grain": 0.35, "defauts": 0.3}),
+               "vieille": ("Vieille cassette", {"couleur": 0.9, "grain": 0.65,
+                                                "defauts": 0.8})}
 
     def filters(self, values):
-        a = _amount(values)
-        result = [
-            # bande passante réduite : image douce, couleur beaucoup plus floue que le noir
-            # et blanc, puis décalée vers la droite (bavure)
-            ("avfilter.boxblur", {"av.luma_radius": f"w/{round(1200 - 700 * a)}",
-                                  "av.luma_power": 1,
-                                  "av.chroma_radius": f"w/{round(420 - 260 * a)}",
-                                  "av.chroma_power": 2}),
-            ("avfilter.chromashift", {"av.cbh": max(1, round(4 * a)),
-                                      "av.crh": max(1, round(5 * a)), "av.edge": 1}),
+        color, grain, faults = _vhs_levels(values)
+        result = []
+        if color > 0.01:
+            # bande passante réduite : couleur plus floue que le noir et blanc, décalée
+            result.append(("avfilter.boxblur", {
+                "av.luma_radius": f"w/{round(1600 - 900 * color)}", "av.luma_power": 1,
+                "av.chroma_radius": f"w/{round(700 - 450 * color)}", "av.chroma_power": 2}))
+            shift_b, shift_r = round(4 * color), round(5 * color)
+            if shift_b or shift_r:
+                result.append(("avfilter.chromashift", {"av.cbh": shift_b, "av.crh": shift_r,
+                                                        "av.edge": 1}))
             # couleurs délavées, noirs relevés, dominante chaude dans les hautes lumières
-            ("avfilter.eq", {"av.saturation": round(1 - 0.3 * a, 3),
-                             "av.contrast": round(1 - 0.14 * a, 3),
-                             "av.brightness": round(0.045 * a, 3),
-                             "av.gamma": round(1 + 0.06 * a, 3)}),
-            ("avfilter.colorbalance", {"av.rs": round(0.05 * a, 3), "av.bs": round(0.07 * a, 3),
-                                       "av.rh": round(0.05 * a, 3),
-                                       "av.bh": round(-0.06 * a, 3)}),
-            ("avfilter.noise", {"av.alls": round(8 + 26 * a), "av.allf": "t+u",
-                                "av.c0s": round(4 + 8 * a)}),
-        ]
-        if values.get("defauts", True):
-            result[2:2] = [
-                # ondulation des lignes et décrochages de la bande (aléatoires)
-                ("frei0r.distort0r", {"0": round(0.002 + 0.006 * a, 4),
-                                      "1": round(0.02 + 0.04 * a, 3), "2": 0, "3": 0.6}),
-                ("frei0r.glitch0r", {"0": round(0.03 + 0.08 * a, 3), "1": 0.06,
-                                     "2": round(0.01 + 0.03 * a, 3), "3": 0.15}),
+            result += [
+                ("avfilter.eq", {"av.saturation": round(1 - 0.3 * color, 3),
+                                 "av.contrast": round(1 - 0.14 * color, 3),
+                                 "av.brightness": round(0.045 * color, 3),
+                                 "av.gamma": round(1 + 0.06 * color, 3)}),
+                ("avfilter.colorbalance", {"av.rs": round(0.05 * color, 3),
+                                           "av.bs": round(0.07 * color, 3),
+                                           "av.rh": round(0.05 * color, 3),
+                                           "av.bh": round(-0.06 * color, 3)}),
             ]
+        if faults > 0.01:
+            # ondulation des lignes ; décrochages seulement sur une bande bien usée
+            result.append(("frei0r.distort0r", {"0": round(0.008 * faults, 4),
+                                                "1": round(0.06 * faults, 3), "2": 0,
+                                                "3": 0.6}))
+            if faults > 0.4:
+                f = (faults - 0.4) / 0.6
+                result.append(("frei0r.glitch0r", {"0": round(0.01 + 0.1 * f, 3), "1": 0.06,
+                                                   "2": round(0.01 + 0.03 * f, 3),
+                                                   "3": 0.15}))
             # bande de parasites en bas de l'image (changement de tête de lecture)
             result.append(("avfilter.drawbox", {"av.x": 0, "av.y": "ih*0.955", "av.w": "iw",
                                                 "av.h": "ih*0.045",
-                                                "av.color": f"white@{0.06 + 0.12 * a:.2f}",
+                                                "av.color": f"white@{0.2 * faults:.2f}",
                                                 "av.t": "fill"}))
+        if grain > 0.01:
+            result.append(("avfilter.noise", {"av.alls": max(1, round(32 * grain)),
+                                              "av.allf": "t+u",
+                                              "av.c0s": max(1, round(10 * grain))}))
         if values.get("lignes", False):
             result.append(("frei0r.scanline0r", {}))
-        result.append(("avfilter.vignette", {"av.angle": round(0.25 + 0.3 * a, 3)}))
+        if color > 0.01:
+            result.append(("avfilter.vignette", {"av.angle": round(0.5 * color, 3)}))
         shown = values.get("affichage", "lecture")
         if shown in ("lecture", "lecture_date"):
             result.append(_vcr_text("PLAY ▶", "w*0.06", "h*0.07", "h/12"))
-        if shown == "lecture_date":
-            today = date.today()
-            result.append(_vcr_text(f"{MONTHS[today.month - 1]} {today.day:02d} {today.year}",
-                                    "w*0.06", "h*0.83", "h/14"))
+        if shown in ("rec", "rec_date"):
+            # point rouge qui clignote (une demi-seconde sur deux), comme un caméscope
+            dot = _vcr_text("●", "w*0.94-text_w-h/12*2.2", "h*0.07", "h/12")
+            dot[1].update({"av.fontcolor": "0xE0332B", "av.alpha": "lt(mod(t,1),0.5)"})
+            result += [dot, _vcr_text("REC", "w*0.94-text_w", "h*0.07", "h/12")]
+        if shown in ("lecture_date", "rec_date"):
+            result.append(_vcr_text(_vhs_date(values), "w*0.06", "h*0.83", "h/14"))
+        if shown == "rec_date":  # compteur qui défile depuis le début du clip
+            result.append(_vcr_text("%{pts:gmtime:0:%H\\:%M\\:%S}", "w*0.94-text_w",
+                                    "h*0.83", "h/14"))
         return result
 
 

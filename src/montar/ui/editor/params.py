@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QColorDialog,
     QComboBox,
     QHBoxLayout,
+    QLineEdit,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -73,6 +74,17 @@ class ParamControl:
             self.combo = combo
         elif kind == "color":
             w = ColorButton(_(param.label), lambda c: on_change(c, False))
+        elif kind == "text":
+            edit = QLineEdit()
+            edit.setPlaceholderText(_(param.unit) if param.unit else "")
+            edit.editingFinished.connect(lambda: on_change(edit.text().strip(), False))
+            w = QWidget()
+            layout = QVBoxLayout(w)
+            layout.setContentsMargins(0, 4, 0, 4)
+            layout.setSpacing(4)
+            layout.addWidget(label(_(param.label)))
+            layout.addWidget(edit)
+            self.edit = edit
         else:
             unit = f" {param.unit}" if param.unit else ""
             decimals = 0 if kind == "int" or abs(param.maximum) >= 20 else 2
@@ -93,6 +105,9 @@ class ParamControl:
             self.combo.blockSignals(False)
         elif kind == "color":
             w.set_value(str(value))
+        elif kind == "text":
+            if not self.edit.hasFocus():  # pas pendant la saisie
+                self.edit.setText(str(value or ""))
         else:
             w.set_value(float(value))
         w.blockSignals(False)

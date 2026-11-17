@@ -2955,3 +2955,27 @@ def test_media_panel_groups_and_partial_selection(window, media_dir, monkeypatch
     assert panel.selection_label.text() == "3 sélectionnés"
     QTest.keyClick(panel.grid, Qt.Key.Key_Escape)
     assert not panel.grid.checking and not panel.grid.selectedItems()
+
+
+@needs_ffmpeg
+def test_effect_presets_and_text_param(window, media_dir):
+    from PyQt6.QtWidgets import QLineEdit
+
+    editor = imported_editor(window, media_dir, ["red.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    clip = editor.project.clips[0]
+    editor.controller.select(clip.id)
+    editor.controller.edit_clip("VHS", clip.id, lambda c: c.modules.update(
+        {"effets.vhs": {}}))
+    panel = editor.effects_panel
+    panel.refresh()
+    presets = [b for b in panel.findChildren(QPushButton) if b.property("preset")]
+    assert [b.property("preset") for b in presets] == ["leger", "cassette", "vieille"]
+    next(b for b in presets if b.property("preset") == "vieille").click()
+    values = editor.project.clips[0].modules["effets.vhs"]
+    assert values["couleur"] == 0.9 and values["defauts"] == 0.8
+    assert editor.controller.history.undo_label() == "VHS : Vieille cassette"
+    date = next(e for e in panel.findChildren(QLineEdit) if "1994" in e.placeholderText())
+    date.setText("24 dec 1994")
+    date.editingFinished.emit()
+    assert editor.project.clips[0].modules["effets.vhs"]["date"] == "24 dec 1994"

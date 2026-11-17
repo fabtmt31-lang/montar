@@ -374,6 +374,18 @@ class EffectsPanel(_Panel):
             remove.clicked.connect(lambda _=False, e=effect, a=audio: self._remove(e, a))
             hl.addWidget(remove)
             self._modules_box.addWidget(head)
+            if getattr(effect, "presets", None):  # préréglages (API 1.5) : un clic règle tout
+                row = QWidget()
+                rl = QHBoxLayout(row)
+                rl.setContentsMargins(0, 0, 0, 4)
+                rl.setSpacing(4)
+                for key, (text, values) in effect.presets.items():
+                    b = button(_(text), "secondary")
+                    b.setProperty("preset", key)
+                    b.clicked.connect(lambda _=False, e=effect, v=values, a=audio, t=text:
+                                      self._apply_preset(e, v, a, t))
+                    rl.addWidget(b)
+                self._modules_box.addWidget(row)
             for param in effect.params:
                 control = ParamControl(
                     param, lambda v, merge, e=effect, k=param.key, a=audio:
@@ -401,6 +413,18 @@ class EffectsPanel(_Panel):
 
         self.controller.edit_clip(_(effect.name), clip.id, change,
                                   merge=(clip.id, effect.id, key) if merge else None)
+
+    def _apply_preset(self, effect, values: dict, audio: bool, text: str) -> None:
+        clip = self._audio_clip() if audio else self._visual_clip()
+        if clip is None:
+            return
+
+        def change(c):
+            current = dict(c.modules.get(effect.id) or effect.defaults())
+            current.update(values)
+            c.modules[effect.id] = current
+
+        self.controller.edit_clip(f"{_(effect.name)} : {_(text)}", clip.id, change)
 
     def _remove(self, effect, audio: bool) -> None:
         clip = self._audio_clip() if audio else self._visual_clip()

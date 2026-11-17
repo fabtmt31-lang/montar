@@ -19,7 +19,7 @@ class _Ctx:
 def test_skeleton_with_every_type_loads(tmp_path):
     folder = new_module(tmp_path / "Mon Module", kinds=list(TEMPLATES), author="Moi")
     data = json.loads((folder / "module.json").read_text())
-    assert data["id"] == "mon-module" and data["api_version"] == "1.4"
+    assert data["id"] == "mon-module" and data["api_version"] == "1.5"
     manager = ModuleManager(builtin_modules_dir(), tmp_path / "user")
     info = manager.install_folder(folder)
     assert info.active, info.error

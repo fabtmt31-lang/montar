@@ -5,7 +5,7 @@ Ce guide explique comment ajouter à montar vos propres **effets vidéo et audio
 **outils**, puis comment les partager. Un module est un petit dossier Python ; il ne demande
 ni compilation ni outil particulier.
 
-- API publique : `montar.api`, version **1.4**.
+- API publique : `montar.api`, version **1.5**.
 - Exemples complets : les modules intégrés, dans `src/montar/modules/` (`effets`,
   `essentiels`, `graphismes`, `timelapse`), et `examples/modules/negatif/`.
 
@@ -132,7 +132,16 @@ params = [
     Param.bool("grain", "Ajouter du grain", True),                 # case à cocher
     Param.choice("sens", "Sens", [("h", "Horizontal"), ("v", "Vertical")]),
     Param.color("teinte", "Teinte", "#2F7A56"),                    # choix de couleur
+    Param.text("date", "Date affichée", placeholder="Date du jour"),  # texte (1.5)
 ]
+```
+
+Depuis l'API 1.5, un effet peut proposer des **préréglages** : un bouton par préréglage
+apparaît au-dessus de ses réglages et règle d'un coup les paramètres donnés.
+
+```python
+presets = {"leger": ("Léger", {"couleur": 0.3, "grain": 0.1}),
+           "fort": ("Fort", {"couleur": 0.9, "grain": 0.6})}
 ```
 
 La méthode `defaults()` renvoie les valeurs par défaut ; les valeurs reçues par `filters`
@@ -474,7 +483,8 @@ même confirmation qu'une installation depuis un fichier.
 | 1.2 | `AudioEffect`, `Transition`, `Generator`, `ExportFormat`, `Param.color` |
 | 1.3 | `Graphic` (`api.add_graphic`), pseudo-filtre `ZOOM` |
 | 1.4 | `schedule_job(…, done)` : résultat d'un calcul remis au fil principal ; propriétés `in` / `out` d'un filtre (images relatives au clip) |
+| 1.5 | `Param.text`, `presets` des effets (boutons de préréglages) |
 
 montar charge les modules dont la version **majeure** est la sienne (`1.x`). Indiquez dans
 `api_version` la plus petite version qui contient ce que vous utilisez : un module `1.2`
-fonctionne avec montar 1.4, mais pas l'inverse.
+fonctionne avec montar 1.5, mais pas l'inverse.
