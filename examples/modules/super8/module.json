@@ -1,0 +1,10 @@
+{
+  "id": "super8",
+  "name": "Super 8",
+  "version": "1.0.0",
+  "api_version": "1.4",
+  "author": "montar",
+  "license": "GPL-3.0-or-later",
+  "description": "La vidéo semble tournée en Super 8 : couleurs de pellicule (Kodachrome, Ektachrome, fanée, noir et blanc), grain, poussières et rayures, scintillement, fuites de lumière, fenêtre de projection, cadence 18 images/s, bruit de projecteur.",
+  "permissions": []
+}

@@ -2037,3 +2037,47 @@ def test_rain_module_apply_button(window, media_dir):
         _settle_rain()
         assert find() is not None, target.id
     assert find().isEnabled()  # le second clip n'est pas encore appliqué
+
+
+# --- module d'exemple « Super 8 » : bouton « Ajouter le bruit de projecteur » ------------------
+
+SUPER8_MODULE = Path(__file__).resolve().parent.parent / "examples" / "modules" / "super8"
+
+
+@needs_ffmpeg
+def test_super8_projector_sound_button(window, media_dir):
+    editor = imported_editor(window, media_dir, ["clip.mp4"])
+    editor.module_manager.install_folder(SUPER8_MODULE, link=True)
+    editor.add_to_timeline(editor.project.media[0])
+    clip = editor.project.clips[0]
+    editor.controller.select(clip.id)
+    entry = next(e for e in editor.modules_panel.visible_entries() if e.item.id == "super8")
+    editor.use_module_entry(entry)
+    _settle_rain()
+    panel = editor.effects_panel
+
+    def find():
+        found = [b for b in panel.findChildren(QPushButton, "super8-bruit")
+                 if panel._modules_box.indexOf(b) >= 0]
+        return found[0] if found else None
+
+    btn = find()
+    assert btn is not None and btn.isEnabled()
+    audio_before = [c for c in editor.project.clips
+                    if editor.controller.timeline.track(c.track_id).kind == "audio"]
+    btn.click()
+    _settle_rain()
+    added = [c for c in editor.project.clips
+             if editor.controller.timeline.track(c.track_id).kind == "audio"
+             and c not in audio_before]
+    assert len(added) == 1
+    sound = added[0]
+    media = editor.project.find_media(sound.media_id)
+    assert Path(media.path).name.startswith("Bruit de projecteur") and media.kind == "audio"
+    assert (sound.start, sound.duration) == (clip.start, clip.duration)
+    assert sound.volume < 1
+    assert not find().isEnabled()  # « ✓ Bruit de projecteur ajouté »
+    editor.controller.undo()  # une seule étape d'annulation
+    _settle_rain()
+    assert sound.id not in {c.id for c in editor.project.clips}
+    assert find().isEnabled()
