@@ -89,6 +89,7 @@ class TimelineView(QAbstractScrollArea):
     zoomChanged = pyqtSignal(float)
     rangeChanged = pyqtSignal()
     applyRequested = pyqtSignal(str)  # clip : « Appliquer un effet ou un module… »
+    clipActivated = pyqtSignal(str)  # double-clic sur un clip : ouvrir ses réglages
 
     def __init__(self, controller: EditorController,
                  thumbnail_for: Callable[[str], str | None],
@@ -1293,7 +1294,13 @@ class TimelineView(QAbstractScrollArea):
             self._drag = None
             self.rename_marker(marker.id)
             return
-        gap = self.gap_at(pos) if self.hit_test(pos) is None else None
+        hit = self.hit_test(pos)
+        if hit is not None:
+            self._drag = None
+            self.controller.select(hit[0].id)
+            self.clipActivated.emit(hit[0].id)
+            return
+        gap = self.gap_at(pos)
         if gap is not None:
             self._drag = None
             self.close_gap(gap[0], gap[1])

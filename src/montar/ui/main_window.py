@@ -134,6 +134,10 @@ class MainWindow(QMainWindow):
         except OSError as exc:
             log.warning("préférences non enregistrées : %s", exc)
 
+    def _inspector_pinned(self, pinned: bool) -> None:
+        self.settings.inspector_pinned = pinned
+        self._save_quietly()
+
     def _panes_resized(self, side: int, inspector: int) -> None:
         self.settings.side_width, self.settings.inspector_width = side, inspector
         self._panes_timer.start()  # enregistré une fois le glisser terminé
@@ -248,6 +252,7 @@ class MainWindow(QMainWindow):
         editor.preview.volumeChanged.connect(self._volume_changed)
         editor.preview.safeZoneChanged.connect(self._safe_zone_changed)
         editor.panesResized.connect(self._panes_resized)
+        editor.inspectorPinned.connect(self._inspector_pinned)
         editor.library_provider = lambda: self.library_items(project.path)
         editor.thumbnail_provider = self._thumbnail_for
         self.editor = editor

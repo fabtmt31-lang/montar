@@ -2979,3 +2979,34 @@ def test_effect_presets_and_text_param(window, media_dir):
     date.setText("24 dec 1994")
     date.editingFinished.emit()
     assert editor.project.clips[0].modules["effets.vhs"]["date"] == "24 dec 1994"
+
+
+@needs_ffmpeg
+def test_inspector_drawer_opens_on_demand_and_pins(window, media_dir):
+    editor = imported_editor(window, media_dir, ["red.mp4"])
+    editor.add_to_timeline(editor.project.media[0])
+    pump(100)
+    # fermé par défaut : la colonne de droite est rendue à l'aperçu
+    assert not editor.inspector_pinned and not editor.drawer.isVisible()
+    assert not editor.inspector_column.isVisible() and editor.settings_button.isVisible()
+    # double-clic sur un clip : ses réglages s'ouvrent par-dessus l'aperçu
+    view = editor.timeline.view
+    clip = editor.project.clips[0]
+    rect = view.clip_rect(clip)
+    QTest.mouseDClick(view.viewport(), Qt.MouseButton.LeftButton,
+                      Qt.KeyboardModifier.NoModifier,
+                      QPoint(int(rect.center().x()), int(rect.center().y())))
+    assert editor.drawer.isVisible() and editor.inspector.parent() is editor.drawer
+    assert editor.controller.selected == clip.id
+    # Tab ferme et rouvre
+    view.setFocus()
+    QTest.keyClick(window, Qt.Key.Key_Tab)
+    assert not editor.drawer.isVisible()
+    QTest.keyClick(window, Qt.Key.Key_Tab)
+    assert editor.drawer.isVisible()
+    # épingler : colonne fixe, choix mémorisé dans les préférences
+    editor.pin_button.click()
+    assert editor.inspector_pinned and editor.inspector_column.isVisible()
+    assert not editor.drawer.isVisible() and window.settings.inspector_pinned
+    editor.unpin_button.click()
+    assert not editor.inspector_pinned and not window.settings.inspector_pinned

@@ -31,7 +31,7 @@ SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
                      "paste_settings", "select_all", "merge", "undo", "redo")),
     (N_("Timeline"), ("zoom_in", "zoom_out", "zoom_fit", "mark_in", "mark_out",
                       "clear_range", "marker", "previous_marker", "next_marker")),
-    (N_("Projet"), ("save", "export", "shortcuts_help")),
+    (N_("Projet"), ("save", "export", "inspector", "shortcuts_help")),
 )
 # gestes à la souris (non personnalisables)
 GESTURES: tuple[tuple[str, str], ...] = (

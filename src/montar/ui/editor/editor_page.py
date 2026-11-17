@@ -10,7 +10,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from PyQt6.QtCore import QRect, QRectF, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QEvent, QRect, QRectF, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QImage, QKeySequence, QPainter, QShortcut, QTransform
 from PyQt6.QtWidgets import (
     QApplication,
@@ -180,6 +180,7 @@ def media_file_filter() -> str:
 class EditorPage(QWidget):
     backRequested = pyqtSignal()
     tourFinished = pyqtSignal()  # visite guidée terminée ou passée
+    inspectorPinned = pyqtSignal(bool)  # inspecteur épinglé (colonne) ou escamotable
     panesResized = pyqtSignal(int, int)  # largeurs du volet de gauche et de l'inspecteur
     saved = pyqtSignal(object)  # Path
     exportFinished = pyqtSignal(str)  # erreur (vide si réussite)
@@ -266,13 +267,52 @@ class EditorPage(QWidget):
         self._scope_timer.timeout.connect(self._update_scopes)
         self.subtitles_panel.seekRequested.connect(self.player.seek)
         self.subtitles_panel.autoRequested.connect(self.auto_subtitles)
-        self.panes.addWidget(self.inspector)
+        # colonne de l'inspecteur épinglé (en-tête « Réglages » + bouton pour le détacher)
+        self.inspector_column = QWidget()
+        cl = QVBoxLayout(self.inspector_column)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.setSpacing(0)
+        self._column_layout = cl
+        cl.addWidget(self.inspector, 1)
+        self.panes.addWidget(self.inspector_column)
         self.panes.setStretchFactor(0, 0)
         self.panes.setStretchFactor(1, 1)
         self.panes.setStretchFactor(2, 0)
         self.panes.setSizes([SIDE_WIDTH, 800, INSPECTOR_WIDTH])
-        self.panes.splitterMoved.connect(
-            lambda *_a: self.panesResized.emit(self.panes.sizes()[0], self.panes.sizes()[2]))
+        self.panes.splitterMoved.connect(self._panes_moved)
+        # inspecteur escamotable : un volet posé par-dessus l'aperçu, ouvert à la demande ;
+        # épinglé, il reprend sa colonne à droite
+        self.inspector_pinned = True
+        self.inspector_width = INSPECTOR_WIDTH
+        self.drawer = QFrame(top)
+        self.drawer.setObjectName("InspectorDrawer")
+        dl = QVBoxLayout(self.drawer)
+        dl.setContentsMargins(0, 0, 0, 0)
+        dl.setSpacing(0)
+        dhead = QHBoxLayout()
+        dhead.setContentsMargins(12, 6, 6, 0)
+        dhead.addWidget(label(_("Réglages"), "section"), 1)
+        self.pin_button = button("", "ghost", "pin", tooltip=_(
+            "Épingler : garder les réglages ouverts en colonne"))
+        self.pin_button.clicked.connect(lambda: self.set_inspector_pinned(True))
+        close = button("", "ghost", "x", tooltip=_("Fermer les réglages (Tab)"))
+        close.clicked.connect(lambda: self.show_inspector(False))
+        dhead.addWidget(self.pin_button)
+        dhead.addWidget(close)
+        dl.addLayout(dhead)
+        self._drawer_layout = dl
+        self.drawer.hide()
+        self.unpin_button = button("", "ghost", "pin", tooltip=_(
+            "Désépingler : les réglages s'ouvrent à la demande, l'aperçu s'élargit"))
+        self.unpin_button.setCheckable(True)
+        self.unpin_button.setChecked(True)
+        self.unpin_button.clicked.connect(lambda: self.set_inspector_pinned(False))
+        chead = QHBoxLayout()
+        chead.setContentsMargins(12, 6, 6, 0)
+        chead.addWidget(label(_("Réglages"), "section"), 1)
+        chead.addWidget(self.unpin_button)
+        cl.insertLayout(0, chead)
+        top.installEventFilter(self)
         self.effects_panel.set_modules(self.modules)
         self.effects_panel.addRequested.connect(self.open_apply)
         self.graphics_panel.set_graphics(self.module_manager.graphics())
@@ -285,6 +325,7 @@ class EditorPage(QWidget):
         self.timeline = TimelinePanel(self.controller, self.thumbnails.get, self.waveforms.get)
         self.timeline.view.badge_provider = self.modules.badges
         self.timeline.view.applyRequested.connect(self.open_apply)
+        self.timeline.view.clipActivated.connect(lambda _id: self.show_inspector(True))
         self.timeline.voiceOverRequested.connect(self._voice_over_clicked)
         self.timeline.mergeRequested.connect(self.merge_selected)
         self.timeline.maximizeToggled.connect(self.set_timeline_maximized)
@@ -311,7 +352,7 @@ class EditorPage(QWidget):
         splitter.addWidget(self._detached_hint)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
-        splitter.setSizes([520, 320])
+        splitter.setSizes([470, 370])  # (1.15 : la timeline gagne en hauteur)
         root.addWidget(splitter, 1)
 
         self.importer = MediaImporter(cache, self)
@@ -504,6 +545,13 @@ class EditorPage(QWidget):
         layout.addWidget(self.project_button)
         layout.addStretch(1)
 
+        self.settings_button = button(_("Réglages"), "secondary", "sliders-horizontal",
+                                      tooltip=_("Afficher les réglages du clip (Tab ou "
+                                                "double-clic sur un clip)"))
+        self.settings_button.setCheckable(True)
+        self.settings_button.setMinimumHeight(40)
+        self.settings_button.clicked.connect(lambda on: self.show_inspector(on))
+        layout.addWidget(self.settings_button)
         self.finition_button = button(_("Finition"), "secondary", "sparkles",
                                       tooltip=_("Étalonnage et mastering de tout le projet"))
         self.finition_button.setMinimumHeight(40)
@@ -577,6 +625,7 @@ class EditorPage(QWidget):
             "previous_marker": lambda: tl.go_to_marker(-1),
             "next_marker": lambda: tl.go_to_marker(1),
             "shortcuts_help": self.show_shortcuts,
+            "inspector": self.toggle_inspector,
         }
 
     def apply_shortcuts(self, overrides: dict[str, str]) -> None:
@@ -787,6 +836,74 @@ class EditorPage(QWidget):
         self.save_pill.setText(text)
         self.save_pill.setStyleSheet(f"QLabel {{ color: {color}; }}")
         self.save_pill.setProperty("state", state)
+
+    # --- inspecteur escamotable -------------------------------------------------------
+
+    def _panes_moved(self, *_args) -> None:
+        sizes = self.panes.sizes()
+        if self.inspector_pinned and sizes[2]:
+            self.inspector_width = sizes[2]
+        self.panesResized.emit(sizes[0], self.inspector_width)
+
+    def set_inspector_pinned(self, pinned: bool, notify: bool = True) -> None:
+        """Épinglé : colonne fixe à droite (comme avant la 1.15). Sinon : volet ouvert à
+        la demande par-dessus l'aperçu, la place revient à l'aperçu."""
+        was_open = self.drawer.isVisible()
+        self.inspector_pinned = pinned
+        if pinned:
+            self._drawer_layout.removeWidget(self.inspector)
+            self._column_layout.addWidget(self.inspector, 1)
+            self.drawer.hide()
+            self.inspector_column.show()
+            sizes = self.panes.sizes()
+            total = sum(sizes)
+            self.panes.setSizes([sizes[0], max(200, total - sizes[0] - self.inspector_width),
+                                 self.inspector_width])
+            self.inspector.show()
+        else:
+            self._column_layout.removeWidget(self.inspector)
+            self._drawer_layout.addWidget(self.inspector, 1)
+            self.inspector_column.hide()
+            self.drawer.setVisible(was_open)
+            self._place_drawer()
+        self.settings_button.setVisible(not pinned)
+        self.settings_button.setChecked(not pinned and self.drawer.isVisible())
+        self.unpin_button.setChecked(True)
+        if notify:
+            self.inspectorPinned.emit(pinned)
+
+    def show_inspector(self, on: bool = True) -> None:
+        if self.inspector_pinned:
+            return
+        self.drawer.setVisible(on)
+        self.settings_button.setChecked(on)
+        if on:
+            self._place_drawer()
+            self.drawer.raise_()
+
+    def toggle_inspector(self) -> None:
+        """Touche Tab : ouvre ou ferme les réglages ; dans un champ de saisie, Tab garde
+        son rôle (passer au champ suivant)."""
+        from PyQt6.QtWidgets import QAbstractSpinBox, QApplication, QLineEdit, QTextEdit
+
+        focus = QApplication.focusWidget()
+        if isinstance(focus, (QLineEdit, QAbstractSpinBox, QTextEdit)):
+            focus.focusNextChild() if hasattr(focus, "focusNextChild") else None
+            return
+        if self.inspector_pinned:
+            return
+        self.show_inspector(not self.drawer.isVisible())
+
+    def _place_drawer(self) -> None:
+        top = self._top if hasattr(self, "_top") else self.drawer.parentWidget()
+        width = min(max(INSPECTOR_MIN_WIDTH, self.inspector_width), max(260, top.width() // 2))
+        self.drawer.setGeometry(top.width() - width, 0, width, top.height())
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if obj is getattr(self, "_top", None) and event.type() == QEvent.Type.Resize \
+                and self.drawer.isVisible():
+            self._place_drawer()
+        return super().eventFilter(obj, event)
 
     def show_shortcuts(self) -> None:
         ShortcutsSheet(getattr(self, "_shortcut_overrides", {}), self).exec()
@@ -2488,7 +2605,9 @@ class EditorPage(QWidget):
             total = sum(sizes) or 1500
             side = max(SIDE_MIN_WIDTH, settings.side_width)
             inspector = max(INSPECTOR_MIN_WIDTH, settings.inspector_width)
+            self.inspector_width = inspector
             self.panes.setSizes([side, max(200, total - side - inspector), inspector])
+            self.set_inspector_pinned(settings.inspector_pinned, notify=False)
             self.timeline.magnet.setChecked(settings.snap)
             self.preview.set_volume(settings.preview_volume)
             self.preview.set_safe_zone(settings.safe_zone)

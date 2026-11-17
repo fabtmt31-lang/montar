@@ -1,3 +1,20 @@
+montar (1.15.0) unstable; urgency=medium
+
+  * Panneau Médias : grille rangée par type (Vidéos, Enregistrements, Images,
+    Sons, Musique ; un son de plus d'une minute est de la musique, « Classer
+    dans… » au clic droit) ; filtres Utilisés / Non utilisés conservés.
+  * Sélection : clic droit « Tout sélectionner », « Sélection partielle » (case
+    sur chaque vignette), « Inverser », « Sélectionner les non utilisés » ;
+    barre d'actions (ajouter à la suite, retirer).
+  * Réglages du clip dans un volet escamotable (Tab, double-clic sur un clip,
+    bouton « Réglages »), ou épinglé en colonne ; timeline plus haute.
+  * VHS : image propre à zéro, réglages Couleur de cassette / Grain / Défauts
+    de bande, préréglages, affichage « ● REC » clignotant avec date et
+    compteur.
+  * API des modules 1.5 : Param.text, préréglages des effets.
+
+ -- Fabien <admin@appsdoc.fr>  Tue, 17 Nov 2026 12:00:00 +0100
+
 montar (1.14.0) unstable; urgency=medium
 
   * Export à une autre fréquence d'images que le projet : les filtres des

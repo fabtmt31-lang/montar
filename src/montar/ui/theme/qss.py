@@ -192,6 +192,7 @@ QPushButton[variant="choice"]:checked {{ background: {forest}; border-color: {fo
                border-radius: {r_card}px; }}
 QSplitter::handle {{ background: {border}; }}
 #Separator {{ background: {border}; }}
+#InspectorDrawer {{ background: {surface}; border-left: 2px solid {forest}; }}
 QMenu {{ background: {surface}; border: 1px solid {border}; padding: 4px; }}
 QMenu::item {{ padding: 6px 18px; border-radius: 6px; }}
 QMenu::item:selected {{ background: {mist}; }}

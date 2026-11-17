@@ -27,6 +27,13 @@ projet.
 - la finition peut être **vue et écoutée dans l'aperçu** de l'éditeur ; les préréglages
   personnels sont enregistrés dans `~/.config/montar/finition.json`.
 
+**Version 1.15** (1.15.0) : panneau Médias rangé par type (Vidéos, Enregistrements,
+Images, Sons, Musique) avec sélection partielle à cocher, « Tout sélectionner »,
+« Inverser », « Sélectionner les non utilisés » ; réglages du clip dans un volet qui
+s'ouvre à la demande (Tab, double-clic sur un clip, bouton « Réglages ») ou épinglé en
+colonne ; VHS propre à zéro, trois réglages et préréglages, affichage « ● REC » avec date
+et compteur.
+
 **Version 1.14** (1.14.0) : un média lâché sur un clip s'insère avant ou après lui et
 les clips suivants font la place ; plusieurs médias se sélectionnent (Ctrl / Maj + clic,
 Ctrl+A) pour être glissés, ajoutés ou retirés ensemble ; un clic dans un espace vide le
