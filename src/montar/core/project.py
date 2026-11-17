@@ -27,6 +27,9 @@ class ProjectError(Exception):
     pass
 
 
+MUSIC_SECONDS = 60  # son plus long : classé en musique dans le panneau Médias
+
+
 @dataclass
 class MediaItem:
     """Média importé dans le projet : une copie du fichier, rangée dans le dossier « medias »
@@ -48,6 +51,8 @@ class MediaItem:
     # celui de la webcam a le rôle « webcam » et n'apparaît pas dans le panneau Médias.
     role: str = ""  # "" | webcam
     webcam: dict[str, Any] = field(default_factory=dict)
+    # classement des sons dans le panneau Médias : "" (automatique), "music" ou "sound"
+    category: str = ""
 
     @property
     def name(self) -> str:
@@ -56,6 +61,21 @@ class MediaItem:
     @property
     def exists(self) -> bool:
         return file_exists(self.path)
+
+    @property
+    def group(self) -> str:
+        """Rubrique du panneau Médias : recording, video, image, sound ou music. Un son
+        de plus d'une minute, ou rangé dans un dossier « musique », est de la musique ;
+        `category` force le choix."""
+        if self.webcam:
+            return "recording"
+        if self.kind != "audio":
+            return self.kind
+        if self.category in ("music", "sound"):
+            return self.category
+        folders = " ".join(Path(p).parent.as_posix().casefold()
+                           for p in (self.original_path, self.path) if p)
+        return "music" if self.duration >= MUSIC_SECONDS or "musi" in folders else "sound"
 
     def length_frames(self, fps: int) -> int | None:
         """Nombre d'images disponibles à la fréquence du projet ; None pour une image fixe."""

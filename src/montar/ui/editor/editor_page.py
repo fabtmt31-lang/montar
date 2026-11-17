@@ -329,6 +329,7 @@ class EditorPage(QWidget):
         self.media_panel.removeManyRequested.connect(self.remove_medias)
         self.media_panel.addToTimelineRequested.connect(self.add_to_timeline)
         self.media_panel.addManyRequested.connect(self.add_many_to_timeline)
+        self.media_panel.categoryRequested.connect(self.set_media_category)
         self.media_panel.editRequested.connect(self.edit_media)
         self.media_panel.fitCanvasRequested.connect(self.confirm_fit_canvas)
         QApplication.instance().applicationStateChanged.connect(self._app_state_changed)
@@ -2405,6 +2406,16 @@ class EditorPage(QWidget):
                 if t.project.find_media(media_id) is not None:  # webcam déjà retirée
                     t.remove_media(media_id)
         self.controller.edit(_("Retirer {n} médias").format(n=len(medias)), operation)
+
+    def set_media_category(self, media: MediaItem, category: str) -> None:
+        """Classe un son dans Musique ou Sons (panneau Médias), annulable."""
+        media_id = media.id
+
+        def operation(t):
+            t.project.find_media(media_id).category = category
+        label_ = _("Classer dans Musique") if category == "music" else _("Classer dans Sons")
+        self.controller.edit(label_, operation)
+        self.media_panel.refresh_groups()
 
     def add_many_to_timeline(self, medias: list[MediaItem]) -> None:
         """Pose les médias à la suite : vidéos et images sur la piste vidéo, sons sur la

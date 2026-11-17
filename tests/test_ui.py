@@ -115,7 +115,13 @@ def test_import_order_and_duplicates(window, media_dir):
     editor.import_files([str(media_dir / "clip.mp4")])  # déjà importé : ignoré
     pump(200)
     assert [m.name for m in editor.project.media] == names
-    assert editor.media_panel.grid.count() == 4
+    grid = editor.media_panel.grid
+    assert len(grid.media_items()) == 4
+    # grille unique rangée par rubrique : vidéos, images, puis sons
+    from montar.ui.editor.media_panel import ROLE_HEADER
+    rows = [grid.item(i).data(ROLE_HEADER) or grid.item(i).text() for i in range(grid.count())]
+    assert rows == ["video", "clip.mp4", "vertical.mp4", "image", "photo.png", "sound",
+                    "son.wav"]
 
 
 @needs_ffmpeg
@@ -1515,7 +1521,7 @@ def test_hover_preview_notifications_typewriter(window, media_dir, tmp_path):
 
     editor = imported_editor(window, media_dir, ["redblue.mp4"])
     grid = editor.media_panel.grid
-    item = grid.item(0)
+    item = grid.media_items()[0]
     original = item.data(Qt.ItemDataRole.DecorationRole)
     rect = grid.visualItemRect(item)
 
@@ -2909,3 +2915,43 @@ def test_media_panel_multi_selection(window, media_dir, monkeypatch):
     assert editor.project.clips == []
     editor.controller.undo()  # une seule étape d'annulation
     assert len(editor.project.media) == 3 and len(editor.project.clips) == 3
+
+
+@needs_ffmpeg
+def test_media_panel_groups_and_partial_selection(window, media_dir, monkeypatch):
+    from montar.core.project import MediaItem
+
+    editor = imported_editor(window, media_dir, ["red.mp4", "photo.png", "son.wav"])
+    panel = editor.media_panel
+    red, photo, son = editor.project.media
+    assert son.group == "sound"
+    # un son long ou rangé dans un dossier « musique » : Musique
+    assert MediaItem("/x/Musique/a.mp3", "audio", duration=10).group == "music"
+    assert MediaItem("/x/a.mp3", "audio", duration=90).group == "music"
+    editor.set_media_category(son, "music")
+    assert son.group == "music"
+    heads = [h for h, it in panel._headers.items() if not it.isHidden()]
+    assert heads == ["video", "image", "music"]
+    editor.controller.undo()  # (l'annulation recrée les médias du projet)
+    red, photo, son = editor.project.media
+    assert wait_until(lambda: "sound" in panel._headers, 5) and son.group == "sound"
+    # filtre « Non utilisés » : compteurs « n / total », rubrique vide masquée
+    editor.add_to_timeline(red)
+    panel.usage.set_current("unused")
+    panel._apply_filters()
+    assert panel._headers["video"].isHidden()
+    assert panel._headers["image"].text().endswith("1 / 1")
+    panel.usage.set_current("all")
+    panel._apply_filters()
+    # sélection partielle : cases à cocher, barre d'actions
+    panel.set_checking(True)
+    assert panel.grid.checking and panel.action_bar.isVisible()
+    panel.select_unused()
+    assert {m.id for m in panel.grid.selected_medias()} == {photo.id, son.id}
+    panel.invert_selection()
+    assert [m.id for m in panel.grid.selected_medias()] == [red.id]
+    panel.select_all()
+    assert len(panel.grid.selected_medias()) == 3
+    assert panel.selection_label.text() == "3 sélectionnés"
+    QTest.keyClick(panel.grid, Qt.Key.Key_Escape)
+    assert not panel.grid.checking and not panel.grid.selectedItems()
