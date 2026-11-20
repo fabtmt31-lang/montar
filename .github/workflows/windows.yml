@@ -159,8 +159,10 @@ jobs:
             dist/montar-*-windows-x64.exe
             dist/montar-*-windows-x64-portable.zip
           if-no-files-found: error
+          retention-days: 14  # quota de stockage GitHub : ~250 Mo par build
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: prototype-windows-UCRT64
           path: prototype-windows/
+          retention-days: 5  # rapport de diagnostic

@@ -60,3 +60,4 @@ jobs:
         with:
           name: montar-deb-${{ steps.name.outputs.slug }}
           path: dist/*.deb
+          retention-days: 14  # quota de stockage GitHub : les anciens paquets s'effacent seuls
